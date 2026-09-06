@@ -1,0 +1,6 @@
+{
+  "name": "OmniScan Titan X",
+  "description": "Autonomous Document Intelligence, Acquisition, Computer Vision, OCR & PDF Studio Platform",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
