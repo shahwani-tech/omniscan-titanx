@@ -40,6 +40,11 @@ import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageToDataUrl } from "../../engine/pdf";
 import { useShortcuts } from "../../commands/ShortcutContext";
 import {
+  PdfImportDialog,
+  ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
+  PdfImportPageResult,
+} from "../common/PdfImportDialog";
+import {
   X,
   Printer,
   FileDown,
@@ -253,6 +258,10 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const [shadowRemoval, setShadowRemoval] = useState<boolean>(true);
   const [shadowStrength, setShadowStrength] = useState<number>(40);
   const [bgColorReplacement, setBgColorReplacement] = useState<"none" | "white" | "blue" | "gray" | "cream" | "transparent">("white");
+
+  // PDF Importer Dialog State
+  const [isPdfImportDialogOpen, setIsPdfImportDialogOpen] = useState<boolean>(false);
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
 
   // Performance caching refs
   const cachedSourceImgRef = useRef<HTMLImageElement | null>(null);
@@ -1485,14 +1494,25 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                       <User className="w-3.5 h-3.5" />
                       <span className="text-[9px] mt-0.5">Models</span>
                     </button>
+                    <button
+                      onClick={() => {
+                        setSelectedPdfFile(null);
+                        setIsPdfImportDialogOpen(true);
+                      }}
+                      className="p-1.5 rounded flex flex-col items-center justify-center transition-colors text-neutral-400 hover:text-white"
+                      title="Import Portrait from PDF Document"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-red-400" />
+                      <span className="text-[9px] mt-0.5">PDF</span>
+                    </button>
                   </div>
 
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*,.pdf"
+                    accept={ACCEPTED_DOCUMENT_AND_IMAGE_TYPES}
                     className="hidden"
-                    onChange={async (e) => {
+                    onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
                       e.target.value = "";
@@ -1501,33 +1521,8 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
                       if (isPdf) {
-                        try {
-                          showToast(`Extracting photo from ${file.name}...`);
-                          let objectUrl: string | undefined;
-                          try {
-                            objectUrl = URL.createObjectURL(file);
-                          } catch {}
-
-                          const loadingTask = objectUrl
-                            ? pdfjsLib.getDocument({ url: objectUrl, useSystemFonts: true })
-                            : pdfjsLib.getDocument({
-                                data: new Uint8Array(await file.arrayBuffer()),
-                                useSystemFonts: true,
-                              });
-
-                          const pdf = await loadingTask.promise;
-                          const rendered = await renderPDFPageToDataUrl(pdf, 1, 200);
-                          if (objectUrl) {
-                            try {
-                              URL.revokeObjectURL(objectUrl);
-                            } catch {}
-                          }
-                          setRawSourceImage(rendered.dataUrl);
-                          showToast(`Loaded ${file.name} (Page 1)`);
-                        } catch (err) {
-                          console.error("Failed to load PDF in photo studio:", err);
-                          showToast("Could not read PDF photo.");
-                        }
+                        setSelectedPdfFile(file);
+                        setIsPdfImportDialogOpen(true);
                       } else {
                         const reader = new FileReader();
                         reader.onload = (event) => {
@@ -3228,6 +3223,25 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
             </div>
           </div>
         )}
+
+        {/* Centralized PDF Import Dialog */}
+        <PdfImportDialog
+          isOpen={isPdfImportDialogOpen}
+          onClose={() => {
+            setIsPdfImportDialogOpen(false);
+            setSelectedPdfFile(null);
+          }}
+          initialFile={selectedPdfFile}
+          title="Extract Portrait from PDF Document"
+          description="Select the PDF page containing your passport or portrait photo."
+          selectionMode="single"
+          primaryButtonLabel="Import Selected Page"
+          onImportSingle={(result) => {
+            setRawSourceImage(result.dataUrl);
+            setSourceTab("upload");
+            showToast(`Loaded Page ${result.pageNum} from ${result.fileName}`);
+          }}
+        />
 
         {/* Toast Notification Banner */}
         {toastMessage && (

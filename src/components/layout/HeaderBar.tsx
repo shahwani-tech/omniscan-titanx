@@ -66,6 +66,7 @@ interface HeaderBarProps {
   onOpenFilterStudio: () => void;
   onOpenPhotoPrintStudio: () => void;
   onOpenIdCardStudio?: () => void;
+  onOpenCardDesigner?: () => void;
   onOpenBatchStudio: () => void;
   onOpenCompare: () => void;
   onOpenSecurity: () => void;
@@ -111,6 +112,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenFilterStudio,
   onOpenPhotoPrintStudio,
   onOpenIdCardStudio,
+  onOpenCardDesigner,
   onOpenBatchStudio,
   onOpenCompare,
   onOpenSecurity,
@@ -613,6 +615,15 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                       <span>ID Card / CNIC Print Studio...</span>
                     </button>
                   )}
+                  {onOpenCardDesigner && (
+                    <button
+                      onClick={() => { onOpenCardDesigner(); closeDropdowns(); }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 font-semibold text-cyan-300 transition-colors"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>ID &amp; Service Card Designer (Vector)...</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => { onOpenFilterStudio(); closeDropdowns(); }}
                     className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 text-neutral-200 transition-colors"
@@ -798,6 +809,17 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             >
               <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
               <span>ID Card Studio</span>
+            </button>
+          )}
+
+          {onOpenCardDesigner && (
+            <button
+              onClick={onOpenCardDesigner}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-sky-900/60 to-cyan-900/60 hover:from-sky-800/80 hover:to-cyan-800/80 text-cyan-200 font-medium border border-cyan-700/50 transition-all shadow-sm flex-shrink-0"
+              title="Open Professional ID & Service Card Designer (Dual-Card A6 Vector Studio)"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Card Designer</span>
             </button>
           )}
 

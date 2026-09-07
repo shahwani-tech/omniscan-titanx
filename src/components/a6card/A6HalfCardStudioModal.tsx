@@ -5,6 +5,7 @@ import {
   FileDown,
   Image as ImageIcon,
   Plus,
+  CreditCard,
   RefreshCw,
   Sliders,
   Sparkles,
@@ -71,6 +72,8 @@ interface A6HalfCardStudioModalProps {
   isOpen: boolean;
   onClose: () => void;
   onInsertIntoDocument?: (newPageDataUrls: string[]) => void;
+  studioMode?: "idcard" | "a6";
+  onSwitchStudioMode?: (mode: "idcard" | "a6") => void;
 }
 
 interface PdfMetadata {
@@ -86,6 +89,8 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   isOpen,
   onClose,
   onInsertIntoDocument,
+  studioMode = "a6",
+  onSwitchStudioMode,
 }) => {
   const { openPrintDialog } = usePrint();
 
@@ -428,7 +433,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       } finally {
         setIsRendering(false);
       }
-    } else if (file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp)$/i.test(file.name)) {
+    } else if (file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp|svg)$/i.test(file.name)) {
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === "string") {
@@ -1111,7 +1116,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
         ref={frontInputRef}
         id="a6-front-file-input"
         type="file"
-        accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+        accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml"
         onChange={handleFrontUpload}
         className="hidden"
       />
@@ -1119,7 +1124,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
         ref={backInputRef}
         id="a6-back-file-input"
         type="file"
-        accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
+        accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml"
         onChange={handleBackUpload}
         className="hidden"
       />
@@ -1149,6 +1154,29 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Studio Layout Mode Switcher */}
+          {onSwitchStudioMode && (
+            <div className="flex items-center bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-xs shadow-inner">
+              <button
+                type="button"
+                onClick={() => onSwitchStudioMode("idcard")}
+                className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 text-neutral-400 hover:text-white cursor-pointer"
+                title="Switch to Standard ID Card / CNIC (Multi-Card on A4/Letter Paper)"
+              >
+                <CreditCard className="w-3.5 h-3.5 text-sky-400" />
+                <span>ID Card / CNIC (A4)</span>
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 bg-indigo-600 text-white shadow-sm cursor-default"
+                title="Currently in A6 Half-Card Layout Studio (74×105mm)"
+              >
+                <Layers className="w-3.5 h-3.5 text-indigo-200" />
+                <span>A6 Half-Card (74×105mm)</span>
+              </button>
+            </div>
+          )}
 
           {/* Header Action Buttons */}
           <div className="flex items-center space-x-2.5">

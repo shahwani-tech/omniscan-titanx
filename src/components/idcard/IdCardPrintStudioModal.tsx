@@ -70,6 +70,12 @@ import { usePrint } from "../../context/PrintContext";
 import { classifyImageContent, ContentClassificationResult } from "../../engine/autoClassifier";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageThumbnail, renderPDFPageToDataUrl } from "../../engine/pdf";
+import { A6HalfCardStudioModal } from "../a6card/A6HalfCardStudioModal";
+import {
+  PdfImportDialog,
+  ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
+  PdfImportPageResult,
+} from "../common/PdfImportDialog";
 
 const loadImage = (src: string): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
@@ -86,6 +92,8 @@ interface IdCardPrintStudioModalProps {
   onClose: () => void;
   pages?: OmniPage[];
   activePageIndex?: number;
+  initialMode?: "idcard" | "a6";
+  onInsertIntoDocument?: (newPageDataUrls: string[]) => void;
 }
 
 export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
@@ -93,8 +101,19 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   onClose,
   pages = [],
   activePageIndex = 0,
+  initialMode = "idcard",
+  onInsertIntoDocument,
 }) => {
   const { openPrintDialog } = usePrint();
+
+  // Studio Layout Mode: 'idcard' (Multi-Card on A4/Letter) | 'a6' (Dedicated A6 Half-Card Sheet Layout Studio)
+  const [studioLayoutMode, setStudioLayoutMode] = useState<"idcard" | "a6">(initialMode);
+
+  useEffect(() => {
+    if (isOpen && initialMode) {
+      setStudioLayoutMode(initialMode);
+    }
+  }, [isOpen, initialMode]);
 
   // -------------------------------------------------------------
   // Configuration State (Completely Isolated from Main App)
@@ -192,8 +211,8 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // PDF Page Picker Modal State
-  const [pdfPickerOpen, setPdfPickerOpen] = useState<boolean>(false);
-  const [pdfPages, setPdfPages] = useState<string[]>([]);
+  const [isPdfImportDialogOpen, setIsPdfImportDialogOpen] = useState<boolean>(false);
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
   const [pdfTargetSide, setPdfTargetSide] = useState<"front" | "back">("front");
 
   // Canvas References: Page 1 (Front) & Page 2 (Back)
@@ -1033,18 +1052,67 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   // -------------------------------------------------------------
   // File Upload Handlers (Independent Front & Back)
   // -------------------------------------------------------------
+  const handleOpenPdfDialog = (file?: File | null, side: "front" | "back" = "front") => {
+    setPdfTargetSide(side);
+    setSelectedPdfFile(file || null);
+    setIsPdfImportDialogOpen(true);
+  };
+
+  const handlePdfImport = (
+    result: PdfImportPageResult,
+    targetSide?: "front" | "back"
+  ) => {
+    const side = targetSide || pdfTargetSide || "front";
+    const dataUrl = result.dataUrl;
+
+    if (side === "front") {
+      setOriginalFrontImage(dataUrl);
+      setFrontBaseImage(dataUrl);
+      setFrontCropState(null);
+      setFrontImage(dataUrl);
+      fullResFrontImageRef.current = dataUrl;
+      classifyImageContent(dataUrl)
+        .then((res) => {
+          setFrontDetectedContent(res);
+          setFrontFilterSource("auto-detected");
+          setFrontFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+          frontFiltersRef.current = { ...frontFiltersRef.current, ...res.recommendedFilters };
+          executeFilterPipelineScheduled(false, "front");
+        })
+        .catch((err) => console.warn("Front upload auto-classify error:", err));
+    } else {
+      setOriginalBackImage(dataUrl);
+      setBackBaseImage(dataUrl);
+      setBackCropState(null);
+      setBackImage(dataUrl);
+      fullResBackImageRef.current = dataUrl;
+      classifyImageContent(dataUrl)
+        .then((res) => {
+          setBackDetectedContent(res);
+          setBackFilterSource("auto-detected");
+          setBackFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+          backFiltersRef.current = { ...backFiltersRef.current, ...res.recommendedFilters };
+          executeFilterPipelineScheduled(false, "back");
+        })
+        .catch((err) => console.warn("Back upload auto-classify error:", err));
+    }
+
+    setStatusMessage(`Imported PDF Page ${result.pageNum} as ${side === "front" ? "Front" : "Back"} card.`);
+    setTimeout(() => setStatusMessage(null), 2500);
+  };
+
   const processUploadedFile = (file: File, side: "front" | "back") => {
     if (!file) return;
 
     if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-      loadPdfFile(file, side);
+      handleOpenPdfDialog(file, side);
       return;
     }
 
-    const validImageTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
-    const isKnownExt = /\.(jpe?g|png|webp)$/i.test(file.name);
+    const validImageTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg", "image/svg+xml"];
+    const isKnownExt = /\.(jpe?g|png|webp|svg)$/i.test(file.name);
     if (!validImageTypes.includes(file.type) && !isKnownExt) {
-      setStatusMessage("Please select a valid image (JPG, PNG, WEBP) or PDF file.");
+      setStatusMessage("Please select a valid image (JPG, PNG, WEBP, SVG) or PDF file.");
       setTimeout(() => setStatusMessage(null), 3500);
       return;
     }
@@ -1101,52 +1169,6 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     e.target.value = "";
   };
 
-  const loadPdfFile = async (file: File, targetSide: "front" | "back") => {
-    try {
-      setStatusMessage("Opening PDF document...");
-      if (currentPdfObjectUrlRef.current) {
-        try {
-          URL.revokeObjectURL(currentPdfObjectUrlRef.current);
-        } catch {}
-      }
-
-      let objectUrl: string | undefined;
-      try {
-        objectUrl = URL.createObjectURL(file);
-        currentPdfObjectUrlRef.current = objectUrl;
-      } catch {}
-
-      const loadingTask = objectUrl
-        ? pdfjsLib.getDocument({ url: objectUrl, useSystemFonts: true })
-        : pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), useSystemFonts: true });
-
-      const pdf = await loadingTask.promise;
-      currentPdfDocRef.current = pdf;
-      const pagesCount = Math.min(pdf.numPages, 12);
-
-      // Immediately accept file and open picker with loading slots
-      setPdfPages(new Array(pagesCount).fill(""));
-      setPdfTargetSide(targetSide);
-      setPdfPickerOpen(true);
-      setStatusMessage(null);
-
-      // Progressively populate thumbnails in lightweight background promises
-      for (let i = 1; i <= pagesCount; i++) {
-        renderPDFPageThumbnail(pdf, i, 220).then((thumb) => {
-          setPdfPages((prev) => {
-            const next = [...prev];
-            next[i - 1] = thumb.thumbnailUrl;
-            return next;
-          });
-        }).catch((e) => console.warn(`Thumbnail failed for page ${i}:`, e));
-      }
-    } catch (err) {
-      console.error("Failed to load PDF:", err);
-      setStatusMessage("Could not read PDF pages.");
-      setTimeout(() => setStatusMessage(null), 3000);
-    }
-  };
-
   // -------------------------------------------------------------
   // Export & Print Actions (Two-Page Output)
   // -------------------------------------------------------------
@@ -1197,15 +1219,15 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   const { pushScope, popScope, registerAction } = useShortcuts();
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || studioLayoutMode !== "idcard") return;
     pushScope("idcard-studio");
     return () => {
       popScope("idcard-studio");
     };
-  }, [isOpen, pushScope, popScope]);
+  }, [isOpen, studioLayoutMode, pushScope, popScope]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || studioLayoutMode !== "idcard") return;
 
     const unregFront = registerAction("idcard.switchFront", () => setCropTargetSide("front"));
     const unregBack = registerAction("idcard.switchBack", () => setCropTargetSide("back"));
@@ -1252,6 +1274,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     };
   }, [
     isOpen,
+    studioLayoutMode,
     cropTargetSide,
     handlePrint,
     handleExportPdf,
@@ -1260,6 +1283,22 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   ]);
 
   if (!isOpen) return null;
+
+  // Dedicated A6 Half-Card Layout Mode Relocation:
+  // Renders the uncompromised A6 Half-Card Studio workspace right inside the ID Card Studio
+  if (studioLayoutMode === "a6") {
+    return (
+      <A6HalfCardStudioModal
+        pages={pages}
+        activePageIndex={activePageIndex}
+        isOpen={isOpen}
+        onClose={onClose}
+        onInsertIntoDocument={onInsertIntoDocument}
+        studioMode={studioLayoutMode}
+        onSwitchStudioMode={(mode) => setStudioLayoutMode(mode)}
+      />
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col select-none">
@@ -1283,6 +1322,27 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
               Page 1: {frontCopiesCount} Front Copies • Page 2: {backCopiesCount} Back Copies • Exact Physical Scale
             </p>
           </div>
+        </div>
+
+        {/* Primary Studio Layout Mode Switcher */}
+        <div className="flex items-center bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-xs shadow-inner">
+          <button
+            type="button"
+            className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 bg-sky-600 text-white shadow-sm cursor-default"
+            title="Currently in Standard ID Card / CNIC (A4 Multi-Card) Studio"
+          >
+            <CreditCard className="w-3.5 h-3.5" />
+            <span>ID Card / CNIC (A4)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStudioLayoutMode("a6")}
+            className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 text-neutral-400 hover:text-white cursor-pointer"
+            title="Switch to A6 Half-Card Layout Studio (74×105mm, Independent Front/Back, Exact Physical Scale)"
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-400" />
+            <span>A6 Half-Card (74×105mm)</span>
+          </button>
         </div>
 
         {/* View Mode Switcher */}
@@ -1383,14 +1443,24 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                 <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
                 <span>Card Source Documents</span>
               </span>
-              <button
-                onClick={handleSwapSides}
-                className="flex items-center space-x-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium px-2 py-0.5 rounded bg-sky-950/60 border border-sky-800/60"
-                title="Swap Front and Back sides"
-              >
-                <ArrowLeftRight className="w-3 h-3" />
-                <span>Swap Front/Back</span>
-              </button>
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={() => handleOpenPdfDialog(null, "front")}
+                  className="flex items-center space-x-1 text-[11px] text-indigo-300 hover:text-white font-medium px-2 py-0.5 rounded bg-indigo-950/70 border border-indigo-800/80 hover:bg-indigo-900 transition-colors"
+                  title="Import page from PDF Document"
+                >
+                  <FileText className="w-3 h-3 text-red-400" />
+                  <span>PDF</span>
+                </button>
+                <button
+                  onClick={handleSwapSides}
+                  className="flex items-center space-x-1 text-[11px] text-sky-400 hover:text-sky-300 font-medium px-2 py-0.5 rounded bg-sky-950/60 border border-sky-800/60"
+                  title="Swap Front and Back sides"
+                >
+                  <ArrowLeftRight className="w-3 h-3" />
+                  <span>Swap</span>
+                </button>
+              </div>
             </div>
 
             {/* Front & Back Cards Slots */}
@@ -1926,6 +1996,17 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                   </option>
                 ))}
               </select>
+              {(config.presetId === "a6-half-card" || config.presetId === "a6-half-card-landscape") && (
+                <button
+                  type="button"
+                  onClick={() => setStudioLayoutMode("a6")}
+                  className="mt-1.5 w-full py-1.5 px-2 rounded-lg text-[10px] font-semibold bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/80 flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                  title="Switch to dedicated A6 Half-Card sheet layout mode"
+                >
+                  <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Open Dedicated A6 Sheet Studio Mode</span>
+                </button>
+              )}
             </div>
 
             {/* Custom Dimension Inputs & Units */}
@@ -2689,7 +2770,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         id="id-card-front-file-input"
         ref={frontFileInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/jpg,.jpg,.jpeg,.png,.webp,application/pdf"
+        accept={ACCEPTED_DOCUMENT_AND_IMAGE_TYPES}
         className="hidden"
         onChange={(e) => handleFileUpload(e, "front")}
       />
@@ -2697,7 +2778,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         id="id-card-back-file-input"
         ref={backFileInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/jpg,.jpg,.jpeg,.png,.webp,application/pdf"
+        accept={ACCEPTED_DOCUMENT_AND_IMAGE_TYPES}
         className="hidden"
         onChange={(e) => handleFileUpload(e, "back")}
       />
@@ -2705,11 +2786,11 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         id="id-card-pdf-file-input"
         ref={pdfFileInputRef}
         type="file"
-        accept="application/pdf,.pdf"
+        accept={ACCEPTED_DOCUMENT_AND_IMAGE_TYPES}
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
-          if (file) loadPdfFile(file, "front");
+          if (file) handleOpenPdfDialog(file, "front");
           e.target.value = "";
         }}
       />
@@ -2730,99 +2811,24 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
       />
 
       {/* -------------------------------------------------------------
-          PDF Multi-Page Picker Sub-Modal
+          Centralized PDF Import Dialog
          ------------------------------------------------------------- */}
-      {pdfPickerOpen && (
-        <div className="fixed inset-0 z-[110] bg-black/85 backdrop-blur-md flex items-center justify-center p-6 select-none">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[85vh] flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <FileText className="w-4 h-4 text-sky-400" />
-                <h3 className="font-bold text-white text-sm">Select Page from PDF Document</h3>
-              </div>
-              <button
-                onClick={() => setPdfPickerOpen(false)}
-                className="p-1 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto custom-scrollbar flex-1 grid grid-cols-3 gap-4">
-              {pdfPages.map((thumb, idx) => (
-                <div
-                  key={idx}
-                  className="bg-neutral-950 border border-neutral-800 rounded-lg p-3 flex flex-col space-y-2 hover:border-sky-500 transition-colors"
-                >
-                  <div className="text-xs font-semibold text-neutral-400 flex items-center justify-between">
-                    <span>Page {idx + 1}</span>
-                  </div>
-                  <div className="aspect-[1/1.414] bg-neutral-900 rounded overflow-hidden flex items-center justify-center border border-neutral-800">
-                    {thumb ? (
-                      <img src={thumb} alt={`Page ${idx + 1}`} className="w-full h-full object-contain" />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center space-y-1.5 text-neutral-500">
-                        <RefreshCw className="w-4 h-4 animate-spin text-sky-400" />
-                        <span className="text-[10px] font-mono">Loading...</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center space-x-1 pt-1">
-                    <button
-                      disabled={!thumb}
-                      onClick={() => {
-                        if (!thumb) return;
-                        setOriginalFrontImage(thumb);
-                        setFrontBaseImage(thumb);
-                        setFrontCropState(null);
-                        setPdfPickerOpen(false);
-
-                        // Upgrade to 300 DPI in background for print/export quality
-                        if (currentPdfDocRef.current) {
-                          renderPDFPageToDataUrl(currentPdfDocRef.current, idx + 1, 300)
-                            .then((rendered) => {
-                              fullResFrontImageRef.current = rendered.dataUrl;
-                              setOriginalFrontImage(rendered.dataUrl);
-                              setFrontBaseImage(rendered.dataUrl);
-                            })
-                            .catch((e) => console.warn("Background full-res render error:", e));
-                        }
-                      }}
-                      className="flex-1 py-1 px-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 rounded text-white text-[11px] font-semibold transition-opacity"
-                    >
-                      Use as Front
-                    </button>
-                    <button
-                      disabled={!thumb}
-                      onClick={() => {
-                        if (!thumb) return;
-                        setOriginalBackImage(thumb);
-                        setBackBaseImage(thumb);
-                        setBackCropState(null);
-                        setPdfPickerOpen(false);
-
-                        // Upgrade to 300 DPI in background for print/export quality
-                        if (currentPdfDocRef.current) {
-                          renderPDFPageToDataUrl(currentPdfDocRef.current, idx + 1, 300)
-                            .then((rendered) => {
-                              fullResBackImageRef.current = rendered.dataUrl;
-                              setOriginalBackImage(rendered.dataUrl);
-                              setBackBaseImage(rendered.dataUrl);
-                            })
-                            .catch((e) => console.warn("Background full-res render error:", e));
-                        }
-                      }}
-                      className="flex-1 py-1 px-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 rounded text-white text-[11px] font-semibold transition-opacity"
-                    >
-                      Use as Back
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      <PdfImportDialog
+        isOpen={isPdfImportDialogOpen}
+        onClose={() => {
+          setIsPdfImportDialogOpen(false);
+          setSelectedPdfFile(null);
+        }}
+        initialFile={selectedPdfFile}
+        title="ID Card PDF Page Importer"
+        description="Select any PDF page to import with 300 DPI print quality into Front or Back card."
+        selectionMode="single"
+        showSideSelector={true}
+        initialSide={pdfTargetSide}
+        showDualSideButtons={true}
+        primaryButtonLabel={`Use as ${pdfTargetSide === "front" ? "Front" : "Back"} Card`}
+        onImportSingle={handlePdfImport}
+      />
     </div>
   );
 };

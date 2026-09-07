@@ -54,7 +54,7 @@ import { DiagnosticsModal } from "./components/diagnostics/DiagnosticsModal";
 import { CamScannerFilterModal } from "./components/filters/CamScannerFilterModal";
 import { PhotoPrintStudioModal } from "./components/photo/PhotoPrintStudioModal";
 import { IdCardPrintStudioModal } from "./components/idcard/IdCardPrintStudioModal";
-import { A6HalfCardStudioModal } from "./components/a6card/A6HalfCardStudioModal";
+import { CardDesignStudioModal } from "./components/carddesigner/CardDesignStudioModal";
 import { PasswordModal } from "./components/modals/PasswordModal";
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
 import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
@@ -146,7 +146,8 @@ export function AppContent() {
   const [isFilterStudioModalOpen, setIsFilterStudioModalOpen] = useState<boolean>(false);
   const [isPhotoPrintStudioModalOpen, setIsPhotoPrintStudioModalOpen] = useState<boolean>(false);
   const [isIdCardStudioModalOpen, setIsIdCardStudioModalOpen] = useState<boolean>(false);
-  const [isA6HalfCardStudioModalOpen, setIsA6HalfCardStudioModalOpen] = useState<boolean>(false);
+  const [isCardDesignerModalOpen, setIsCardDesignerModalOpen] = useState<boolean>(false);
+  const [idCardStudioInitialMode, setIdCardStudioInitialMode] = useState<"idcard" | "a6">("idcard");
   const [isSplitPdfModalOpen, setIsSplitPdfModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [passwordModalState, setPasswordModalState] = useState<{
@@ -1642,8 +1643,15 @@ export function AppContent() {
       registerAction("tool.autocrop", () => handleAutoCrop()),
       registerAction("tool.ocr", () => handleRunOcr("eng")),
       registerAction("studio.photoPrint", () => setIsPhotoPrintStudioModalOpen(true)),
-      registerAction("studio.idCard", () => setIsIdCardStudioModalOpen(true)),
-      registerAction("studio.a6HalfCard", () => setIsA6HalfCardStudioModalOpen(true)),
+      registerAction("studio.idCard", () => {
+        setIdCardStudioInitialMode("idcard");
+        setIsIdCardStudioModalOpen(true);
+      }),
+      registerAction("studio.cardDesigner", () => setIsCardDesignerModalOpen(true)),
+      registerAction("studio.a6HalfCard", () => {
+        setIdCardStudioInitialMode("a6");
+        setIsIdCardStudioModalOpen(true);
+      }),
       registerAction("studio.batch", () => setIsBatchModalOpen(true)),
       registerAction("studio.compare", () => setIsCompareModalOpen(true)),
       registerAction("studio.split", () => setIsSplitPdfModalOpen(true)),
@@ -1753,14 +1761,27 @@ export function AppContent() {
       title: "ID Card / CNIC Print Studio (A4 Multi-Copy Layout)",
       category: "Print",
       icon: <CreditCard className="w-4 h-4" />,
-      action: () => setIsIdCardStudioModalOpen(true),
+      action: () => {
+        setIdCardStudioInitialMode("idcard");
+        setIsIdCardStudioModalOpen(true);
+      },
+    },
+    {
+      id: "cmd-card-designer",
+      title: "ID & Service Card Designer (Vector Studio)",
+      category: "Design",
+      icon: <Sparkles className="w-4 h-4 text-cyan-400" />,
+      action: () => setIsCardDesignerModalOpen(true),
     },
     {
       id: "cmd-a6-halfcard-print",
       title: "A6 Half-Card Layout Studio (74×105mm)",
       category: "Print",
       icon: <Layers className="w-4 h-4 text-indigo-400" />,
-      action: () => setIsA6HalfCardStudioModalOpen(true),
+      action: () => {
+        setIdCardStudioInitialMode("a6");
+        setIsIdCardStudioModalOpen(true);
+      },
     },
     {
       id: "cmd-batch",
@@ -1878,8 +1899,11 @@ export function AppContent() {
         onOpenCropMode={() => setActiveTool("crop")}
         onOpenFilterStudio={() => setIsFilterStudioModalOpen(true)}
         onOpenPhotoPrintStudio={() => setIsPhotoPrintStudioModalOpen(true)}
-        onOpenIdCardStudio={() => setIsIdCardStudioModalOpen(true)}
-        onOpenA6HalfCardStudio={() => setIsA6HalfCardStudioModalOpen(true)}
+        onOpenIdCardStudio={() => {
+          setIdCardStudioInitialMode("idcard");
+          setIsIdCardStudioModalOpen(true);
+        }}
+        onOpenCardDesigner={() => setIsCardDesignerModalOpen(true)}
         onOpenBatchStudio={() => setIsBatchModalOpen(true)}
         onOpenCompare={() => setIsCompareModalOpen(true)}
         onOpenSecurity={() => setIsSecurityModalOpen(true)}
@@ -2056,28 +2080,30 @@ export function AppContent() {
         />
       )}
 
-      {/* ID Card / CNIC Print Studio Modal (Dedicated Isolated Workspace) */}
+      {/* ID Card / CNIC Print Studio Modal (Includes A6 Half-Card Layout Mode) */}
       {isIdCardStudioModalOpen && (
         <IdCardPrintStudioModal
           pages={document.pages}
           activePageIndex={activePageIndex}
           isOpen={isIdCardStudioModalOpen}
-          onClose={() => setIsIdCardStudioModalOpen(false)}
-        />
-      )}
-
-      {/* A6 Half-Card Layout Studio Modal (Dedicated Isolated Workspace) */}
-      {isA6HalfCardStudioModalOpen && (
-        <A6HalfCardStudioModal
-          pages={document.pages}
-          activePageIndex={activePageIndex}
-          isOpen={isA6HalfCardStudioModalOpen}
-          onClose={() => setIsA6HalfCardStudioModalOpen(false)}
+          initialMode={idCardStudioInitialMode}
+          onClose={() => {
+            setIsIdCardStudioModalOpen(false);
+            setIdCardStudioInitialMode("idcard");
+          }}
           onInsertIntoDocument={(newPageUrls) => {
             newPageUrls.forEach((dataUrl) => {
               handleInsertPhotoPage(dataUrl);
             });
           }}
+        />
+      )}
+
+      {/* Professional ID & Service Card Designer Studio Modal (Dual-Card A6 Vector Editor) */}
+      {isCardDesignerModalOpen && (
+        <CardDesignStudioModal
+          isOpen={isCardDesignerModalOpen}
+          onClose={() => setIsCardDesignerModalOpen(false)}
         />
       )}
 
