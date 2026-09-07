@@ -19,6 +19,7 @@ import {
   detectAutoCropBounds,
 } from "../../engine/cropEngine";
 import { OmniPage, OmniDocument } from "../../types";
+import { useShortcuts } from "../../commands/ShortcutContext";
 import {
   Crop,
   Check,
@@ -106,6 +107,74 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   const [showMargins, setShowMargins] = useState(false);
   const [showLivePreview, setShowLivePreview] = useState(false);
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
+
+  // Centralized Shortcut Management for Crop Mode
+  const { pushScope, popScope, registerAction } = useShortcuts();
+
+  useEffect(() => {
+    pushScope("crop");
+    return () => {
+      popScope("crop");
+    };
+  }, [pushScope, popScope]);
+
+  useEffect(() => {
+    const nudge = (dx: number, dy: number) => {
+      onCropBoxChange({
+        ...cropBox,
+        x: Math.max(0, Math.min(1 - cropBox.width, cropBox.x + dx)),
+        y: Math.max(0, Math.min(1 - cropBox.height, cropBox.y + dy)),
+      });
+    };
+
+    const unregApply = registerAction("crop.apply", onApplyCrop);
+    const unregCancel = registerAction("crop.cancel", onCancelCrop);
+    const unregReset = registerAction("crop.reset", onResetCrop);
+    const unregUp = registerAction("crop.nudgeUp", () => nudge(0, -0.01));
+    const unregDown = registerAction("crop.nudgeDown", () => nudge(0, 0.01));
+    const unregLeft = registerAction("crop.nudgeLeft", () => nudge(-0.01, 0));
+    const unregRight = registerAction("crop.nudgeRight", () => nudge(0.01, 0));
+    const unregLUp = registerAction("crop.largeNudgeUp", () => nudge(0, -0.05));
+    const unregLDown = registerAction("crop.largeNudgeDown", () => nudge(0, 0.05));
+    const unregLLeft = registerAction("crop.largeNudgeLeft", () => nudge(-0.05, 0));
+    const unregLRight = registerAction("crop.largeNudgeRight", () => nudge(0.05, 0));
+    const unregFUp = registerAction("crop.fineNudgeUp", () => nudge(0, -0.002));
+    const unregFDown = registerAction("crop.fineNudgeDown", () => nudge(0, 0.002));
+    const unregFLeft = registerAction("crop.fineNudgeLeft", () => nudge(-0.002, 0));
+    const unregFRight = registerAction("crop.fineNudgeRight", () => nudge(0.002, 0));
+    const unregLock = registerAction("crop.aspectLock", () =>
+      onAspectRatioLockChange(!aspectRatioLocked, targetAspectRatio)
+    );
+
+    return () => {
+      unregApply();
+      unregCancel();
+      unregReset();
+      unregUp();
+      unregDown();
+      unregLeft();
+      unregRight();
+      unregLUp();
+      unregLDown();
+      unregLLeft();
+      unregLRight();
+      unregFUp();
+      unregFDown();
+      unregFLeft();
+      unregFRight();
+      unregLock();
+    };
+  }, [
+    cropBox,
+    onCropBoxChange,
+    onApplyCrop,
+    onCancelCrop,
+    onResetCrop,
+    aspectRatioLocked,
+    targetAspectRatio,
+    onAspectRatioLockChange,
+    registerAction,
+  ]);
 
   // -------------------------------------------------------------
   // Full 2D Floating Toolbar Positioning & Resizing State with Persistence

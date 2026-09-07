@@ -33,8 +33,11 @@ import {
   Undo2,
   Redo2,
   CreditCard,
+  ChevronLeft,
+  ChevronRight,
+  Keyboard,
 } from "lucide-react";
-import { AppLanguage, AppTheme, ViewMode } from "../../types";
+import { AppLanguage, AppTheme, ViewMode, ActiveTool } from "../../types";
 import { t } from "../../engine/i18n";
 
 interface HeaderBarProps {
@@ -46,6 +49,9 @@ interface HeaderBarProps {
   isDirty: boolean;
   canUndo?: boolean;
   canRedo?: boolean;
+  activeTool?: ActiveTool;
+  onSetActiveTool?: (tool: ActiveTool) => void;
+  enableCollapse?: boolean;
   onThemeChange: (theme: AppTheme) => void;
   onLanguageChange: (lang: AppLanguage) => void;
   onViewModeChange: (mode: ViewMode) => void;
@@ -66,6 +72,7 @@ interface HeaderBarProps {
   onOpenSecurity: () => void;
   onOpenDiagnostics: () => void;
   onOpenCommandPalette: () => void;
+  onOpenKeyboardShortcuts?: () => void;
   onAnalyzeIntelligence: () => void;
   onRotateActivePage: (degrees: number) => void;
   onDeleteActivePage: () => void;
@@ -88,6 +95,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   isDirty,
   canUndo,
   canRedo,
+  activeTool = "select",
+  onSetActiveTool,
+  enableCollapse = true,
   onThemeChange,
   onLanguageChange,
   onViewModeChange,
@@ -108,6 +118,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenSecurity,
   onOpenDiagnostics,
   onOpenCommandPalette,
+  onOpenKeyboardShortcuts,
   onAnalyzeIntelligence,
   onRotateActivePage,
   onDeleteActivePage,
@@ -121,6 +132,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onRedo,
 }) => {
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [isToolbarCollapsed, setIsToolbarCollapsed] = useState<boolean>(false);
   const menubarRef = useRef<HTMLDivElement>(null);
   const quickActionBarRef = useRef<HTMLDivElement>(null);
 
@@ -233,7 +245,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           <button
             onClick={onOpenCommandPalette}
             className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
-            title="Command Palette (Ctrl + K)"
+            title="Command Palette (Ctrl + K / Ctrl + Shift + P)"
           >
             <Command className="w-3 h-3 text-sky-400" />
             <span className="hidden sm:inline">Commands</span>
@@ -241,6 +253,21 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               ⌘K
             </kbd>
           </button>
+
+          {/* Shortcuts Panel Trigger */}
+          {onOpenKeyboardShortcuts && (
+            <button
+              onClick={onOpenKeyboardShortcuts}
+              className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
+              title="Keyboard Shortcuts & Settings (Ctrl + / or F1)"
+            >
+              <Keyboard className="w-3 h-3 text-sky-400" />
+              <span className="hidden md:inline">Shortcuts</span>
+              <kbd className="px-1 py-0.5 text-[10px] bg-neutral-900 rounded border border-neutral-700 text-neutral-400 font-mono">
+                ⌘/
+              </kbd>
+            </button>
+          )}
 
           {/* Language Selector */}
           <div className="flex items-center space-x-1 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700">
@@ -662,166 +689,247 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         </div>
       </div>
 
-      {/* Quick Action Bar (Scan, Import, Auto Deskew, Run OCR, Intelligence, Export) */}
+      {/* Quick Action Bar (Scan, Import, Auto Deskew, Run OCR, Intelligence, Export) - div:nth-of-type(3) */}
       <div
         ref={quickActionBarRef}
-        className="flex items-center space-x-1.5 px-3 py-1.5 bg-neutral-850/80 text-xs overflow-x-auto custom-scrollbar"
+        id="quick-action-bar"
+        data-toolbar="quick-action-bar"
+        className="flex items-center px-3 py-1.5 bg-neutral-850/80 text-xs overflow-x-auto custom-scrollbar border-b border-neutral-800/60 min-h-[38px] transition-colors"
       >
-        <button
-          onClick={onOpenScanModal}
-          className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white font-medium shadow-sm transition-all active:scale-95"
-        >
-          <Scan className="w-3.5 h-3.5" />
-          <span>{t("action.scan", language)}</span>
-        </button>
+        {/* Fixed Left Anchor: Collapse / Expand Toggle Button */}
+        {enableCollapse && (
+          <div className="flex items-center space-x-1.5 flex-shrink-0 mr-1.5 select-none">
+            <button
+              id="quick-action-bar-collapse-btn"
+              onClick={() => setIsToolbarCollapsed(!isToolbarCollapsed)}
+              className={`p-1.5 rounded transition-all duration-200 flex items-center justify-center flex-shrink-0 ${
+                isToolbarCollapsed
+                  ? "bg-sky-600/30 text-sky-400 hover:bg-sky-600 hover:text-white border border-sky-500/50 shadow-sm"
+                  : "text-neutral-400 hover:text-white hover:bg-neutral-800 border border-transparent"
+              }`}
+              title={
+                isToolbarCollapsed
+                  ? "Expand Quick Action Toolbar (Left to Right)"
+                  : "Collapse Quick Action Toolbar"
+              }
+              aria-label={isToolbarCollapsed ? "Expand Toolbar" : "Collapse Toolbar"}
+            >
+              {isToolbarCollapsed ? (
+                <ChevronRight className="w-3.5 h-3.5 transition-transform duration-200" />
+              ) : (
+                <ChevronLeft className="w-3.5 h-3.5 transition-transform duration-200" />
+              )}
+            </button>
 
-        <button
-          onClick={onImportFile}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-        >
-          <FolderOpen className="w-3.5 h-3.5 text-sky-400" />
-          <span>{t("action.import", language)}</span>
-        </button>
-
-        <div className="h-4 w-px bg-neutral-750 mx-1" />
-
-        <button
-          onClick={onOpenFilterStudio}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-sky-900/60 to-indigo-900/60 hover:from-sky-800/80 hover:to-indigo-800/80 text-sky-200 font-medium border border-sky-700/50 transition-all shadow-sm"
-          title="Open CamScanner Filter Studio"
-        >
-          <Palette className="w-3.5 h-3.5 text-sky-400" />
-          <span>Filter Studio</span>
-        </button>
-
-        <button
-          onClick={onOpenPhotoPrintStudio}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-amber-900/50 to-orange-900/50 hover:from-amber-800/70 hover:to-orange-800/70 text-amber-200 font-medium border border-amber-700/50 transition-all shadow-sm"
-          title="Open 4x6 Photo & Passport Print Studio"
-        >
-          <Printer className="w-3.5 h-3.5 text-amber-400" />
-          <span>4×6" Print Studio</span>
-        </button>
-
-        {onOpenIdCardStudio && (
-          <button
-            onClick={onOpenIdCardStudio}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-emerald-900/50 to-teal-900/50 hover:from-emerald-800/70 hover:to-teal-800/70 text-emerald-200 font-medium border border-emerald-700/50 transition-all shadow-sm"
-            title="Open ID Card / CNIC Print Studio (A4 Multi-Copy Layout)"
-          >
-            <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
-            <span>ID Card Studio</span>
-          </button>
+            {/* Collapsed State: Persistent Active Tool Badge */}
+            {isToolbarCollapsed && (
+              <button
+                id="quick-action-bar-active-badge"
+                onClick={() => setIsToolbarCollapsed(false)}
+                className={`flex items-center space-x-1.5 px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                  activeTool === "crop"
+                    ? "bg-sky-600/30 text-sky-300 border border-sky-500/50"
+                    : activeTool === "redact-region"
+                    ? "bg-rose-600/30 text-rose-300 border border-rose-500/50"
+                    : "bg-neutral-800 text-neutral-300 hover:bg-neutral-750 hover:text-white border border-neutral-700"
+                }`}
+                title={`Selected tool: ${activeTool} — Click to expand toolbar`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    activeTool === "crop"
+                      ? "bg-sky-400 animate-pulse"
+                      : activeTool === "redact-region"
+                      ? "bg-rose-400 animate-pulse"
+                      : "bg-neutral-400"
+                  }`}
+                />
+                <span className="capitalize">
+                  {activeTool === "crop" ? "Crop Page" : activeTool === "redact-region" ? "Redact" : "Quick Actions"}
+                </span>
+              </button>
+            )}
+          </div>
         )}
 
-        {onOpenA6HalfCardStudio && (
+        {/* Collapsible Content: Collapses from Left to Right (Tools remain permanently mounted to preserve selection state) */}
+        <div
+          id="quick-action-bar-content"
+          className={`flex items-center space-x-1.5 flex-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${
+            isToolbarCollapsed
+              ? "max-w-0 opacity-0 pointer-events-none overflow-hidden scale-x-95 origin-left"
+              : "max-w-[2400px] opacity-100 pointer-events-auto overflow-visible flex-1 scale-x-100 origin-left"
+          }`}
+          style={{
+            transformOrigin: "left center",
+            whiteSpace: "nowrap",
+          }}
+        >
           <button
-            onClick={onOpenA6HalfCardStudio}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-indigo-900/50 to-violet-900/50 hover:from-indigo-800/70 hover:to-violet-800/70 text-indigo-200 font-medium border border-indigo-700/50 transition-all shadow-sm"
-            title="Open A6 Half-Card Layout Studio (74 × 105 mm)"
+            onClick={onOpenScanModal}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white font-medium shadow-sm transition-all active:scale-95 flex-shrink-0"
           >
-            <Layers className="w-3.5 h-3.5 text-indigo-400" />
-            <span>A6 Half-Card Studio</span>
+            <Scan className="w-3.5 h-3.5" />
+            <span>{t("action.scan", language)}</span>
           </button>
-        )}
 
-        {onOpenCropMode && (
           <button
-            onClick={onOpenCropMode}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-sky-300 font-medium transition-all border border-neutral-750"
-            title="Open Dedicated 8-Point Physical Page Crop Tool (C)"
+            onClick={onImportFile}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
           >
-            <Crop className="w-3.5 h-3.5 text-sky-400" />
-            <span>Crop Page</span>
+            <FolderOpen className="w-3.5 h-3.5 text-sky-400" />
+            <span>{t("action.import", language)}</span>
           </button>
-        )}
 
-        <div className="h-4 w-px bg-neutral-750 mx-1" />
+          <div className="h-4 w-px bg-neutral-750 mx-1 flex-shrink-0" />
 
-        <button
-          onClick={onAutoDeskew}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-          title="Auto calculate and deskew document angle"
-        >
-          <Wand2 className="w-3.5 h-3.5 text-amber-400" />
-          <span>{t("action.autoDeskew", language)}</span>
-        </button>
-
-        <button
-          onClick={onRunOcr}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-          title="Run high-accuracy local OCR"
-        >
-          <FileSearch className="w-3.5 h-3.5 text-emerald-400" />
-          <span>{t("action.runOcr", language)}</span>
-        </button>
-
-        <button
-          onClick={onAnalyzeIntelligence}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-purple-900/60 to-indigo-900/60 hover:from-purple-800/80 hover:to-indigo-800/80 text-purple-200 font-medium border border-purple-700/50 transition-all shadow-sm"
-          title="Autonomous Document Intelligence & Classification"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-          <span>Document Intelligence</span>
-        </button>
-
-        <div className="h-4 w-px bg-neutral-750 mx-1" />
-
-        <button
-          onClick={onOpenBatchStudio}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-        >
-          <Layers className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Batch Studio</span>
-        </button>
-
-        <button
-          onClick={onOpenCompare}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-        >
-          <SplitSquareVertical className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Compare</span>
-        </button>
-
-        <button
-          onClick={onOpenSecurity}
-          className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-        >
-          <ShieldCheck className="w-3.5 h-3.5 text-rose-400" />
-          <span>Security / Redact</span>
-        </button>
-
-        {onOpenSplitPdf && (
           <button
-            onClick={onOpenSplitPdf}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-            title="Split PDF into multiple documents"
+            onClick={onOpenFilterStudio}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-sky-900/60 to-indigo-900/60 hover:from-sky-800/80 hover:to-indigo-800/80 text-sky-200 font-medium border border-sky-700/50 transition-all shadow-sm flex-shrink-0"
+            title="Open CamScanner Filter Studio"
           >
-            <Scissors className="w-3.5 h-3.5 text-sky-400" />
-            <span>Split</span>
+            <Palette className="w-3.5 h-3.5 text-sky-400" />
+            <span>Filter Studio</span>
           </button>
-        )}
 
-        {onPrintDocument && (
           <button
-            onClick={onPrintDocument}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all"
-            title="Print Document (Ctrl+P)"
+            onClick={onOpenPhotoPrintStudio}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-amber-900/50 to-orange-900/50 hover:from-amber-800/70 hover:to-orange-800/70 text-amber-200 font-medium border border-amber-700/50 transition-all shadow-sm flex-shrink-0"
+            title="Open 4x6 Photo & Passport Print Studio"
           >
             <Printer className="w-3.5 h-3.5 text-amber-400" />
-            <span>Print</span>
+            <span>4×6" Print Studio</span>
           </button>
-        )}
 
-        <div className="flex-1" />
+          {onOpenIdCardStudio && (
+            <button
+              onClick={onOpenIdCardStudio}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-emerald-900/50 to-teal-900/50 hover:from-emerald-800/70 hover:to-teal-800/70 text-emerald-200 font-medium border border-emerald-700/50 transition-all shadow-sm flex-shrink-0"
+              title="Open ID Card / CNIC Print Studio (A4 Multi-Copy Layout)"
+            >
+              <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
+              <span>ID Card Studio</span>
+            </button>
+          )}
 
-        <button
-          onClick={onExportPdf}
-          className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-sm transition-all active:scale-95 ml-auto"
-        >
-          <Download className="w-3.5 h-3.5" />
-          <span>{t("action.export", language)}</span>
-        </button>
+          {onOpenA6HalfCardStudio && (
+            <button
+              onClick={onOpenA6HalfCardStudio}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-indigo-900/50 to-violet-900/50 hover:from-indigo-800/70 hover:to-violet-800/70 text-indigo-200 font-medium border border-indigo-700/50 transition-all shadow-sm flex-shrink-0"
+              title="Open A6 Half-Card Layout Studio (74 × 105 mm)"
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-400" />
+              <span>A6 Half-Card Studio</span>
+            </button>
+          )}
+
+          {onOpenCropMode && (
+            <button
+              id="quick-action-crop-tool-btn"
+              onClick={onOpenCropMode}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded font-medium transition-all border flex-shrink-0 ${
+                activeTool === "crop"
+                  ? "bg-sky-600 text-white border-sky-500 shadow-sm"
+                  : "bg-neutral-800 hover:bg-neutral-700 text-sky-300 border-neutral-750"
+              }`}
+              title="Open Dedicated 8-Point Physical Page Crop Tool (C)"
+            >
+              <Crop className="w-3.5 h-3.5 text-sky-400" />
+              <span>Crop Page</span>
+            </button>
+          )}
+
+          <div className="h-4 w-px bg-neutral-750 mx-1 flex-shrink-0" />
+
+          <button
+            onClick={onAutoDeskew}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
+            title="Auto calculate and deskew document angle"
+          >
+            <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+            <span>{t("action.autoDeskew", language)}</span>
+          </button>
+
+          <button
+            onClick={onRunOcr}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
+            title="Run high-accuracy local OCR"
+          >
+            <FileSearch className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{t("action.runOcr", language)}</span>
+          </button>
+
+          <button
+            onClick={onAnalyzeIntelligence}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-purple-900/60 to-indigo-900/60 hover:from-purple-800/80 hover:to-indigo-800/80 text-purple-200 font-medium border border-purple-700/50 transition-all shadow-sm flex-shrink-0"
+            title="Autonomous Document Intelligence & Classification"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span>Document Intelligence</span>
+          </button>
+
+          <div className="h-4 w-px bg-neutral-750 mx-1 flex-shrink-0" />
+
+          <button
+            onClick={onOpenBatchStudio}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
+          >
+            <Layers className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Batch Studio</span>
+          </button>
+
+          <button
+            onClick={onOpenCompare}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
+          >
+            <SplitSquareVertical className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Compare</span>
+          </button>
+
+          <button
+            onClick={onOpenSecurity}
+            className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded font-medium transition-all flex-shrink-0 ${
+              activeTool === "redact-region"
+                ? "bg-rose-600 text-white shadow-sm"
+                : "bg-neutral-800 hover:bg-neutral-700 text-neutral-200"
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-rose-400" />
+            <span>Security / Redact</span>
+          </button>
+
+          {onOpenSplitPdf && (
+            <button
+              onClick={onOpenSplitPdf}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
+              title="Split PDF into multiple documents"
+            >
+              <Scissors className="w-3.5 h-3.5 text-sky-400" />
+              <span>Split</span>
+            </button>
+          )}
+
+          {onPrintDocument && (
+            <button
+              onClick={onPrintDocument}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-medium transition-all flex-shrink-0"
+              title="Print Document (Ctrl+P)"
+            >
+              <Printer className="w-3.5 h-3.5 text-amber-400" />
+              <span>Print</span>
+            </button>
+          )}
+
+          <div className="flex-1" />
+
+          <button
+            onClick={onExportPdf}
+            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-sm transition-all active:scale-95 ml-auto flex-shrink-0"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>{t("action.export", language)}</span>
+          </button>
+        </div>
       </div>
     </header>
   );

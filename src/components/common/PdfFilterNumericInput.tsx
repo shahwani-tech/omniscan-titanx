@@ -131,10 +131,18 @@ export const PdfFilterNumericInput: React.FC<PdfFilterNumericInputProps> = ({
       setText(formatDisplayValue(lastCommittedValueRef.current, precision));
       onChange(lastCommittedValueRef.current, true);
       inputRef.current?.blur();
-    } else if (e.key === "ArrowUp") {
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setText(formatDisplayValue(min, precision));
+      commitValue(min);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setText(formatDisplayValue(max, precision));
+      commitValue(max);
+    } else if (e.key === "PageUp") {
       e.preventDefault();
       const current = isNaN(parseFloat(text)) ? value : parseFloat(text);
-      const delta = e.shiftKey ? step * 5 : step;
+      const delta = step * 10;
       const nextVal = clamp(
         precision > 0 ? Number((current + delta).toFixed(precision)) : Math.round(current + delta),
         min,
@@ -142,10 +150,32 @@ export const PdfFilterNumericInput: React.FC<PdfFilterNumericInputProps> = ({
       );
       setText(formatDisplayValue(nextVal, precision));
       commitValue(nextVal);
-    } else if (e.key === "ArrowDown") {
+    } else if (e.key === "PageDown") {
       e.preventDefault();
       const current = isNaN(parseFloat(text)) ? value : parseFloat(text);
-      const delta = e.shiftKey ? step * 5 : step;
+      const delta = step * 10;
+      const nextVal = clamp(
+        precision > 0 ? Number((current - delta).toFixed(precision)) : Math.round(current - delta),
+        min,
+        max
+      );
+      setText(formatDisplayValue(nextVal, precision));
+      commitValue(nextVal);
+    } else if (e.key === "ArrowUp" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const current = isNaN(parseFloat(text)) ? value : parseFloat(text);
+      const delta = e.altKey ? step * 0.1 : e.shiftKey ? step * 5 : step;
+      const nextVal = clamp(
+        precision > 0 ? Number((current + delta).toFixed(precision)) : Math.round(current + delta),
+        min,
+        max
+      );
+      setText(formatDisplayValue(nextVal, precision));
+      commitValue(nextVal);
+    } else if (e.key === "ArrowDown" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      const current = isNaN(parseFloat(text)) ? value : parseFloat(text);
+      const delta = e.altKey ? step * 0.1 : e.shiftKey ? step * 5 : step;
       const nextVal = clamp(
         precision > 0 ? Number((current - delta).toFixed(precision)) : Math.round(current - delta),
         min,

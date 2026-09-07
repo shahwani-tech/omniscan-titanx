@@ -38,6 +38,7 @@ import {
 } from "../../engine/backgroundRemover";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageToDataUrl } from "../../engine/pdf";
+import { useShortcuts } from "../../commands/ShortcutContext";
 import {
   X,
   Printer,
@@ -936,6 +937,98 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       onClose();
     }
   };
+
+  // Centralized Shortcut Management for Photo Print Studio
+  const { pushScope, popScope, registerAction } = useShortcuts();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    pushScope("photo-studio");
+    return () => {
+      popScope("photo-studio");
+    };
+  }, [isOpen, pushScope, popScope]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const unregZoomIn = registerAction("photo.zoomIn", () =>
+      setCropZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2))))
+    );
+    const unregZoomOut = registerAction("photo.zoomOut", () =>
+      setCropZoom((prev) => Math.max(0.5, Number((prev - 0.1).toFixed(2))))
+    );
+    const unregResetZoom = registerAction("photo.resetZoom", () => {
+      setCropZoom(1.0);
+      setCropImagePan({ x: 0, y: 0 });
+    });
+    const unregRotateCw = registerAction("photo.rotateCw", () =>
+      setCropRotation((prev) => (prev + 90) % 360)
+    );
+    const unregRotateCcw = registerAction("photo.rotateCcw", () =>
+      setCropRotation((prev) => (prev - 90 + 360) % 360)
+    );
+    const unregUp = registerAction("photo.nudgeUp", () =>
+      setCropImagePan((prev) => ({ ...prev, y: prev.y - 10 }))
+    );
+    const unregDown = registerAction("photo.nudgeDown", () =>
+      setCropImagePan((prev) => ({ ...prev, y: prev.y + 10 }))
+    );
+    const unregLeft = registerAction("photo.nudgeLeft", () =>
+      setCropImagePan((prev) => ({ ...prev, x: prev.x - 10 }))
+    );
+    const unregRight = registerAction("photo.nudgeRight", () =>
+      setCropImagePan((prev) => ({ ...prev, x: prev.x + 10 }))
+    );
+    const unregGrid = registerAction("photo.toggleGrid", () =>
+      setSheetConfig((prev) => ({
+        ...prev,
+        border: { ...prev.border, enabled: !prev.border.enabled },
+      }))
+    );
+    const unregGuides = registerAction("photo.toggleGuides", () =>
+      setSheetConfig((prev) => ({
+        ...prev,
+        cuttingGuides: {
+          ...prev.cuttingGuides,
+          type: prev.cuttingGuides.type === "none" ? "corner-marks" : "none",
+        },
+      }))
+    );
+    const unregResetAll = registerAction("photo.resetAll", () => {
+      setCropZoom(1.0);
+      setCropImagePan({ x: 0, y: 0 });
+      setCropRotation(0);
+      handleResetFilters();
+    });
+    const unregPrint = registerAction("photo.print", handlePrintSheet);
+    const unregExport = registerAction("photo.export", handleExportPDF);
+    const unregClose = registerAction("photo.close", onClose);
+
+    return () => {
+      unregZoomIn();
+      unregZoomOut();
+      unregResetZoom();
+      unregRotateCw();
+      unregRotateCcw();
+      unregUp();
+      unregDown();
+      unregLeft();
+      unregRight();
+      unregGrid();
+      unregGuides();
+      unregResetAll();
+      unregPrint();
+      unregExport();
+      unregClose();
+    };
+  }, [
+    isOpen,
+    registerAction,
+    handlePrintSheet,
+    handleExportPDF,
+    onClose,
+  ]);
 
   // Quick Preset Handlers
   const handleSelectPresetCopies = (copies: number, cols: number, rows: number) => {

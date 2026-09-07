@@ -52,6 +52,8 @@ import { IdCardPrintStudioModal } from "./components/idcard/IdCardPrintStudioMod
 import { A6HalfCardStudioModal } from "./components/a6card/A6HalfCardStudioModal";
 import { PasswordModal } from "./components/modals/PasswordModal";
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
+import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
+import { KeyboardShortcutsModal } from "./components/command/KeyboardShortcutsModal";
 import { executeFilterPipeline } from "./engine/filters";
 import { isRTL } from "./engine/i18n";
 import {
@@ -75,7 +77,7 @@ import {
   CreditCard,
 } from "lucide-react";
 
-export function App() {
+export function AppContent() {
   // Document State
   const [document, setDocument] = useState<OmniDocument>(() => {
     const initialPages = createInitialSampleDocument();
@@ -129,6 +131,7 @@ export function App() {
   const [isCompareModalOpen, setIsCompareModalOpen] = useState<boolean>(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isKeyboardShortcutsModalOpen, setIsKeyboardShortcutsModalOpen] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
   const [isFilterStudioModalOpen, setIsFilterStudioModalOpen] = useState<boolean>(false);
   const [isPhotoPrintStudioModalOpen, setIsPhotoPrintStudioModalOpen] = useState<boolean>(false);
@@ -208,37 +211,6 @@ export function App() {
       setHistoryIndex(0);
     }
   }, []);
-
-  // Keyboard Shortcuts (Ctrl+K, Ctrl+S, Ctrl+O, Ctrl+E, Ctrl+Z, Ctrl+Y, Ctrl+P)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setIsCommandPaletteOpen((prev) => !prev);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        handleSaveProject();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
-        e.preventDefault();
-        fileInputRef.current?.click();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
-        e.preventDefault();
-        handleExportPdf();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      } else if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z")) {
-        e.preventDefault();
-        handleRedo();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        handlePrintDocument();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [document, history, historyIndex, handleUndo, handleRedo]);
 
   // Progressive PDF Thumbnail Synchronization
   useEffect(() => {
@@ -1469,6 +1441,75 @@ export function App() {
   };
 
   // -------------------------------------------------------------
+  // Centralized Application Keyboard Shortcut Registration
+  // -------------------------------------------------------------
+  const { registerAction } = useShortcuts();
+
+  useEffect(() => {
+    const unregisterFns = [
+      registerAction("file.open", () => fileInputRef.current?.click()),
+      registerAction("file.save", handleSaveProject),
+      registerAction("file.export", handleExportPdf),
+      registerAction("file.print", handlePrintDocument),
+      registerAction("edit.undo", handleUndo),
+      registerAction("edit.redo", handleRedo),
+      registerAction("view.commandPalette", () => setIsCommandPaletteOpen((prev) => !prev)),
+      registerAction("view.keyboardShortcuts", () => setIsKeyboardShortcutsModalOpen((prev) => !prev)),
+      registerAction("view.zoomIn", () => setZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2))))),
+      registerAction("view.zoomOut", () => setZoom((prev) => Math.max(0.2, Number((prev - 0.1).toFixed(2))))),
+      registerAction("view.resetZoom", () => setZoom(1.0)),
+      registerAction("view.fitWidth", () => setZoom(1.0)),
+      registerAction("page.next", () =>
+        setActivePageIndex((prev) => Math.min(document.pages.length - 1, prev + 1))
+      ),
+      registerAction("page.prev", () =>
+        setActivePageIndex((prev) => Math.max(0, prev - 1))
+      ),
+      registerAction("page.first", () => setActivePageIndex(0)),
+      registerAction("page.last", () =>
+        setActivePageIndex(Math.max(0, document.pages.length - 1))
+      ),
+      registerAction("page.delete", () => handleDeletePage(activePageIndex)),
+      registerAction("page.rotateCw", () => handleRotateActivePage(90)),
+      registerAction("page.rotateCcw", () => handleRotateActivePage(-90)),
+      registerAction("page.duplicate", () => handleDuplicatePage(activePageIndex)),
+      registerAction("tool.select", () => setActiveTool("select")),
+      registerAction("tool.hand", () => setActiveTool("hand")),
+      registerAction("tool.crop", () => setActiveTool("crop")),
+      registerAction("tool.filters", () => setIsFilterStudioModalOpen(true)),
+      registerAction("tool.deskew", () => handleAutoDeskew()),
+      registerAction("tool.autocrop", () => handleAutoCrop()),
+      registerAction("tool.ocr", () => handleRunOcr("eng")),
+      registerAction("studio.photoPrint", () => setIsPhotoPrintStudioModalOpen(true)),
+      registerAction("studio.idCard", () => setIsIdCardStudioModalOpen(true)),
+      registerAction("studio.a6HalfCard", () => setIsA6HalfCardStudioModalOpen(true)),
+      registerAction("studio.batch", () => setIsBatchModalOpen(true)),
+      registerAction("studio.compare", () => setIsCompareModalOpen(true)),
+      registerAction("studio.split", () => setIsSplitPdfModalOpen(true)),
+      registerAction("app.help", () => setIsKeyboardShortcutsModalOpen(true)),
+    ];
+
+    return () => {
+      unregisterFns.forEach((fn) => fn());
+    };
+  }, [
+    document.pages.length,
+    activePageIndex,
+    handleSaveProject,
+    handleExportPdf,
+    handlePrintDocument,
+    handleUndo,
+    handleRedo,
+    handleDeletePage,
+    handleRotateActivePage,
+    handleDuplicatePage,
+    handleAutoDeskew,
+    handleAutoCrop,
+    handleRunOcr,
+    registerAction,
+  ]);
+
+  // -------------------------------------------------------------
   // Command Palette Items
   // -------------------------------------------------------------
   const commandItems = [
@@ -1660,6 +1701,8 @@ export function App() {
         isDirty={isDirty}
         canUndo={historyIndex > 0}
         canRedo={historyIndex < history.length - 1}
+        activeTool={activeTool}
+        onSetActiveTool={setActiveTool}
         onThemeChange={setTheme}
         onLanguageChange={setLanguage}
         onViewModeChange={setViewMode}
@@ -1681,6 +1724,7 @@ export function App() {
         onOpenSecurity={() => setIsSecurityModalOpen(true)}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onOpenKeyboardShortcuts={() => setIsKeyboardShortcutsModalOpen(true)}
         onAnalyzeIntelligence={() => handleAnalyzeIntelligence()}
         onRotateActivePage={(deg) => handleRotateActivePage(deg)}
         onDeleteActivePage={() => handleDeletePage(activePageIndex)}
@@ -1814,6 +1858,11 @@ export function App() {
         commands={commandItems}
       />
 
+      <KeyboardShortcutsModal
+        isOpen={isKeyboardShortcutsModalOpen}
+        onClose={() => setIsKeyboardShortcutsModalOpen(false)}
+      />
+
       <DiagnosticsModal
         isOpen={isDiagnosticsOpen}
         document={document}
@@ -1889,6 +1938,14 @@ export function App() {
         }}
       />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <ShortcutProvider>
+      <AppContent />
+    </ShortcutProvider>
   );
 }
 

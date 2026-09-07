@@ -35,6 +35,8 @@ import {
   AlignCenter,
   ArrowUp,
   ArrowDown,
+  Hand,
+  MousePointer,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import {
@@ -56,8 +58,9 @@ import {
   getA6SheetDimensions,
 } from "../../engine/a6HalfCardLayout";
 import { renderPDFPageToDataUrl } from "../../engine/pdf";
+import { useShortcuts } from "../../commands/ShortcutContext";
 import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
-import { A6HalfCardCropModal } from "./A6HalfCardCropModal";
+import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
 import { OmniPage } from "../../types";
 
@@ -120,8 +123,18 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   // Active page preview in multi-page mode (Mode C)
   const [activePreviewPageIndex, setActivePreviewPageIndex] = useState<number>(0);
 
-  // Viewport zoom for preview canvas (center-based)
+  // Viewport zoom and pan for preview canvas (center-based)
   const [previewZoom, setPreviewZoom] = useState<number>(1.0);
+  const [canvasPan, setCanvasPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [previewTool, setPreviewTool] = useState<"select" | "hand">("select");
+  const [isSpacePressed, setIsSpacePressed] = useState<boolean>(false);
+  const [isCanvasDragging, setIsCanvasDragging] = useState<boolean>(false);
+
+  // Independent Raw Sources & Crop States for Front and Back
+  const [frontRawImage, setFrontRawImage] = useState<string | null>(null);
+  const [backRawImage, setBackRawImage] = useState<string | null>(null);
+  const [frontCropState, setFrontCropState] = useState<A6CropState | null>(null);
+  const [backCropState, setBackCropState] = useState<A6CropState | null>(null);
 
   // Loading / rendering status
   const [isRendering, setIsRendering] = useState<boolean>(false);
@@ -139,6 +152,12 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   const backInputRef = useRef<HTMLInputElement>(null);
   const frontObjectUrlRef = useRef<string | null>(null);
   const backObjectUrlRef = useRef<string | null>(null);
+
+  // Pointer drag refs
+  const isCanvasDraggingRef = useRef<boolean>(false);
+  const canvasDragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const canvasPanStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const canvasRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -162,6 +181,90 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   };
 
   // -------------------------------------------------------------
+  // Viewport High-Zoom Canvas Drag & Pan Handlers
+  // -------------------------------------------------------------
+  const handleViewportPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Left click with hand tool OR space pressed OR middle mouse click
+    const isMiddle = e.button === 1;
+    const isHandMode = previewTool === "hand";
+    if (isMiddle || isHandMode || isSpacePressed) {
+      e.preventDefault();
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+      isCanvasDraggingRef.current = true;
+      setIsCanvasDragging(true);
+      canvasDragStartRef.current = { x: e.clientX, y: e.clientY };
+      canvasPanStartRef.current = { ...canvasPan };
+    }
+  };
+
+  const handleViewportPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isCanvasDraggingRef.current) return;
+    e.preventDefault();
+
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+
+    if (canvasRafRef.current) cancelAnimationFrame(canvasRafRef.current);
+    canvasRafRef.current = requestAnimationFrame(() => {
+      const dx = clientX - canvasDragStartRef.current.x;
+      const dy = clientY - canvasDragStartRef.current.y;
+
+      const vp = viewportRef.current;
+      const canvas = previewCanvasRef.current;
+      let limitX = 1200;
+      let limitY = 1200;
+      if (vp && canvas) {
+        const boardW = canvas.width * previewZoom;
+        const boardH = canvas.height * previewZoom;
+        limitX = Math.max(300, boardW / 2 + vp.clientWidth / 2 - 100);
+        limitY = Math.max(300, boardH / 2 + vp.clientHeight / 2 - 100);
+      }
+
+      const nextX = Math.max(-limitX, Math.min(limitX, canvasPanStartRef.current.x + dx));
+      const nextY = Math.max(-limitY, Math.min(limitY, canvasPanStartRef.current.y + dy));
+
+      setCanvasPan({ x: nextX, y: nextY });
+    });
+  };
+
+  const handleViewportPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isCanvasDraggingRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+      isCanvasDraggingRef.current = false;
+      setIsCanvasDragging(false);
+    }
+  };
+
+  const handleFitWidth = () => {
+    const vp = viewportRef.current;
+    const canvas = previewCanvasRef.current;
+    if (!vp || !canvas || canvas.width <= 0) return;
+    const vpW = vp.clientWidth - 80;
+    const nextZoom = Math.min(3.0, Math.max(0.3, Number((vpW / canvas.width).toFixed(2))));
+    setPreviewZoom(nextZoom);
+    setCanvasPan({ x: 0, y: 0 });
+  };
+
+  const handleFitHeight = () => {
+    const vp = viewportRef.current;
+    const canvas = previewCanvasRef.current;
+    if (!vp || !canvas || canvas.height <= 0) return;
+    const vpH = vp.clientHeight - 80;
+    const nextZoom = Math.min(3.0, Math.max(0.3, Number((vpH / canvas.height).toFixed(2))));
+    setPreviewZoom(nextZoom);
+    setCanvasPan({ x: 0, y: 0 });
+  };
+
+  const handleResetPreview = () => {
+    setPreviewZoom(1.0);
+    setCanvasPan({ x: 0, y: 0 });
+  };
+
+  // -------------------------------------------------------------
   // Center-Based Zoom Wheel Listener on Viewport
   // -------------------------------------------------------------
   useEffect(() => {
@@ -180,7 +283,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       const isOverScrollbarY = e.clientX >= rect.left + vp.clientWidth;
       const isOverScrollbarX = e.clientY >= rect.top + vp.clientHeight;
       if (isOverScrollbarX || isOverScrollbarY) {
-        return; // Retain native browser scrolling
+        return;
       }
 
       // 3. Center-based zoom: strictly centered on visible preview viewport
@@ -197,6 +300,61 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       vp.removeEventListener("wheel", handleWheel);
     };
   }, []);
+
+  // -------------------------------------------------------------
+  // Dedicated A6 Half-Card Keyboard Shortcuts
+  // -------------------------------------------------------------
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("input, textarea, select")) return;
+
+      if (e.code === "Space" && !e.repeat) {
+        e.preventDefault();
+        setIsSpacePressed(true);
+      } else if (e.key.toLowerCase() === "h" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setPreviewTool((prev) => (prev === "hand" ? "select" : "hand"));
+      } else if (e.key.toLowerCase() === "c" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setCropTargetSide(activeSideTab);
+        setIsCropModalOpen(true);
+      } else if (e.key === "0" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        handleResetPreview();
+      } else if (e.key === "1" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setPreviewZoom(1.0);
+      } else if (e.key === "2" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        handleFitWidth();
+      } else if (e.key === "3" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        handleFitHeight();
+      } else if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        setPreviewZoom((z) => Math.min(3.0, Number((z + 0.1).toFixed(2))));
+      } else if (e.key === "-") {
+        e.preventDefault();
+        setPreviewZoom((z) => Math.max(0.4, Number((z - 0.1).toFixed(2))));
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setIsSpacePressed(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [isOpen, activeSideTab]);
 
   // -------------------------------------------------------------
   // Unified File Processor (Images & PDFs)
@@ -246,9 +404,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
         if (side === "front") {
           setFrontPdf(meta);
           setFrontImage(rendered.dataUrl);
+          setFrontRawImage(rendered.dataUrl);
+          setFrontCropState(null);
         } else {
           setBackPdf(meta);
           setBackImage(rendered.dataUrl);
+          setBackRawImage(rendered.dataUrl);
+          setBackCropState(null);
         }
 
         showToast(`Loaded PDF: Page 1 of ${pdfDoc.numPages}`);
@@ -270,10 +432,14 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
           if (side === "front") {
             setFrontPdf(null); // Clear PDF metadata since user uploaded image
             setFrontImage(reader.result);
+            setFrontRawImage(reader.result);
+            setFrontCropState(null);
             showToast("Front image loaded successfully.");
           } else {
             setBackPdf(null);
             setBackImage(reader.result);
+            setBackRawImage(reader.result);
+            setBackCropState(null);
             showToast("Back image loaded successfully.");
           }
         }
@@ -325,9 +491,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       if (side === "front") {
         setFrontPdf((prev) => (prev ? { ...prev, activePage: pageNum } : null));
         setFrontImage(rendered.dataUrl);
+        setFrontRawImage(rendered.dataUrl);
+        setFrontCropState(null);
       } else {
         setBackPdf((prev) => (prev ? { ...prev, activePage: pageNum } : null));
         setBackImage(rendered.dataUrl);
+        setBackRawImage(rendered.dataUrl);
+        setBackCropState(null);
       }
       showToast(`Switched ${side.toUpperCase()} to Page ${pageNum}`);
     } catch (err) {
@@ -345,10 +515,14 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       if (side === "front") {
         setFrontPdf(null);
         setFrontImage(page.originalDataUrl);
+        setFrontRawImage(page.originalDataUrl);
+        setFrontCropState(null);
         showToast(`Document Page ${activePageIndex + 1} imported as Front card.`);
       } else {
         setBackPdf(null);
         setBackImage(page.originalDataUrl);
+        setBackRawImage(page.originalDataUrl);
+        setBackCropState(null);
         showToast(`Document Page ${activePageIndex + 1} imported as Back card.`);
       }
     } else {
@@ -360,8 +534,14 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   const handleLoadSamples = () => {
     setFrontPdf(null);
     setBackPdf(null);
-    setFrontImage(createSampleA6CardSvg("front"));
-    setBackImage(createSampleA6CardSvg("back"));
+    const sampleFront = createSampleA6CardSvg("front");
+    const sampleBack = createSampleA6CardSvg("back");
+    setFrontImage(sampleFront);
+    setFrontRawImage(sampleFront);
+    setFrontCropState(null);
+    setBackImage(sampleBack);
+    setBackRawImage(sampleBack);
+    setBackCropState(null);
     showToast("Loaded sample front & back cards.");
   };
 
@@ -610,6 +790,14 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
     setFrontImage(backImage);
     setBackImage(tempImg);
 
+    const tempRaw = frontRawImage;
+    setFrontRawImage(backRawImage);
+    setBackRawImage(tempRaw);
+
+    const tempCrop = frontCropState;
+    setFrontCropState(backCropState);
+    setBackCropState(tempCrop);
+
     const tempPdf = frontPdf;
     setFrontPdf(backPdf);
     setBackPdf(tempPdf);
@@ -626,6 +814,8 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   const handleRepeatCard = (side: "front" | "back") => {
     if (side === "front") {
       setBackImage(frontImage);
+      setBackRawImage(frontRawImage);
+      setBackCropState(frontCropState);
       setBackPdf(frontPdf);
       setConfig((prev) => ({
         ...prev,
@@ -634,6 +824,8 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       showToast("Duplicated Front card to Back.");
     } else {
       setFrontImage(backImage);
+      setFrontRawImage(backRawImage);
+      setFrontCropState(backCropState);
       setFrontPdf(backPdf);
       setConfig((prev) => ({
         ...prev,
@@ -646,12 +838,16 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   // Clear handlers
   const handleClearFront = () => {
     setFrontImage("");
+    setFrontRawImage(null);
+    setFrontCropState(null);
     setFrontPdf(null);
     showToast("Cleared Front card.");
   };
 
   const handleClearBack = () => {
     setBackImage("");
+    setBackRawImage(null);
+    setBackCropState(null);
     setBackPdf(null);
     showToast("Cleared Back card.");
   };
@@ -807,6 +1003,110 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       setIsExporting(false);
     }
   };
+
+  // Centralized Shortcut Management for A6 Half-Card Studio
+  const { pushScope, popScope, registerAction } = useShortcuts();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    pushScope("a6-studio");
+    return () => {
+      popScope("a6-studio");
+    };
+  }, [isOpen, pushScope, popScope]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const unregFront = registerAction("a6.switchFront", () => setActiveSideTab("front"));
+    const unregBack = registerAction("a6.switchBack", () => setActiveSideTab("back"));
+    const unregOrient = registerAction("a6.toggleOrientation", () =>
+      setConfig((prev) => ({
+        ...prev,
+        orientation: prev.orientation === "portrait" ? "landscape" : "portrait",
+      }))
+    );
+    const unregRotateCw = registerAction("a6.rotateCw", () =>
+      updateActiveAdjustment({ rotation: (currentAdjustment.rotation + 90) % 360 })
+    );
+    const unregRotateCcw = registerAction("a6.rotateCcw", () =>
+      updateActiveAdjustment({ rotation: (currentAdjustment.rotation - 90 + 360) % 360 })
+    );
+    const unregZoomIn = registerAction("a6.zoomIn", () =>
+      updateActiveAdjustment({
+        zoom: Math.min(3.0, Number((currentAdjustment.zoom + 0.1).toFixed(2))),
+      })
+    );
+    const unregZoomOut = registerAction("a6.zoomOut", () =>
+      updateActiveAdjustment({
+        zoom: Math.max(0.5, Number((currentAdjustment.zoom - 0.1).toFixed(2))),
+      })
+    );
+    const unregResetZoom = registerAction("a6.resetZoom", () =>
+      updateActiveAdjustment({ zoom: 1.0, offsetX: 0, offsetY: 0 })
+    );
+    const unregUp = registerAction("a6.nudgeUp", () =>
+      updateActiveAdjustment({ offsetY: currentAdjustment.offsetY - 2 })
+    );
+    const unregDown = registerAction("a6.nudgeDown", () =>
+      updateActiveAdjustment({ offsetY: currentAdjustment.offsetY + 2 })
+    );
+    const unregLeft = registerAction("a6.nudgeLeft", () =>
+      updateActiveAdjustment({ offsetX: currentAdjustment.offsetX - 2 })
+    );
+    const unregRight = registerAction("a6.nudgeRight", () =>
+      updateActiveAdjustment({ offsetX: currentAdjustment.offsetX + 2 })
+    );
+    const unregGrid = registerAction("a6.toggleGrid", () =>
+      setConfig((prev) => ({
+        ...prev,
+        border: { ...prev.border, enabled: !prev.border.enabled },
+      }))
+    );
+    const unregGuides = registerAction("a6.toggleGuides", () =>
+      setConfig((prev) => ({
+        ...prev,
+        cuttingGuides: {
+          ...prev.cuttingGuides,
+          enabled: !prev.cuttingGuides.enabled,
+        },
+      }))
+    );
+    const unregReset = registerAction("a6.resetAll", () => {
+      handleResetActiveSide();
+    });
+    const unregPrint = registerAction("a6.print", handleDirectPrint);
+    const unregExport = registerAction("a6.export", handleExportPdf);
+    const unregClose = registerAction("a6.close", onClose);
+
+    return () => {
+      unregFront();
+      unregBack();
+      unregOrient();
+      unregRotateCw();
+      unregRotateCcw();
+      unregZoomIn();
+      unregZoomOut();
+      unregResetZoom();
+      unregUp();
+      unregDown();
+      unregLeft();
+      unregRight();
+      unregGrid();
+      unregGuides();
+      unregReset();
+      unregPrint();
+      unregExport();
+      unregClose();
+    };
+  }, [
+    isOpen,
+    currentAdjustment,
+    handleDirectPrint,
+    handleExportPdf,
+    onClose,
+    registerAction,
+  ]);
 
   if (!isOpen) return null;
 
@@ -2061,12 +2361,38 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                 )}
               </div>
 
-              {/* Center-Based Zoom Controls */}
+              {/* Preview Mode Tool & Center-Based Zoom Controls */}
               <div className="flex items-center space-x-2">
+                {/* Tool Selector: Select vs Hand/Pan */}
+                <div className="flex items-center bg-neutral-900 border border-neutral-800 rounded p-0.5 mr-1">
+                  <button
+                    onClick={() => setPreviewTool("select")}
+                    className={`p-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                      previewTool === "select"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-neutral-400 hover:text-white"
+                    }`}
+                    title="Select Mode (V)"
+                  >
+                    <MousePointer className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setPreviewTool("hand")}
+                    className={`p-1 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                      previewTool === "hand"
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-neutral-400 hover:text-white"
+                    }`}
+                    title="Hand / Pan Mode (H or Space+Drag)"
+                  >
+                    <Hand className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
                 <button
                   onClick={() => setPreviewZoom((p) => Math.max(0.4, Number((p - 0.1).toFixed(2))))}
                   className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer"
-                  title="Zoom Out Preview"
+                  title="Zoom Out Preview (-)"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
                 </button>
@@ -2076,24 +2402,58 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                 <button
                   onClick={() => setPreviewZoom((p) => Math.min(3.0, Number((p + 0.1).toFixed(2))))}
                   className="p-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer"
-                  title="Zoom In Preview"
+                  title="Zoom In Preview (+)"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
                 </button>
                 <button
+                  onClick={handleFitWidth}
+                  className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono transition-colors cursor-pointer"
+                  title="Fit to Width (2)"
+                >
+                  Fit W
+                </button>
+                <button
+                  onClick={handleFitHeight}
+                  className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono transition-colors cursor-pointer"
+                  title="Fit to Height (3)"
+                >
+                  Fit H
+                </button>
+                <button
                   onClick={() => setPreviewZoom(1.0)}
-                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono transition-colors cursor-pointer"
-                  title="Reset Zoom to 100%"
+                  className="px-1.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono transition-colors cursor-pointer"
+                  title="Actual Size 100% (1)"
                 >
                   100%
+                </button>
+                <button
+                  onClick={handleResetPreview}
+                  className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-mono transition-colors cursor-pointer"
+                  title="Reset Pan & Zoom (0)"
+                >
+                  Reset
                 </button>
               </div>
             </div>
 
-            {/* Canvas Container Viewport with Center-Based Zoom */}
+            {/* Canvas Container Viewport with Center-Based Zoom & Panning */}
             <div
               ref={viewportRef}
-              className="flex-1 overflow-auto flex items-center justify-center p-8 relative select-none"
+              className={`flex-1 overflow-hidden flex items-center justify-center p-8 relative select-none ${
+                isCanvasDragging
+                  ? "cursor-grabbing"
+                  : isSpacePressed || previewTool === "hand"
+                  ? "cursor-grab"
+                  : "cursor-default"
+              }`}
+              onPointerDown={handleViewportPointerDown}
+              onPointerMove={handleViewportPointerMove}
+              onPointerUp={handleViewportPointerUp}
+              onPointerCancel={handleViewportPointerUp}
+              onContextMenu={(e) => {
+                if (isCanvasDraggingRef.current) e.preventDefault();
+              }}
             >
               {isRendering && (
                 <div className="absolute top-4 right-4 z-20 flex items-center space-x-1.5 bg-neutral-900/90 border border-neutral-750 px-2.5 py-1 rounded-full text-[10px] text-neutral-300 shadow-lg">
@@ -2104,13 +2464,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
 
               {/* Physical A6 Preview Board */}
               <div
-                className="relative shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-neutral-800 rounded-sm bg-white transition-transform duration-75 ease-out"
+                className="relative shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-neutral-800 rounded-sm bg-white transition-transform duration-75 ease-out select-none"
                 style={{
-                  transform: `scale(${previewZoom})`,
+                  transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${previewZoom})`,
                   transformOrigin: "center center",
                 }}
               >
-                <canvas ref={previewCanvasRef} className="block" />
+                <canvas ref={previewCanvasRef} className="block pointer-events-none" />
               </div>
             </div>
 
@@ -2130,10 +2490,10 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                   Mode: <strong className="text-indigo-400">{config.layoutMode}</strong>
                 </span>
               </div>
-              <div className="flex items-center space-x-2 text-neutral-500">
-                <span>DPI: 300 (Print Ready)</span>
+              <div className="flex items-center space-x-3 text-neutral-500">
+                <span>Pan: {previewTool === "hand" || isSpacePressed ? "Active" : "Hold Space or Middle Click"}</span>
                 <span>•</span>
-                <span>Wheel zoom centered on viewport</span>
+                <span>Zoom: {Math.round(previewZoom * 100)}%</span>
               </div>
             </div>
           </div>
@@ -2166,24 +2526,27 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
         />
       )}
 
-      {/* Dedicated Card Crop Modal */}
+      {/* Dedicated Card Crop Modal with Independent State */}
       {isCropModalOpen && (
         <A6HalfCardCropModal
           isOpen={isCropModalOpen}
           cardSide={cropTargetSide}
-          imageSrc={cropTargetSide === "front" ? frontImage : backImage}
+          imageSrc={cropTargetSide === "front" ? (frontRawImage || frontImage) : (backRawImage || backImage)}
           targetWidthMm={
             cropTargetSide === "front" ? config.front.widthMm : config.back.widthMm
           }
           targetHeightMm={
             cropTargetSide === "front" ? config.front.heightMm : config.back.heightMm
           }
-          onApplyCrop={(croppedUrl) => {
+          initialCropState={cropTargetSide === "front" ? frontCropState : backCropState}
+          onApplyCrop={(croppedUrl, cropState) => {
             if (cropTargetSide === "front") {
               setFrontImage(croppedUrl);
+              if (cropState) setFrontCropState(cropState);
               showToast("Cropped Front card image.");
             } else {
               setBackImage(croppedUrl);
+              if (cropState) setBackCropState(cropState);
               showToast("Cropped Back card image.");
             }
           }}

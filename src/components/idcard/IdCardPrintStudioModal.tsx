@@ -44,6 +44,7 @@ import {
   Compass,
   Zap,
 } from "lucide-react";
+import { useShortcuts } from "../../commands/ShortcutContext";
 import {
   IdCardStudioConfig,
   DEFAULT_ID_CARD_CONFIG,
@@ -1090,6 +1091,72 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
       setIsExporting(false);
     }
   };
+
+  // Centralized Shortcut Management for ID Card / CNIC Studio
+  const { pushScope, popScope, registerAction } = useShortcuts();
+
+  useEffect(() => {
+    if (!isOpen) return;
+    pushScope("idcard-studio");
+    return () => {
+      popScope("idcard-studio");
+    };
+  }, [isOpen, pushScope, popScope]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const unregFront = registerAction("idcard.switchFront", () => setCropTargetSide("front"));
+    const unregBack = registerAction("idcard.switchBack", () => setCropTargetSide("back"));
+    const unregBoth = registerAction("idcard.toggleBoth", () =>
+      setPreviewMode((prev) => (prev === "side-by-side" ? "page-1" : "side-by-side"))
+    );
+    const unregRotateCw = registerAction("idcard.rotateCw", () =>
+      handleRotateSide(cropTargetSide, 90)
+    );
+    const unregRotateCcw = registerAction("idcard.rotateCcw", () =>
+      handleRotateSide(cropTargetSide, -90)
+    );
+    const unregGrid = registerAction("idcard.toggleGrid", () =>
+      setConfig((prev) => ({
+        ...prev,
+        border: { ...prev.border, enabled: !prev.border.enabled },
+      }))
+    );
+    const unregGuides = registerAction("idcard.toggleGuides", () =>
+      setConfig((prev) => ({
+        ...prev,
+        cuttingGuides: { ...prev.cuttingGuides, enabled: !prev.cuttingGuides.enabled },
+      }))
+    );
+    const unregReset = registerAction("idcard.resetAll", () => {
+      setConfig((prev) => ({ ...prev, frontRotation: 0, backRotation: 0 }));
+    });
+    const unregPrint = registerAction("idcard.print", handlePrint);
+    const unregExport = registerAction("idcard.export", handleExportPdf);
+    const unregClose = registerAction("idcard.close", onClose);
+
+    return () => {
+      unregFront();
+      unregBack();
+      unregBoth();
+      unregRotateCw();
+      unregRotateCcw();
+      unregGrid();
+      unregGuides();
+      unregReset();
+      unregPrint();
+      unregExport();
+      unregClose();
+    };
+  }, [
+    isOpen,
+    cropTargetSide,
+    handlePrint,
+    handleExportPdf,
+    onClose,
+    registerAction,
+  ]);
 
   if (!isOpen) return null;
 
