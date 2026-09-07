@@ -46,6 +46,22 @@ export const ID_CARD_PRESETS: IdCardPreset[] = [
     description: "Standard ISO/IEC 7810 ID-1 CR80 format. Standard for National ID cards, CNIC, and Driver Licenses.",
   },
   {
+    id: "a6-half-card",
+    name: "A6 Half-Card Portrait (74 × 105 mm)",
+    category: "A6 Half-Card Formats",
+    widthMm: 74.0,
+    heightMm: 105.0,
+    description: "Standard 74 × 105 mm half-sheet card (half of A6 / eighth of A4). Fits two side-by-side or stacked on an A6 sheet.",
+  },
+  {
+    id: "a6-half-card-landscape",
+    name: "A6 Half-Card Landscape (105 × 74 mm)",
+    category: "A6 Half-Card Formats",
+    widthMm: 105.0,
+    heightMm: 74.0,
+    description: "Standard 105 × 74 mm horizontal half-sheet card. Fits two stacked vertically on an A6 sheet.",
+  },
+  {
     id: "a6-portrait",
     name: "A6 Portrait (105 × 148 mm)",
     category: "ISO Standard",

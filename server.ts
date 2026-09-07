@@ -143,7 +143,7 @@ Return strictly JSON matching this structure:
       }
 
       res.json({
-        source: "gemini-3.7-flash",
+        source: "gemini-3.8-flash",
         ...parsed,
       });
     } catch (error: any) {

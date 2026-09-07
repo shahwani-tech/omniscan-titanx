@@ -67,6 +67,7 @@ import { ImageFilterPipeline, OmniPage } from "../../types";
 import { IdCardCropModal, IdCardCropState } from "./IdCardCropModal";
 import { IdCardFilterNumericInput } from "./IdCardFilterNumericInput";
 import { usePrint } from "../../context/PrintContext";
+import { classifyImageContent, ContentClassificationResult } from "../../engine/autoClassifier";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageThumbnail, renderPDFPageToDataUrl } from "../../engine/pdf";
 
@@ -179,6 +180,10 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   // Non-destructive Filter Pipeline States
   const [frontFilters, setFrontFilters] = useState<ImageFilterPipeline>({ ...DEFAULT_FILTERS });
   const [backFilters, setBackFilters] = useState<ImageFilterPipeline>({ ...DEFAULT_FILTERS });
+  const [frontDetectedContent, setFrontDetectedContent] = useState<ContentClassificationResult | null>(null);
+  const [backDetectedContent, setBackDetectedContent] = useState<ContentClassificationResult | null>(null);
+  const [frontFilterSource, setFrontFilterSource] = useState<"auto-detected" | "user-override">("auto-detected");
+  const [backFilterSource, setBackFilterSource] = useState<"auto-detected" | "user-override">("auto-detected");
   const [applyToScope, setApplyToScope] = useState<"current" | "both" | "all">("current");
   const [activeFilterSide, setActiveFilterSide] = useState<"front" | "back">("front");
 
@@ -811,9 +816,27 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     if (cropTargetSide === "front") {
       setFrontBaseImage(croppedDataUrl);
       if (finalState) setFrontCropState(finalState);
+      classifyImageContent(croppedDataUrl)
+        .then((res) => {
+          setFrontDetectedContent(res);
+          setFrontFilterSource("auto-detected");
+          setFrontFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+          frontFiltersRef.current = { ...frontFiltersRef.current, ...res.recommendedFilters };
+          executeFilterPipelineScheduled(false, "front");
+        })
+        .catch((err) => console.warn("Front card crop classify failed:", err));
     } else {
       setBackBaseImage(croppedDataUrl);
       if (finalState) setBackCropState(finalState);
+      classifyImageContent(croppedDataUrl)
+        .then((res) => {
+          setBackDetectedContent(res);
+          setBackFilterSource("auto-detected");
+          setBackFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+          backFiltersRef.current = { ...backFiltersRef.current, ...res.recommendedFilters };
+          executeFilterPipelineScheduled(false, "back");
+        })
+        .catch((err) => console.warn("Back card crop classify failed:", err));
     }
   };
 
@@ -821,6 +844,70 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   // Non-Destructive Filter & Adjustments Handlers
   // -------------------------------------------------------------
   const currentFilters = activeFilterSide === "front" ? frontFilters : backFilters;
+  const currentDetectedContent = activeFilterSide === "front" ? frontDetectedContent : backDetectedContent;
+  const currentFilterSource = activeFilterSide === "front" ? frontFilterSource : backFilterSource;
+
+  const handleApplyActiveSettingsToBothSides = () => {
+    const sourceFilters = activeFilterSide === "front" ? frontFilters : backFilters;
+    const targetSide = activeFilterSide === "front" ? "back" : "front";
+
+    // Copy tone settings while preserving each side's rotation and geometry
+    const { cropBox, perspectivePoints, rotation, deskewAngle, ...toneSettings } = sourceFilters;
+
+    if (targetSide === "back") {
+      setBackFilters((prev) => ({ ...prev, ...toneSettings }));
+      backFiltersRef.current = { ...backFiltersRef.current, ...toneSettings };
+      setBackFilterSource("user-override");
+      executeFilterPipelineScheduled(false, "back");
+      setStatusMessage("Applied Front settings to Back card.");
+    } else {
+      setFrontFilters((prev) => ({ ...prev, ...toneSettings }));
+      frontFiltersRef.current = { ...frontFiltersRef.current, ...toneSettings };
+      setFrontFilterSource("user-override");
+      executeFilterPipelineScheduled(false, "front");
+      setStatusMessage("Applied Back settings to Front card.");
+    }
+    setTimeout(() => setStatusMessage(null), 3000);
+  };
+
+  const handleReDetectActiveSide = async () => {
+    const targetImg = activeFilterSide === "front" ? frontBaseImage : backBaseImage;
+    if (!targetImg) return;
+
+    setStatusMessage(`Running CamScanner optical detection on ${activeFilterSide === "front" ? "Front" : "Back"}...`);
+    try {
+      const res = await classifyImageContent(targetImg);
+      if (activeFilterSide === "front") {
+        setFrontDetectedContent(res);
+        setFrontFilterSource("auto-detected");
+        setFrontFilters((prev) => ({
+          ...prev,
+          ...res.recommendedFilters,
+        }));
+        frontFiltersRef.current = {
+          ...frontFiltersRef.current,
+          ...res.recommendedFilters,
+        };
+        executeFilterPipelineScheduled(false, "front");
+      } else {
+        setBackDetectedContent(res);
+        setBackFilterSource("auto-detected");
+        setBackFilters((prev) => ({
+          ...prev,
+          ...res.recommendedFilters,
+        }));
+        backFiltersRef.current = {
+          ...backFiltersRef.current,
+          ...res.recommendedFilters,
+        };
+        executeFilterPipelineScheduled(false, "back");
+      }
+      setStatusMessage(`Auto-detected: ${res.label} (${res.recommendedPreset.toUpperCase()})`);
+      setTimeout(() => setStatusMessage(null), 3000);
+    } catch (err) {
+      console.warn("Re-detect failed:", err);
+    }
+  };
 
   const handleApplyPreset = (presetId: string) => {
     const meta = BUILTIN_CAMSCANNER_PRESETS.find((p) => p.id === presetId);
@@ -840,12 +927,16 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
       setBackFilters(updateFilter);
       frontFiltersRef.current = updateFilter(frontFiltersRef.current);
       backFiltersRef.current = updateFilter(backFiltersRef.current);
+      setFrontFilterSource("user-override");
+      setBackFilterSource("user-override");
     } else if (targetSide === "front") {
       setFrontFilters(updateFilter);
       frontFiltersRef.current = updateFilter(frontFiltersRef.current);
+      setFrontFilterSource("user-override");
     } else {
       setBackFilters(updateFilter);
       backFiltersRef.current = updateFilter(backFiltersRef.current);
+      setBackFilterSource("user-override");
     }
 
     executeFilterPipelineScheduled(false, targetSide);
@@ -881,14 +972,18 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
       setBackFilters(updateFilter);
       frontFiltersRef.current = updateFilter(frontFiltersRef.current);
       backFiltersRef.current = updateFilter(backFiltersRef.current);
+      setFrontFilterSource("user-override");
+      setBackFilterSource("user-override");
       executeFilterPipelineScheduled(isFast, "both");
     } else if (targetSide === "front") {
       setFrontFilters(updateFilter);
       frontFiltersRef.current = updateFilter(frontFiltersRef.current);
+      setFrontFilterSource("user-override");
       executeFilterPipelineScheduled(isFast, "front");
     } else {
       setBackFilters(updateFilter);
       backFiltersRef.current = updateFilter(backFiltersRef.current);
+      setBackFilterSource("user-override");
       executeFilterPipelineScheduled(isFast, "back");
     }
   };
@@ -963,12 +1058,30 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         setFrontCropState(null);
         setFrontImage(dataUrl);
         fullResFrontImageRef.current = dataUrl;
+        classifyImageContent(dataUrl)
+          .then((res) => {
+            setFrontDetectedContent(res);
+            setFrontFilterSource("auto-detected");
+            setFrontFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+            frontFiltersRef.current = { ...frontFiltersRef.current, ...res.recommendedFilters };
+            executeFilterPipelineScheduled(false, "front");
+          })
+          .catch((err) => console.warn("Front upload auto-classify error:", err));
       } else {
         setOriginalBackImage(dataUrl);
         setBackBaseImage(dataUrl);
         setBackCropState(null);
         setBackImage(dataUrl);
         fullResBackImageRef.current = dataUrl;
+        classifyImageContent(dataUrl)
+          .then((res) => {
+            setBackDetectedContent(res);
+            setBackFilterSource("auto-detected");
+            setBackFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+            backFiltersRef.current = { ...backFiltersRef.current, ...res.recommendedFilters };
+            executeFilterPipelineScheduled(false, "back");
+          })
+          .catch((err) => console.warn("Back upload auto-classify error:", err));
       }
       setStatusMessage(`${side === "front" ? "Front" : "Back"} ID card uploaded.`);
       setTimeout(() => setStatusMessage(null), 2500);
@@ -1506,6 +1619,45 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                 </button>
               </div>
             )}
+
+            {/* Content Optical Auto-Detection Status */}
+            {currentDetectedContent && (
+              <div className="p-2 rounded-md bg-neutral-950 border border-neutral-800/80 space-y-1">
+                <div className="flex items-center justify-between text-[10px]">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="px-1.5 py-0.5 rounded font-bold uppercase tracking-wider text-[9px] bg-sky-950 text-sky-300 border border-sky-600/40">
+                      {currentDetectedContent.label}
+                    </span>
+                    <span className="text-neutral-400">
+                      {currentFilterSource === "auto-detected" ? "✨ Auto filter" : "Manual override"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleReDetectActiveSide}
+                    className="text-sky-400 hover:text-sky-300 underline underline-offset-2"
+                  >
+                    Re-detect
+                  </button>
+                </div>
+                <div className="text-[9px] text-neutral-500">
+                  {currentDetectedContent.reason}
+                </div>
+              </div>
+            )}
+
+            {/* Prominent Action: Apply Settings to Both Sides */}
+            <button
+              type="button"
+              onClick={handleApplyActiveSettingsToBothSides}
+              className="w-full flex items-center justify-center space-x-1.5 py-1.5 px-2 rounded-md bg-sky-950/70 hover:bg-sky-900 border border-sky-600/40 hover:border-sky-500/60 text-sky-200 text-[11px] font-medium transition-all shadow-sm group"
+              title="Copy current side's filter & adjustment values to the opposite card side (one-time copy)"
+            >
+              <Copy className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
+              <span>
+                Apply {activeFilterSide === "front" ? "Front" : "Back"} Settings to Both Sides
+              </span>
+            </button>
 
             {/* Preset Filter Buttons */}
             <div className="space-y-1.5">

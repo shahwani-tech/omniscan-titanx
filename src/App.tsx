@@ -35,6 +35,11 @@ import {
 import { extractDocumentIntelligence, autoRedactPIIOnPage } from "./engine/intelligence";
 import { packageTitanProject, extractTitanProject } from "./engine/project";
 import { executePhysicalPageCrop, NormalizedCropBox } from "./engine/cropEngine";
+import {
+  classifyImageContent,
+  ContentClassificationResult,
+  getFallbackClassification,
+} from "./engine/autoClassifier";
 import { HeaderBar } from "./components/layout/HeaderBar";
 import { PageNavigator } from "./components/layout/PageNavigator";
 import { InspectorPanel } from "./components/layout/InspectorPanel";
@@ -70,6 +75,7 @@ import {
   Layers,
   SplitSquareVertical,
   ShieldCheck,
+  Check,
   Activity,
   RotateCw,
   Plus,
@@ -142,6 +148,7 @@ export function AppContent() {
   const [isIdCardStudioModalOpen, setIsIdCardStudioModalOpen] = useState<boolean>(false);
   const [isA6HalfCardStudioModalOpen, setIsA6HalfCardStudioModalOpen] = useState<boolean>(false);
   const [isSplitPdfModalOpen, setIsSplitPdfModalOpen] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [passwordModalState, setPasswordModalState] = useState<{
     isOpen: boolean;
     file: File | null;
@@ -170,6 +177,29 @@ export function AppContent() {
   useEffect(() => {
     window.document.documentElement.dir = isRTL(language) ? "rtl" : "ltr";
   }, [language]);
+
+  // Auto-classify active page if missing classification
+  useEffect(() => {
+    if (activePage && !activePage.detectedContent && activePage.originalDataUrl) {
+      classifyImageContent(activePage.originalDataUrl)
+        .then((classification) => {
+          setDocument((prev) => {
+            const newPages = [...prev.pages];
+            const idx = newPages.findIndex((p) => p.id === activePage.id);
+            if (idx !== -1 && !newPages[idx].detectedContent) {
+              newPages[idx] = {
+                ...newPages[idx],
+                detectedContent: classification,
+                filterSource: "auto-detected",
+              };
+              return { ...prev, pages: newPages };
+            }
+            return prev;
+          });
+        })
+        .catch((err) => console.warn("Initial classification skipped:", err));
+    }
+  }, [activePage?.id, activePage?.originalDataUrl]);
 
   // Push snapshot to undo history
   const recordHistorySnapshot = useCallback((docToSave: OmniDocument) => {
@@ -368,8 +398,9 @@ export function AppContent() {
   // Sync cache and cancel stale render tasks when active page changes
   useEffect(() => {
     if (activePage) {
-      latestFiltersRef.current = activePage.filters;
+      latestFiltersRef.current = { ...activePage.filters };
       setActivePagePreviewUrl(null);
+      pendingRenderRef.current = null;
 
       // Cancel pending frames and settle timers
       if (filterRafIdRef.current !== null) {
@@ -453,11 +484,12 @@ export function AppContent() {
         // Stage 2: Final quality commit - commit to document model and update thumbnails
         setDocument((prev) => {
           const newPages = [...prev.pages];
-          if (!newPages[targetPageIndex] || newPages[targetPageIndex].id !== targetPageId) {
+          const pageIdx = newPages.findIndex((p) => p.id === targetPageId);
+          if (pageIdx === -1) {
             return prev;
           }
-          newPages[targetPageIndex] = {
-            ...newPages[targetPageIndex],
+          newPages[pageIdx] = {
+            ...newPages[pageIdx],
             filters: filtersToRun,
             processedDataUrl: result.processedDataUrl,
             thumbnailDataUrl: result.thumbnailDataUrl || result.processedDataUrl,
@@ -486,6 +518,20 @@ export function AppContent() {
       if (!activePageRef.current) return;
       latestFiltersRef.current = { ...latestFiltersRef.current, ...updatedFilters };
 
+      // Mark filter source as manual user-override
+      const currPage = activePageRef.current;
+      if (currPage && currPage.filterSource !== "user-override") {
+        setDocument((prev) => {
+          const newPages = [...prev.pages];
+          const idx = newPages.findIndex((p) => p.id === currPage.id);
+          if (idx !== -1) {
+            newPages[idx] = { ...newPages[idx], filterSource: "user-override" };
+            return { ...prev, pages: newPages };
+          }
+          return prev;
+        });
+      }
+
       if (settleTimerRef.current !== null) {
         clearTimeout(settleTimerRef.current);
         settleTimerRef.current = null;
@@ -504,7 +550,7 @@ export function AppContent() {
         settleTimerRef.current = window.setTimeout(() => {
           settleTimerRef.current = null;
           runFilterRender(true);
-        }, 160);
+        }, 500);
       } else {
         // Immediate final commit
         if (filterRafIdRef.current !== null) {
@@ -521,6 +567,139 @@ export function AppContent() {
     if (!activePageRef.current) return;
     handleUpdateFilters(DEFAULT_FILTERS, true);
   }, [handleUpdateFilters]);
+
+  // Optical CamScanner Content Auto-Detection & Preset Assignment
+  const handleReDetectActivePageContent = useCallback(async () => {
+    if (!activePage) return;
+    setIsProcessing(true);
+    setProcessingMessage("Running CamScanner optical content detection...");
+
+    try {
+      const src = activePage.originalDataUrl || activePage.processedDataUrl;
+      const classification = await classifyImageContent(src);
+
+      setDocument((prev) => {
+        const newPages = [...prev.pages];
+        const idx = newPages.findIndex((p) => p.id === activePage.id);
+        if (idx === -1) return prev;
+
+        const mergedFilters: ImageFilterPipeline = {
+          ...classification.recommendedFilters,
+          rotation: newPages[idx].filters.rotation,
+          deskewAngle: newPages[idx].filters.deskewAngle,
+          cropBox: newPages[idx].filters.cropBox,
+          perspectivePoints: newPages[idx].filters.perspectivePoints,
+        };
+
+        newPages[idx] = {
+          ...newPages[idx],
+          filters: mergedFilters,
+          detectedContent: classification,
+          filterSource: "auto-detected",
+          isModified: true,
+          lastModifiedAt: new Date().toISOString(),
+        };
+        return { ...prev, pages: newPages };
+      });
+
+      latestFiltersRef.current = {
+        ...classification.recommendedFilters,
+        rotation: activePage.filters.rotation,
+        deskewAngle: activePage.filters.deskewAngle,
+        cropBox: activePage.filters.cropBox,
+        perspectivePoints: activePage.filters.perspectivePoints,
+      };
+
+      await runFilterRender(true);
+
+      setToastMessage(`Auto-detected: ${classification.label} (${classification.recommendedPreset.toUpperCase()})`);
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (err) {
+      console.error("Auto classification error:", err);
+    } finally {
+      setIsProcessing(false);
+      setProcessingMessage("");
+    }
+  }, [activePage, runFilterRender]);
+
+  // Apply current page's filter and tone adjustments to all loaded pages
+  const handleApplyFiltersToAllPages = useCallback(async () => {
+    if (!activePage || document.pages.length <= 1) return;
+
+    // Capture tone adjustments to copy (exclude geometry: cropBox, perspectivePoints, rotation)
+    const sourceFilters = { ...latestFiltersRef.current };
+    const { cropBox, perspectivePoints, rotation, ...toneSettings } = sourceFilters;
+
+    recordHistorySnapshot(document);
+    setIsProcessing(true);
+    setProcessingMessage(`Applying settings to all ${document.pages.length} pages...`);
+
+    const pageCount = document.pages.length;
+    const targetPageId = activePage.id;
+
+    // 1. Instantly update all pages' independent filter objects in document state
+    const newPages = document.pages.map((p) => {
+      if (p.id === targetPageId) return p;
+      return {
+        ...p,
+        filters: {
+          ...p.filters,
+          ...toneSettings,
+          // Retain each page's own geometry!
+          rotation: p.filters.rotation,
+          deskewAngle: p.filters.deskewAngle,
+          cropBox: p.filters.cropBox,
+          perspectivePoints: p.filters.perspectivePoints,
+        },
+        filterSource: "user-override" as const,
+        isModified: true,
+        lastModifiedAt: new Date().toISOString(),
+      };
+    });
+
+    setDocument((prev) => ({
+      ...prev,
+      pages: newPages,
+      updatedAt: new Date().toISOString(),
+    }));
+    setIsDirty(true);
+
+    // 2. Process thumbnails and preview renders for each page asynchronously without blocking UI
+    try {
+      for (let i = 0; i < newPages.length; i++) {
+        const p = newPages[i];
+        if (p.id === targetPageId) continue;
+        try {
+          const res = await processImagePipeline(
+            p.originalDataUrl,
+            p.filters,
+            false,
+            { maxPreviewDimension: 1200 }
+          );
+          setDocument((prevDoc) => {
+            const pagesCopy = [...prevDoc.pages];
+            const pIdx = pagesCopy.findIndex((item) => item.id === p.id);
+            if (pIdx !== -1) {
+              pagesCopy[pIdx] = {
+                ...pagesCopy[pIdx],
+                processedDataUrl: res.processedDataUrl,
+                thumbnailDataUrl: res.thumbnailDataUrl || res.processedDataUrl,
+              };
+            }
+            return { ...prevDoc, pages: pagesCopy };
+          });
+        } catch (e) {
+          console.warn("Async thumbnail render skipped for page:", p.id, e);
+        }
+      }
+    } finally {
+      setIsProcessing(false);
+      setProcessingMessage("");
+    }
+
+    setToastMessage(`Successfully applied adjustments to all ${pageCount} pages.`);
+    setTimeout(() => setToastMessage(null), 3500);
+  }, [activePage, document, recordHistorySnapshot]);
 
   // -------------------------------------------------------------
   // Auto Deskew & Auto Crop
@@ -631,6 +810,24 @@ export function AppContent() {
           const pageToCrop = newPages[idx];
           if (pageToCrop) {
             const croppedPage = await executePhysicalPageCrop(pageToCrop, cropBox);
+            try {
+              const classification = await classifyImageContent(
+                croppedPage.originalDataUrl || croppedPage.processedDataUrl
+              );
+              croppedPage.detectedContent = classification;
+              croppedPage.filters = {
+                ...croppedPage.filters,
+                ...classification.recommendedFilters,
+                rotation: croppedPage.filters.rotation,
+                deskewAngle: croppedPage.filters.deskewAngle,
+              };
+              croppedPage.filterSource = "auto-detected";
+              if (idx === activePageIndex) {
+                latestFiltersRef.current = { ...croppedPage.filters };
+              }
+            } catch (classErr) {
+              console.warn("Classification after crop fallback:", classErr);
+            }
             newPages[idx] = croppedPage;
           }
         }
@@ -1063,6 +1260,18 @@ export function AppContent() {
         },
       };
 
+      // Run content classification on imported PDF pages
+      for (const p of imported.pages) {
+        if (!p.detectedContent && (p.thumbnailDataUrl || p.originalDataUrl)) {
+          try {
+            const classification = await classifyImageContent(p.thumbnailDataUrl || p.originalDataUrl);
+            p.detectedContent = classification;
+            p.filters = { ...classification.recommendedFilters };
+            p.filterSource = "auto-detected";
+          } catch {}
+        }
+      }
+
       setDocument((prev) => {
         // If previous doc was initial sample or empty, replace it; otherwise append
         const isSample =
@@ -1149,6 +1358,14 @@ export function AppContent() {
         img.src = dataUrl;
         await new Promise((res) => (img.onload = res));
 
+        // Auto-classify content (Text Document vs Photo/ID Card vs Mixed Content)
+        let classification: ContentClassificationResult;
+        try {
+          classification = await classifyImageContent(dataUrl);
+        } catch {
+          classification = getFallbackClassification();
+        }
+
         newPages.push({
           id: `imp-${Date.now()}-${i}`,
           pageNumber: document.pages.length + newPages.length + 1,
@@ -1161,7 +1378,9 @@ export function AppContent() {
           sizeBytes: file.size,
           isBlank: false,
           blankScore: 0,
-          filters: { ...DEFAULT_FILTERS },
+          filters: { ...classification.recommendedFilters },
+          detectedContent: classification,
+          filterSource: "auto-detected",
           annotations: [],
           redactions: [],
           formFields: [],
@@ -1747,6 +1966,8 @@ export function AppContent() {
             setIsDirty(true);
           }}
           onExportPdf={handleExportPdf}
+          onApplyToAllPages={handleApplyFiltersToAllPages}
+          onReDetectContent={handleReDetectActivePageContent}
         />
       </div>
 
@@ -1881,6 +2102,14 @@ export function AppContent() {
       />
       {/* Centralized Desktop Print Center Dialog */}
       <PrintDialog />
+
+      {/* Global Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-12 right-6 z-50 flex items-center space-x-2 px-4 py-2.5 rounded-lg bg-neutral-900/95 border border-sky-500/60 text-white shadow-2xl text-xs font-medium backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

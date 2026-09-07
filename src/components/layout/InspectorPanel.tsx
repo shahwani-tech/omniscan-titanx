@@ -44,6 +44,7 @@ import { estimatePDFSize } from "../../engine/pdf";
 import { t } from "../../engine/i18n";
 import { BUILTIN_CAMSCANNER_PRESETS } from "../../engine/filters";
 import { PdfFilterNumericInput } from "../common/PdfFilterNumericInput";
+import { UnifiedColorGradingPanel } from "../common/UnifiedColorGradingPanel";
 
 interface InspectorPanelProps {
   activePage: OmniPage | null;
@@ -65,6 +66,8 @@ interface InspectorPanelProps {
   onAutoRedactPII: () => void;
   onUpdateMetadata: (meta: Partial<DocumentMetadata>) => void;
   onExportPdf: () => void;
+  onApplyToAllPages?: () => void;
+  onReDetectContent?: () => void;
 }
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
@@ -87,6 +90,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onAutoRedactPII,
   onUpdateMetadata,
   onExportPdf,
+  onApplyToAllPages,
+  onReDetectContent,
 }) => {
   const [activeTab, setActiveTab] = useState<
     "cv" | "ocr" | "intelligence" | "annotate" | "metadata"
@@ -144,12 +149,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
   // Immediate local UI control state decoupled from expensive rendering
   const [immediateFilters, setImmediateFilters] = useState<ImageFilterPipeline>(
-    () => activePage?.filters || fallbackFilters
+    () => (activePage?.filters ? { ...activePage.filters } : fallbackFilters)
   );
 
   useEffect(() => {
     if (activePage?.filters) {
-      setImmediateFilters(activePage.filters);
+      setImmediateFilters({ ...activePage.filters });
     }
   }, [activePage?.id, activePage?.lastModifiedAt]);
 
@@ -403,267 +408,28 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </div>
             </div>
 
-            {/* Section: Image Quality & Contrast */}
-            <div className="space-y-2.5 border-t border-neutral-800 pt-3">
-              <span className="text-neutral-400 uppercase tracking-wider text-[10px] font-bold">
-                Tone &amp; Clarity
-              </span>
-
-              {/* Brightness */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-neutral-400 text-xs select-none">
-                  <span className="flex items-center space-x-1.5">
-                    <Sun className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Brightness</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleControlChange({ brightness: 0 }, true)}
-                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                    title="Reset Brightness to 0"
-                  >
-                    reset (0)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="-80"
-                    max="80"
-                    value={filters.brightness}
-                    onChange={(e) => handleControlChange({ brightness: parseInt(e.target.value) }, false)}
-                    onPointerUp={() => handleControlChange({ brightness: filters.brightness }, true)}
-                    className="flex-1 accent-sky-500 cursor-pointer h-1.5 bg-neutral-700 rounded-lg appearance-none"
-                  />
-                  <PdfFilterNumericInput
-                    id="pdf-input-brightness"
-                    value={filters.brightness}
-                    min={-80}
-                    max={80}
-                    step={1}
-                    precision={0}
-                    onChange={(val, isCommit) => handleControlChange({ brightness: val }, isCommit)}
-                    ariaLabel="Brightness value"
-                  />
-                </div>
-              </div>
-
-              {/* Contrast */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-neutral-400 text-xs select-none">
-                  <span className="flex items-center space-x-1.5">
-                    <Contrast className="w-3.5 h-3.5 text-sky-400" />
-                    <span>Contrast</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleControlChange({ contrast: 0 }, true)}
-                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                    title="Reset Contrast to 0"
-                  >
-                    reset (0)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="-80"
-                    max="80"
-                    value={filters.contrast}
-                    onChange={(e) => handleControlChange({ contrast: parseInt(e.target.value) }, false)}
-                    onPointerUp={() => handleControlChange({ contrast: filters.contrast }, true)}
-                    className="flex-1 accent-sky-500 cursor-pointer h-1.5 bg-neutral-700 rounded-lg appearance-none"
-                  />
-                  <PdfFilterNumericInput
-                    id="pdf-input-contrast"
-                    value={filters.contrast}
-                    min={-80}
-                    max={80}
-                    step={1}
-                    precision={0}
-                    onChange={(val, isCommit) => handleControlChange({ contrast: val }, isCommit)}
-                    ariaLabel="Contrast value"
-                  />
-                </div>
-              </div>
-
-              {/* Gamma */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-neutral-400 text-xs select-none">
-                  <span className="flex items-center space-x-1.5">
-                    <span>Gamma Curve</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleControlChange({ gamma: 1.0 }, true)}
-                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                    title="Reset Gamma to 1.00"
-                  >
-                    reset (1.00)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="0.3"
-                    max="2.5"
-                    step="0.05"
-                    value={filters.gamma}
-                    onChange={(e) => handleControlChange({ gamma: parseFloat(e.target.value) }, false)}
-                    onPointerUp={() => handleControlChange({ gamma: filters.gamma }, true)}
-                    className="flex-1 accent-sky-500 cursor-pointer h-1.5 bg-neutral-700 rounded-lg appearance-none"
-                  />
-                  <PdfFilterNumericInput
-                    id="pdf-input-gamma"
-                    value={filters.gamma}
-                    min={0.3}
-                    max={2.5}
-                    step={0.05}
-                    precision={2}
-                    onChange={(val, isCommit) => handleControlChange({ gamma: val }, isCommit)}
-                    ariaLabel="Gamma curve value"
-                  />
-                </div>
-              </div>
-
-              {/* Sharpness */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-neutral-400 text-xs select-none">
-                  <span className="flex items-center space-x-1.5">
-                    <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Unsharp Mask</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleControlChange({ sharpness: 0 }, true)}
-                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                    title="Reset Sharpness to 0%"
-                  >
-                    reset (0%)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={filters.sharpness}
-                    onChange={(e) => handleControlChange({ sharpness: parseInt(e.target.value) }, false)}
-                    onPointerUp={() => handleControlChange({ sharpness: filters.sharpness }, true)}
-                    className="flex-1 accent-sky-500 cursor-pointer h-1.5 bg-neutral-700 rounded-lg appearance-none"
-                  />
-                  <PdfFilterNumericInput
-                    id="pdf-input-sharpness"
-                    value={filters.sharpness}
-                    min={0}
-                    max={100}
-                    step={1}
-                    precision={0}
-                    unit="%"
-                    onChange={(val, isCommit) => handleControlChange({ sharpness: val }, isCommit)}
-                    ariaLabel="Sharpness percentage"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Section: Document Cleanup */}
-            <div className="space-y-2 border-t border-neutral-800 pt-3">
-              <span className="text-neutral-400 uppercase tracking-wider text-[10px] font-bold">
-                Document Cleanup
-              </span>
-
-              {/* Background Whitening Toggle */}
-              <label className="flex items-center justify-between p-2 rounded bg-neutral-850 border border-neutral-800 cursor-pointer hover:bg-neutral-800/80">
-                <span>Background Whitening</span>
-                <input
-                  type="checkbox"
-                  checked={filters.backgroundWhiten}
-                  onChange={(e) => handleControlChange({ backgroundWhiten: e.target.checked }, true)}
-                  className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
-                />
-              </label>
-
-              {/* Shadow Removal Toggle */}
-              <label className="flex items-center justify-between p-2 rounded bg-neutral-850 border border-neutral-800 cursor-pointer hover:bg-neutral-800/80">
-                <span>Shadow Removal (Book Spine / Corner)</span>
-                <input
-                  type="checkbox"
-                  checked={filters.shadowRemoval}
-                  onChange={(e) => handleControlChange({ shadowRemoval: e.target.checked }, true)}
-                  className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
-                />
-              </label>
-
-              {/* Punch Hole Cleanup */}
-              <label className="flex items-center justify-between p-2 rounded bg-neutral-850 border border-neutral-800 cursor-pointer hover:bg-neutral-800/80">
-                <span>Punch-Hole Margin Cleanup</span>
-                <input
-                  type="checkbox"
-                  checked={filters.punchHoleCleanup}
-                  onChange={(e) => handleControlChange({ punchHoleCleanup: e.target.checked }, true)}
-                  className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
-                />
-              </label>
-
-              {/* Bleed-through reduction */}
-              <label className="flex items-center justify-between p-2 rounded bg-neutral-850 border border-neutral-800 cursor-pointer hover:bg-neutral-800/80">
-                <span>Bleed-Through Ink Suppression</span>
-                <input
-                  type="checkbox"
-                  checked={filters.bleedThroughReduce}
-                  onChange={(e) => handleControlChange({ bleedThroughReduce: e.target.checked }, true)}
-                  className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
-                />
-              </label>
-            </div>
-
-            {/* Section: Color & Binarization */}
-            <div className="space-y-2 border-t border-neutral-800 pt-3">
-              <span className="text-neutral-400 uppercase tracking-wider text-[10px] font-bold">
-                Color &amp; Binarization
-              </span>
-
-              <div className="grid grid-cols-3 gap-1">
-                {(["color", "grayscale", "monochrome", "sauvola", "otsu"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => handleControlChange({ colorMode: mode }, true)}
-                    className={`py-1 rounded border text-[11px] font-medium capitalize transition-colors ${
-                      filters.colorMode === mode
-                        ? "bg-sky-600 text-white border-sky-500"
-                        : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-
-              {/* Invert */}
-              <label className="flex items-center justify-between p-2 rounded bg-neutral-850 border border-neutral-800 cursor-pointer hover:bg-neutral-800/80">
-                <span>Invert Color Spectrum</span>
-                <input
-                  type="checkbox"
-                  checked={filters.invert}
-                  onChange={(e) => handleControlChange({ invert: e.target.checked }, true)}
-                  className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
-                />
-              </label>
-            </div>
-
-            {/* Reset to Original Button */}
-            <div className="pt-2">
-              <button
-                onClick={() => {
+            {/* Section: Unified Tone & Image Grading */}
+            <div className="border-t border-neutral-800 pt-3">
+              <UnifiedColorGradingPanel
+                filters={filters}
+                onChange={(updates, isCommit) => handleControlChange(updates, isCommit)}
+                onReset={() => {
                   setImmediateFilters(fallbackFilters);
                   onResetFilters();
                 }}
-                className="flex items-center justify-center space-x-1.5 w-full py-2 rounded bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 text-neutral-300 font-medium transition-colors"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-neutral-400" />
-                <span>Reset to Lossless Original</span>
-              </button>
+                imageSource={activePage?.processedDataUrl || activePage?.originalDataUrl}
+                title="Tone & Image Grading"
+                compact={false}
+                showAutoGrade={true}
+                showPresets={true}
+                showCleanup={true}
+                showColorModes={true}
+                detectedContent={activePage?.detectedContent}
+                filterSource={activePage?.filterSource || "auto-detected"}
+                onReDetect={onReDetectContent}
+                onApplyToAllPages={onApplyToAllPages}
+                pageCount={document.pages.length}
+              />
             </div>
           </div>
         )}

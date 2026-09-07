@@ -920,7 +920,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`pdf-main-viewport flex-1 min-h-0 relative flex items-center justify-center p-8 overflow-auto select-none custom-scrollbar ${
+        className={`pdf-main-viewport flex-1 min-h-0 relative flex items-center justify-center p-8 overflow-hidden select-none ${
           activeTool === "pan" || activeTool === "crop"
             ? isPanning
               ? "cursor-grabbing"
@@ -937,18 +937,26 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: "center center",
-              transition: isPanning ? "none" : "transform 0.08s ease-out",
+              aspectRatio: activePage.width && activePage.height ? `${activePage.width} / ${activePage.height}` : undefined,
             }}
-            className="relative shadow-2xl rounded bg-white border border-neutral-800 shrink-0"
+            className="relative shadow-2xl rounded bg-white border border-neutral-800 shrink-0 select-none"
           >
             {/* Split View Mode */}
             {activeTool === "split-view" ? (
-              <div className="relative overflow-hidden">
+              <div
+                className="relative overflow-hidden"
+                style={{
+                  aspectRatio: activePage.width && activePage.height ? `${activePage.width} / ${activePage.height}` : undefined,
+                }}
+              >
                 {/* Processed (Right Side) */}
                 <img
                   src={displayedPageUrl}
                   alt="Processed Document"
                   className="max-h-[82vh] w-auto pointer-events-none object-contain"
+                  style={{
+                    aspectRatio: activePage.width && activePage.height ? `${activePage.width} / ${activePage.height}` : undefined,
+                  }}
                 />
 
                 {/* Original (Left Side Clamped by splitPos) */}
@@ -960,6 +968,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                     src={activePage.originalDataUrl}
                     alt="Original Document"
                     className="max-h-[82vh] w-auto max-w-none pointer-events-none object-contain"
+                    style={{
+                      aspectRatio: activePage.width && activePage.height ? `${activePage.width} / ${activePage.height}` : undefined,
+                    }}
                   />
                   <span className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-mono text-amber-400 font-bold">
                     ORIGINAL
@@ -990,11 +1001,19 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               </div>
             ) : (
               /* Standard Single View */
-              <div className="relative">
+              <div
+                className="relative"
+                style={{
+                  aspectRatio: activePage.width && activePage.height ? `${activePage.width} / ${activePage.height}` : undefined,
+                }}
+              >
                 <img
                   src={displayedPageUrl}
                   alt={`Page ${activePageIndex + 1}`}
                   className="max-h-[82vh] w-auto pointer-events-none object-contain shadow-2xl"
+                  style={{
+                    aspectRatio: activePage.width && activePage.height ? `${activePage.width} / ${activePage.height}` : undefined,
+                  }}
                 />
 
                 {/* Progressive high-res render badge */}

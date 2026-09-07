@@ -76,9 +76,10 @@ interface CropPresetItem {
 }
 
 const PRESETS: CropPresetItem[] = [
-  { id: "74x105", label: "74 × 105 mm", widthMm: 74, heightMm: 105, ratio: 74 / 105, description: "Standard A6 Half-Card" },
-  { id: "a6-portrait", label: "A6 Portrait", widthMm: 105, heightMm: 148, ratio: 105 / 148, description: "105 × 148 mm Sheet" },
-  { id: "a6-landscape", label: "A6 Landscape", widthMm: 148, heightMm: 105, ratio: 148 / 105, description: "148 × 105 mm Sheet" },
+  { id: "74x105", label: "74 × 105 mm", widthMm: 74, heightMm: 105, ratio: 74 / 105, description: "Standard A6 Half-Card (Portrait)" },
+  { id: "105x74", label: "105 × 74 mm", widthMm: 105, heightMm: 74, ratio: 105 / 74, description: "Standard A6 Half-Card (Landscape)" },
+  { id: "a6-portrait", label: "A6 Sheet Portrait", widthMm: 105, heightMm: 148, ratio: 105 / 148, description: "105 × 148 mm Sheet" },
+  { id: "a6-landscape", label: "A6 Sheet Landscape", widthMm: 148, heightMm: 105, ratio: 148 / 105, description: "148 × 105 mm Sheet" },
   { id: "free", label: "Free Crop", description: "Unconstrained ratio" },
   { id: "center", label: "Center Crop", description: "Centered crop box" },
   { id: "fit", label: "Fit Image", description: "Fit full image in crop" },
@@ -601,10 +602,9 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect || rect.width <= 0 || rect.height <= 0) return;
 
-      // Note: account for viewport zoom scaling on deltas
-      const zoomFactor = viewportZoom > 0 ? viewportZoom : 1.0;
-      const dx = (clientX - dragStartRef.current.x) / (rect.width * zoomFactor);
-      const dy = (clientY - dragStartRef.current.y) / (rect.height * zoomFactor);
+      // getBoundingClientRect() is already scaled by viewportZoom; dividing client pixel delta by rect width/height gives exact normalized 0..1 movement
+      const dx = (clientX - dragStartRef.current.x) / rect.width;
+      const dy = (clientY - dragStartRef.current.y) / rect.height;
 
       const start = cropStartRef.current;
       const normRatio = (targetWidthMm / targetHeightMm) * (imageSize.height / (imageSize.width || 1));
@@ -1147,10 +1147,11 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
               {/* Scalable & Pannable Canvas Board */}
               <div
                 ref={containerRef}
-                className="relative inline-block border border-neutral-800 rounded-sm shadow-2xl transition-transform duration-75 ease-out select-none bg-black"
+                className="relative inline-block border border-neutral-800 rounded-sm shadow-2xl select-none bg-black"
                 style={{
                   transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${viewportZoom})`,
                   transformOrigin: "center center",
+                  transition: isCanvasDragging ? "none" : "transform 0.08s ease-out",
                 }}
               >
                 {/* Source Image */}

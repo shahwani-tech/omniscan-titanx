@@ -440,6 +440,22 @@ export interface OmniPage {
   blankScore: number; // 0 (full content) to 1.0 (pure blank)
 
   filters: ImageFilterPipeline;
+  detectedContent?: {
+    detectedType: "text-document" | "photo-id" | "mixed-content";
+    label: "Text Document" | "Photo/ID Card" | "Mixed Content";
+    confidence: number;
+    recommendedPreset: CamScannerPresetId;
+    reason: string;
+    signals?: {
+      colorVariance: number;
+      saturationMean: number;
+      edgeDensity: number;
+      histogramSpread: number;
+      skinToneScore: number;
+      textContrastScore: number;
+    };
+  };
+  filterSource?: "auto-detected" | "user-override";
   ocr?: OCRResult;
   annotations: OmniAnnotation[];
   redactions: OmniRedaction[];
