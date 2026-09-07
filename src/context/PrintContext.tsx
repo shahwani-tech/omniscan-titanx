@@ -41,10 +41,20 @@ interface PrintContextValue {
   printSettings: PrintSettings;
   updatePrintSettings: (overrides: Partial<PrintSettings>) => void;
 
-  // Real Preview Engine
+  // Real Preview Engine & Navigation
   renderedPages: RenderedPreviewPage[];
   isPreviewLoading: boolean;
   refreshPreview: () => Promise<void>;
+  activePreviewIndex: number;
+  setActivePreviewIndex: React.Dispatch<React.SetStateAction<number>>;
+  previewZoom: number;
+  setPreviewZoom: React.Dispatch<React.SetStateAction<number>>;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitPage: () => void;
+  actualSize: () => void;
+  nextPage: () => void;
+  prevPage: () => void;
 
   // Execution & Job Status
   jobStatus: PrintJobStatus;
@@ -58,12 +68,20 @@ interface PrintContextValue {
 
 const PrintContext = createContext<PrintContextValue | null>(null);
 
+const STORAGE_KEY_DEFAULT_PRINTER = "omniscan_titanx_last_printer";
+
 export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [payload, setPayload] = useState<PrintJobPayload | null>(null);
 
   const [installedPrinters, setInstalledPrinters] = useState<InstalledPrinter[]>([]);
-  const [selectedPrinterName, setSelectedPrinterNameState] = useState<string>("");
+  const [selectedPrinterName, setSelectedPrinterNameState] = useState<string>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_DEFAULT_PRINTER) || "";
+    } catch {
+      return "";
+    }
+  });
   const [isLoadingPrinters, setIsLoadingPrinters] = useState<boolean>(false);
   const [capabilities, setCapabilities] = useState<PrinterCapabilities | null>(null);
 
@@ -74,6 +92,8 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [renderedPages, setRenderedPages] = useState<RenderedPreviewPage[]>([]);
   const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
+  const [activePreviewIndex, setActivePreviewIndex] = useState<number>(0);
+  const [previewZoom, setPreviewZoom] = useState<number>(1.0);
 
   const [jobStatus, setJobStatus] = useState<PrintJobStatus>({
     id: "",
@@ -97,10 +117,12 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setInstalledPrinters(printers);
 
       if (printers.length > 0) {
-        // Default to system default printer or first online printer
-        const defaultPrinter = printers.find((p) => p.isDefault) || printers.find((p) => p.isOnline) || printers[0];
         setSelectedPrinterNameState((curr) => {
           if (curr && printers.some((p) => p.name === curr)) return curr;
+          const defaultPrinter = printers.find((p) => p.isDefault) || printers.find((p) => p.isOnline) || printers[0];
+          try {
+            localStorage.setItem(STORAGE_KEY_DEFAULT_PRINTER, defaultPrinter.name);
+          } catch {}
           return defaultPrinter.name;
         });
       }
@@ -162,6 +184,7 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const pages = await printPreviewRenderer.renderPreviewPages(payload, printSettings, 150);
       setRenderedPages(pages);
+      setActivePreviewIndex((curr) => (curr >= pages.length ? Math.max(0, pages.length - 1) : curr));
     } catch (err) {
       console.error("Preview render failed:", err);
     } finally {
@@ -179,10 +202,37 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [isOpen, payload, printSettings, refreshPreview]);
 
+  // Zoom & Page Navigation Helpers
+  const zoomIn = useCallback(() => {
+    setPreviewZoom((prev) => Math.min(3.0, Number((prev + 0.15).toFixed(2))));
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    setPreviewZoom((prev) => Math.max(0.3, Number((prev - 0.15).toFixed(2))));
+  }, []);
+
+  const fitPage = useCallback(() => {
+    setPreviewZoom(0.85);
+  }, []);
+
+  const actualSize = useCallback(() => {
+    setPreviewZoom(1.0);
+  }, []);
+
+  const nextPage = useCallback(() => {
+    setActivePreviewIndex((prev) => (renderedPages.length > 0 ? (prev + 1) % renderedPages.length : 0));
+  }, [renderedPages.length]);
+
+  const prevPage = useCallback(() => {
+    setActivePreviewIndex((prev) => (renderedPages.length > 0 ? (prev - 1 + renderedPages.length) % renderedPages.length : 0));
+  }, [renderedPages.length]);
+
   // 4. Open Centralized Print Dialog
   const openPrintDialog = useCallback(
     (newPayload: PrintJobPayload) => {
       setPayload(newPayload);
+      setActivePreviewIndex(0);
+      setPreviewZoom(1.0);
 
       // Seed default orientation and paper size if specified by payload
       setPrintSettings((prev) => ({
@@ -205,6 +255,20 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [refreshPrinters]
   );
 
+  // Global event listener for decoupled tool modules
+  useEffect(() => {
+    const handleCustomPrintEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<PrintJobPayload>;
+      if (customEvent.detail) {
+        openPrintDialog(customEvent.detail);
+      }
+    };
+    window.addEventListener("omniscan:open-print-dialog", handleCustomPrintEvent);
+    return () => {
+      window.removeEventListener("omniscan:open-print-dialog", handleCustomPrintEvent);
+    };
+  }, [openPrintDialog]);
+
   // 5. Close Dialog & Cleanup Temporary Preferences
   const closePrintDialog = useCallback(() => {
     if (selectedPrinterName) {
@@ -224,6 +288,9 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // 6. Change Selected Printer
   const setSelectedPrinterName = useCallback((name: string) => {
     setSelectedPrinterNameState(name);
+    try {
+      localStorage.setItem(STORAGE_KEY_DEFAULT_PRINTER, name);
+    } catch {}
     setPrintSettings((prev) => ({ ...prev, printerName: name }));
   }, []);
 
@@ -310,8 +377,11 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [payload, selectedPrinterName, printSettings]);
 
   const cancelJob = useCallback(() => {
+    if (selectedPrinterName) {
+      printerService.cancelJobSession(selectedPrinterName);
+    }
     closePrintDialog();
-  }, [closePrintDialog]);
+  }, [selectedPrinterName, closePrintDialog]);
 
   return (
     <PrintContext.Provider
@@ -335,6 +405,16 @@ export const PrintProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         renderedPages,
         isPreviewLoading,
         refreshPreview,
+        activePreviewIndex,
+        setActivePreviewIndex,
+        previewZoom,
+        setPreviewZoom,
+        zoomIn,
+        zoomOut,
+        fitPage,
+        actualSize,
+        nextPage,
+        prevPage,
         jobStatus,
         submitPrint,
         cancelJob,

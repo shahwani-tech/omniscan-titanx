@@ -668,46 +668,21 @@ export async function exportPhotoSheetAsBlob(
 }
 
 /**
- * Trigger Native Browser Print Dialog for 4x6" Sheet with 100% exact scaling
+ * Trigger Centralized Application Print System for Photo Sheet with 100% exact scaling
  */
 export function printPhotoSheetCanvas(canvas: HTMLCanvasElement, config: PhotoSheetConfig) {
-  const dataUrl = canvas.toDataURL("image/png");
-  const win = window.open("", "_blank");
-  if (!win) return;
-
-  const paperW = config.orientation === "landscape" ? Math.max(config.paperWidthInches, config.paperHeightInches) : Math.min(config.paperWidthInches, config.paperHeightInches);
-  const paperH = config.orientation === "landscape" ? Math.min(config.paperWidthInches, config.paperHeightInches) : Math.max(config.paperWidthInches, config.paperHeightInches);
-
-  win.document.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Print Photo Sheet (${paperW}" × ${paperH}")</title>
-        <style>
-          @page {
-            size: ${paperW}in ${paperH}in;
-            margin: 0;
-          }
-          body {
-            margin: 0;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #fff;
-          }
-          img {
-            width: ${paperW}in;
-            height: ${paperH}in;
-            object-fit: contain;
-            display: block;
-          }
-        </style>
-      </head>
-      <body>
-        <img src="${dataUrl}" onload="window.print(); window.close();" />
-      </body>
-    </html>
-  `);
-  win.document.close();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("omniscan:open-print-dialog", {
+        detail: {
+          type: "photo-sheet",
+          title: `Photo Sheet (${config.paperSizeId.toUpperCase()})`,
+          photoSheetConfig: config,
+          defaultPaperSize: config.paperSizeId,
+          defaultOrientation: config.orientation,
+          hasCuttingGuides: config.cuttingGuides.type !== "none",
+        },
+      })
+    );
+  }
 }

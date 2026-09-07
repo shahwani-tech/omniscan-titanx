@@ -66,7 +66,6 @@ interface HeaderBarProps {
   onOpenFilterStudio: () => void;
   onOpenPhotoPrintStudio: () => void;
   onOpenIdCardStudio?: () => void;
-  onOpenA6HalfCardStudio?: () => void;
   onOpenBatchStudio: () => void;
   onOpenCompare: () => void;
   onOpenSecurity: () => void;
@@ -112,7 +111,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenFilterStudio,
   onOpenPhotoPrintStudio,
   onOpenIdCardStudio,
-  onOpenA6HalfCardStudio,
   onOpenBatchStudio,
   onOpenCompare,
   onOpenSecurity,
@@ -615,15 +613,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                       <span>ID Card / CNIC Print Studio...</span>
                     </button>
                   )}
-                  {onOpenA6HalfCardStudio && (
-                    <button
-                      onClick={() => { onOpenA6HalfCardStudio(); closeDropdowns(); }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 font-semibold text-indigo-300 transition-colors"
-                    >
-                      <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>A6 Half-Card Layout Studio (74×105)...</span>
-                    </button>
-                  )}
                   <button
                     onClick={() => { onOpenFilterStudio(); closeDropdowns(); }}
                     className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 text-neutral-200 transition-colors"
@@ -805,21 +794,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             <button
               onClick={onOpenIdCardStudio}
               className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-emerald-900/50 to-teal-900/50 hover:from-emerald-800/70 hover:to-teal-800/70 text-emerald-200 font-medium border border-emerald-700/50 transition-all shadow-sm flex-shrink-0"
-              title="Open ID Card / CNIC Print Studio (A4 Multi-Copy Layout)"
+              title="Open ID Card / CNIC Print Studio (A4, Letter & A6 Half-Card Layouts)"
             >
               <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
               <span>ID Card Studio</span>
-            </button>
-          )}
-
-          {onOpenA6HalfCardStudio && (
-            <button
-              onClick={onOpenA6HalfCardStudio}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-indigo-900/50 to-violet-900/50 hover:from-indigo-800/70 hover:to-violet-800/70 text-indigo-200 font-medium border border-indigo-700/50 transition-all shadow-sm flex-shrink-0"
-              title="Open A6 Half-Card Layout Studio (74 × 105 mm)"
-            >
-              <Layers className="w-3.5 h-3.5 text-indigo-400" />
-              <span>A6 Half-Card Studio</span>
             </button>
           )}
 

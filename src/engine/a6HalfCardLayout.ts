@@ -515,6 +515,7 @@ export async function renderA6SheetCanvas(
   options: {
     dpi?: number;
     showGuidesOverlay?: boolean;
+    destinationCanvas?: HTMLCanvasElement;
   } = {}
 ): Promise<HTMLCanvasElement> {
   const dpi = options.dpi || 150;
@@ -526,9 +527,11 @@ export async function renderA6SheetCanvas(
   const canvasWidth = mmToPixels(layout.sheetWidthMm, dpi);
   const canvasHeight = mmToPixels(layout.sheetHeightMm, dpi);
 
-  const canvas = document.createElement("canvas");
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
+  const canvas = options.destinationCanvas || document.createElement("canvas");
+  if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+  }
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
@@ -765,81 +768,23 @@ export async function exportA6SheetAsBlob(
 }
 
 /**
- * High-Precision Browser Printing via Hidden Iframe
+ * High-Precision Printing via Centralized Application Print System
  */
 export function printA6Canvases(canvases: HTMLCanvasElement[], config: A6HalfCardConfig) {
-  const iframe = document.createElement("iframe");
-  iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
-  iframe.style.border = "0";
-
-  document.body.appendChild(iframe);
-
-  const doc = iframe.contentWindow?.document;
-  if (!doc) {
-    document.body.removeChild(iframe);
-    return;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("omniscan:open-print-dialog", {
+        detail: {
+          type: "a6-card",
+          title: "A6 Half-Card Print Job",
+          a6Config: config,
+          defaultPaperSize: "a6",
+          defaultOrientation: config.orientation,
+          hasCuttingGuides: config.showCuttingGuides,
+        },
+      })
+    );
   }
-
-  const isPortrait = config.orientation === "portrait";
-  const sheetW = isPortrait ? "105mm" : "148mm";
-  const sheetH = isPortrait ? "148mm" : "105mm";
-
-  const imgTags = canvases
-    .map(
-      (c) =>
-        `<div class="page"><img src="${c.toDataURL("image/png")}" style="width:${sheetW};height:${sheetH};display:block;margin:0 auto;"/></div>`
-    )
-    .join("");
-
-  doc.open();
-  doc.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>OMNISCAN A6 Half-Card Print</title>
-        <style>
-          @page {
-            size: ${sheetW} ${sheetH};
-            margin: 0;
-          }
-          body {
-            margin: 0;
-            padding: 0;
-            background: white;
-          }
-          .page {
-            page-break-after: always;
-            width: ${sheetW};
-            height: ${sheetH};
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-          }
-          .page:last-child {
-            page-break-after: avoid;
-          }
-        </style>
-      </head>
-      <body>
-        ${imgTags}
-      </body>
-    </html>
-  `);
-  doc.close();
-
-  iframe.contentWindow?.focus();
-  setTimeout(() => {
-    iframe.contentWindow?.print();
-    setTimeout(() => {
-      if (document.body.contains(iframe)) {
-        document.body.removeChild(iframe);
-      }
-    }, 2000);
-  }, 400);
 }
 
 /**

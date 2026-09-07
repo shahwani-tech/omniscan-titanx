@@ -54,6 +54,8 @@ import { PasswordModal } from "./components/modals/PasswordModal";
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
 import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
 import { KeyboardShortcutsModal } from "./components/command/KeyboardShortcutsModal";
+import { PrintProvider, usePrint } from "./context/PrintContext";
+import { PrintDialog } from "./components/print/PrintDialog";
 import { executeFilterPipeline } from "./engine/filters";
 import { isRTL } from "./engine/i18n";
 import {
@@ -78,6 +80,8 @@ import {
 } from "lucide-react";
 
 export function AppContent() {
+  const { openPrintDialog } = usePrint();
+
   // Document State
   const [document, setDocument] = useState<OmniDocument>(() => {
     const initialPages = createInitialSampleDocument();
@@ -1211,85 +1215,23 @@ export function AppContent() {
     }
   };
 
-  // Print Document (High-Res)
+  // Print Document (Unified Desktop Print Center)
   const handlePrintDocument = useCallback(() => {
     if (document.pages.length === 0) {
       alert("No pages to print in current document.");
       return;
     }
 
-    const iframe = window.document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    window.document.body.appendChild(iframe);
-
-    const frameDoc = iframe.contentWindow?.document;
-    if (!frameDoc) return;
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${document.name}</title>
-          <style>
-            @page {
-              size: auto;
-              margin: 0mm;
-            }
-            body {
-              margin: 0;
-              padding: 0;
-              background: #fff;
-            }
-            .page-container {
-              page-break-after: always;
-              break-after: page;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              width: 100vw;
-              height: 100vh;
-              box-sizing: border-box;
-            }
-            img {
-              max-width: 100%;
-              max-height: 100%;
-              object-fit: contain;
-            }
-          </style>
-        </head>
-        <body>
-          ${document.pages
-            .map(
-              (p, idx) => `
-            <div class="page-container">
-              <img src="${p.processedDataUrl || p.originalDataUrl}" alt="Page ${idx + 1}" />
-            </div>
-          `
-            )
-            .join("")}
-        </body>
-      </html>
-    `;
-
-    frameDoc.open();
-    frameDoc.write(htmlContent);
-    frameDoc.close();
-
-    iframe.contentWindow?.focus();
-    setTimeout(() => {
-      iframe.contentWindow?.print();
-      setTimeout(() => {
-        if (window.document.body.contains(iframe)) {
-          window.document.body.removeChild(iframe);
-        }
-      }, 1000);
-    }, 500);
-  }, [document]);
+    openPrintDialog({
+      type: "document",
+      title: document.name || "OmniScan Document Print",
+      document: document,
+      activePageIndex: activePageIndex,
+      selectedPageIds: selectedPageIds,
+      defaultPaperSize: "a4",
+      defaultOrientation: "portrait",
+    });
+  }, [document, activePageIndex, selectedPageIds, openPrintDialog]);
 
   // Auto-Remove Blank Pages
   const handleRemoveBlankPages = useCallback(async () => {
@@ -1937,6 +1879,8 @@ export function AppContent() {
           }
         }}
       />
+      {/* Centralized Desktop Print Center Dialog */}
+      <PrintDialog />
     </div>
   );
 }
@@ -1944,7 +1888,9 @@ export function AppContent() {
 export function App() {
   return (
     <ShortcutProvider>
-      <AppContent />
+      <PrintProvider>
+        <AppContent />
+      </PrintProvider>
     </ShortcutProvider>
   );
 }

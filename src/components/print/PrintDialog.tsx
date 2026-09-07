@@ -37,19 +37,113 @@ export const PrintDialog: React.FC = () => {
     bridgeMode,
     isDesktop,
     refreshPreview,
+    zoomIn,
+    zoomOut,
+    fitPage,
+    actualSize,
+    nextPage,
+    prevPage,
+    cancelJob,
   } = usePrint();
 
-  // Escape key to close
+  // Full Keyboard Shortcuts for Professional Desktop Print Center
   useEffect(() => {
     if (!isOpen) return;
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && jobStatus.state !== "submitting" && jobStatus.state !== "spooling") {
-        closePrintDialog();
+      const activeEl = document.activeElement;
+      const isInputFocused =
+        activeEl instanceof HTMLInputElement ||
+        activeEl instanceof HTMLTextAreaElement ||
+        activeEl instanceof HTMLSelectElement;
+
+      // 1. Escape key: Close or Cancel Job
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (jobStatus.state === "submitting" || jobStatus.state === "spooling") {
+          cancelJob();
+        } else {
+          closePrintDialog();
+        }
+        return;
+      }
+
+      // 2. Enter / Ctrl+Enter: Trigger Print submission if ready
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey || !isInputFocused)) {
+        if (
+          jobStatus.state !== "submitting" &&
+          jobStatus.state !== "spooling" &&
+          jobStatus.state !== "preparing-preview" &&
+          renderedPages.length > 0 &&
+          selectedPrinter
+        ) {
+          e.preventDefault();
+          submitPrint();
+          return;
+        }
+      }
+
+      // If user is actively typing into an input field or select, do not intercept single-character shortcuts
+      if (isInputFocused) return;
+
+      // 3. Page Up / Page Down: Previous / Next Preview Page
+      if (e.key === "PageUp") {
+        e.preventDefault();
+        prevPage();
+        return;
+      }
+      if (e.key === "PageDown") {
+        e.preventDefault();
+        nextPage();
+        return;
+      }
+
+      // 4. Zoom in (+ or =)
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        zoomIn();
+        return;
+      }
+
+      // 5. Zoom out (- or _)
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomOut();
+        return;
+      }
+
+      // 6. Fit Page (0)
+      if (e.key === "0") {
+        e.preventDefault();
+        fitPage();
+        return;
+      }
+
+      // 7. Actual Size 100% (1)
+      if (e.key === "1") {
+        e.preventDefault();
+        actualSize();
+        return;
       }
     };
+
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, jobStatus.state, closePrintDialog]);
+  }, [
+    isOpen,
+    jobStatus.state,
+    renderedPages.length,
+    selectedPrinter,
+    closePrintDialog,
+    cancelJob,
+    submitPrint,
+    prevPage,
+    nextPage,
+    zoomIn,
+    zoomOut,
+    fitPage,
+    actualSize,
+  ]);
 
   if (!isOpen || !payload) return null;
 
@@ -181,14 +275,24 @@ export const PrintDialog: React.FC = () => {
 
               {/* Action Buttons */}
               <div className="flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={closePrintDialog}
-                  disabled={isSubmitting}
-                  className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700/80 active:bg-neutral-800 text-neutral-300 hover:text-neutral-100 rounded-xl text-xs font-medium transition-colors disabled:opacity-40"
-                >
-                  Cancel
-                </button>
+                {isSubmitting ? (
+                  <button
+                    type="button"
+                    onClick={cancelJob}
+                    className="px-4 py-2.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-xl text-xs font-medium transition-colors flex items-center gap-1.5"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Cancel Spooling</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={closePrintDialog}
+                    className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700/80 active:bg-neutral-800 text-neutral-300 hover:text-neutral-100 rounded-xl text-xs font-medium transition-colors disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                )}
 
                 <div className="flex items-center gap-2">
                   <button

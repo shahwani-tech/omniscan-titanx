@@ -97,6 +97,7 @@ export type PrintPayloadType =
   | "document"
   | "photo-sheet"
   | "idcard-sheet"
+  | "id-card"
   | "a6-card"
   | "canvases"
   | "images";
@@ -126,6 +127,14 @@ export interface PrintJobPayload {
   defaultPaperSize?: string;
   defaultOrientation?: "portrait" | "landscape";
   hasCuttingGuides?: boolean;
+
+  // Tool-specific configurations for dynamic rendering in Print Preview
+  a6Config?: any;
+  a6Images?: { front?: string; back?: string };
+  idCardConfig?: any;
+  idCardImages?: { front?: string; back?: string };
+  photoSheetConfig?: any;
+  photoSheetImages?: Record<string, string>;
 }
 
 export type PrintJobState =

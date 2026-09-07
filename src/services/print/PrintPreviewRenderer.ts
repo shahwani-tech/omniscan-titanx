@@ -137,7 +137,7 @@ export class PrintPreviewRenderer {
     if (payload.document && payload.document.pages.length > 0) {
       for (let i = 0; i < payload.document.pages.length; i++) {
         const p = payload.document.pages[i];
-        const srcUrl = p.renderedImageUrl || p.originalImageUrl;
+        const srcUrl = p.processedDataUrl || p.originalDataUrl;
         if (srcUrl) {
           results.push({
             dataUrl: srcUrl,
@@ -156,6 +156,63 @@ export class PrintPreviewRenderer {
           label: `Image ${i + 1}`,
         });
       }
+      return results;
+    }
+
+    // 5. Tool-specific Studio Payloads (A6, ID Card, Photo Sheet)
+    if (payload.type === "a6-card" && payload.a6Config) {
+      const { calculateA6Layout, renderA6SheetCanvas } = await import("../../engine/a6HalfCardLayout");
+      const layout = calculateA6Layout(payload.a6Config);
+      const totalPages = Math.max(1, layout.pages.length);
+      for (let pIdx = 0; pIdx < totalPages; pIdx++) {
+        const c = await renderA6SheetCanvas(payload.a6Config, payload.a6Images || {}, pIdx, {
+          dpi: 200,
+          showGuidesOverlay: payload.hasCuttingGuides ?? true,
+        });
+        results.push({
+          dataUrl: c.toDataURL("image/png"),
+          label: totalPages > 1 ? `A6 Sheet Page ${pIdx + 1}` : "A6 Half-Card Sheet",
+        });
+      }
+      return results;
+    }
+
+    if ((payload.type === "id-card" || payload.type === "idcard-sheet") && payload.idCardConfig) {
+      const { renderIdCardSheetCanvas } = await import("../../engine/idCardLayout");
+      const isMultiPage = payload.idCardConfig.layoutMode === "duplex-two-page";
+      const totalPages = isMultiPage ? 2 : 1;
+      for (let pIdx = 0; pIdx < totalPages; pIdx++) {
+        const c = await renderIdCardSheetCanvas(
+          payload.idCardConfig,
+          payload.idCardImages?.front || "",
+          payload.idCardImages?.back || "",
+          {
+            targetDpi: 200,
+            pageIndex: pIdx,
+          }
+        );
+        results.push({
+          dataUrl: c.toDataURL("image/png"),
+          label: isMultiPage ? (pIdx === 0 ? "Front Side (Page 1)" : "Back Side (Page 2)") : "ID Card / CNIC Sheet",
+        });
+      }
+      return results;
+    }
+
+    if (payload.type === "photo-sheet" && payload.photoSheetConfig) {
+      const { renderPhotoSheetCanvas } = await import("../../engine/photoLayout");
+      const c = await renderPhotoSheetCanvas(
+        payload.photoSheetConfig,
+        payload.photoSheetImages || {},
+        {
+          targetDpi: 200,
+          showGuidesOverlay: payload.hasCuttingGuides ?? true,
+        }
+      );
+      results.push({
+        dataUrl: c.toDataURL("image/png"),
+        label: `Photo Sheet (${payload.photoSheetConfig.paperSizeId.toUpperCase()})`,
+      });
       return results;
     }
 

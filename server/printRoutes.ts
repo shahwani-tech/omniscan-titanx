@@ -173,11 +173,24 @@ printRouter.get("/printers", async (_req: Request, res: Response) => {
 });
 
 /**
+ * Helper to validate printer name to avoid command injection or path traversal
+ */
+function isValidPrinterName(name: string): boolean {
+  if (!name || name.length > 256) return false;
+  // Allow alphanumeric, spaces, dashes, dots, underscores, colons, slashes, hash, at, parentheses
+  return /^[\w\s\-\.\(\):#@\/]+$/u.test(name);
+}
+
+/**
  * 2. Get Printer Capabilities
  * Queries supported paper sizes, duplex, color, quality, and margins
  */
 printRouter.get("/printers/:name/capabilities", async (req: Request, res: Response) => {
   const printerName = decodeURIComponent(req.params.name);
+  if (!isValidPrinterName(printerName)) {
+    return res.status(400).json({ success: false, error: "Invalid printer name format." });
+  }
+
   const isCanonOrEpson = /canon|epson|photo/i.test(printerName);
   const isLaser = /laser|hp/i.test(printerName);
 
@@ -221,6 +234,10 @@ printRouter.get("/printers/:name/capabilities", async (req: Request, res: Respon
  */
 printRouter.post("/printers/:name/preferences", async (req: Request, res: Response) => {
   const printerName = decodeURIComponent(req.params.name);
+  if (!isValidPrinterName(printerName)) {
+    return res.status(400).json({ success: false, error: "Invalid printer name format." });
+  }
+
   const isWindows = process.platform === "win32";
 
   try {
@@ -269,8 +286,8 @@ printRouter.post("/printers/:name/preferences", async (req: Request, res: Respon
 printRouter.post("/print/submit", async (req: Request, res: Response) => {
   const { printerName, settings, pages } = req.body;
 
-  if (!printerName) {
-    return res.status(400).json({ success: false, error: "Printer name is required." });
+  if (!printerName || !isValidPrinterName(printerName)) {
+    return res.status(400).json({ success: false, error: "A valid printer name is required." });
   }
 
   if (!pages || !Array.isArray(pages) || pages.length === 0) {
@@ -284,17 +301,16 @@ printRouter.post("/print/submit", async (req: Request, res: Response) => {
       id: jobId,
       printerName,
       pageCount: pages.length,
-      copies: settings.copies || 1,
-      orientation: settings.orientation,
-      paperSize: settings.paperSizeId,
+      copies: Math.max(1, Math.min(999, parseInt(settings?.copies, 10) || 1)),
+      orientation: settings?.orientation || "portrait",
+      paperSize: settings?.paperSizeId || "a4",
       status: "spooling",
       submittedAt: new Date().toISOString(),
     });
 
     // Simulate / execute spooling
-    // If running on actual OS with lp or Out-Printer:
     const isWindows = process.platform === "win32";
-    if (isWindows) {
+    if (isWindows && pages[0]?.dataUrl) {
       // Create temporary spool file
       const tempDir = os.tmpdir();
       const tempJobPath = path.join(tempDir, `omniscan_spool_${jobId}.tmp`);
@@ -308,7 +324,7 @@ printRouter.post("/print/submit", async (req: Request, res: Response) => {
       }, 15000);
     }
 
-    // Step 6 & 7: Release/discard temporary DEVMODE settings and restore baseline
+    // Release/discard temporary DEVMODE settings and restore baseline
     if (baselinePrinterConfigurations.has(printerName)) {
       baselinePrinterConfigurations.delete(printerName);
     }
@@ -322,7 +338,7 @@ printRouter.post("/print/submit", async (req: Request, res: Response) => {
     res.json({
       success: true,
       jobId,
-      message: `Print job successfully sent to "${printerName}". (${pages.length} page${pages.length > 1 ? "s" : ""}, ${settings.copies || 1} cop${(settings.copies || 1) > 1 ? "ies" : "y"}).`,
+      message: `Print job successfully sent to "${printerName}". (${pages.length} page${pages.length > 1 ? "s" : ""}, ${settings?.copies || 1} cop${(settings?.copies || 1) > 1 ? "ies" : "y"}).`,
       restoredBaseline: true,
     });
   } catch (error: any) {
@@ -336,7 +352,35 @@ printRouter.post("/print/submit", async (req: Request, res: Response) => {
 });
 
 /**
- * 5. Restore Printer Preferences
+ * 5. Check Print Job Status
+ */
+printRouter.get("/print/jobs/:jobId", (req: Request, res: Response) => {
+  const jobId = req.params.jobId;
+  const job = activeJobSpoolStore.get(jobId);
+  if (!job) {
+    return res.status(404).json({ success: false, error: "Job not found." });
+  }
+  res.json({ success: true, job });
+});
+
+/**
+ * 6. Cancel Print Job
+ */
+printRouter.post("/print/cancel", (req: Request, res: Response) => {
+  const { jobId, printerName } = req.body;
+  if (jobId && activeJobSpoolStore.has(jobId)) {
+    const job = activeJobSpoolStore.get(jobId);
+    job.status = "cancelled";
+    job.cancelledAt = new Date().toISOString();
+  }
+  if (printerName && baselinePrinterConfigurations.has(printerName)) {
+    baselinePrinterConfigurations.delete(printerName);
+  }
+  res.json({ success: true, message: "Print job session cancelled." });
+});
+
+/**
+ * 7. Restore Printer Preferences
  * Explicit endpoint to discard temporary DEVMODE settings if job is cancelled
  */
 printRouter.post("/printers/:name/restore-preferences", (req: Request, res: Response) => {

@@ -1054,118 +1054,43 @@ export async function exportIdCardSheetAsBlob(
 }
 
 /**
- * Triggers native system browser print dialog for exact physical dimensions
+ * Triggers centralized application printing system for exact physical dimensions
  */
 export function printIdCardSheetCanvas(canvas: HTMLCanvasElement, config: IdCardStudioConfig) {
-  const dataUrl = canvas.toDataURL("image/png");
-  const win = window.open("", "_blank");
-  if (!win) return;
-
-  const rawPaperW = config.paperWidthMm;
-  const rawPaperH = config.paperHeightMm;
-  const paperWMm = config.orientation === "landscape" ? Math.max(rawPaperW, rawPaperH) : Math.min(rawPaperW, rawPaperH);
-  const paperHMm = config.orientation === "landscape" ? Math.min(rawPaperW, rawPaperH) : Math.max(rawPaperW, rawPaperH);
-
-  win.document.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Print ID Card / CNIC Sheet (${paperWMm.toFixed(1)}mm × ${paperHMm.toFixed(1)}mm)</title>
-        <style>
-          @page {
-            size: ${paperWMm}mm ${paperHMm}mm;
-            margin: 0;
-          }
-          body {
-            margin: 0;
-            padding: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #fff;
-          }
-          img {
-            width: ${paperWMm}mm;
-            height: ${paperHMm}mm;
-            object-fit: contain;
-            display: block;
-          }
-        </style>
-      </head>
-      <body>
-        <img src="${dataUrl}" onload="window.print(); window.close();" />
-      </body>
-    </html>
-  `);
-  win.document.close();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("omniscan:open-print-dialog", {
+        detail: {
+          type: "id-card",
+          title: "ID Card / CNIC Print Sheet",
+          idCardConfig: config,
+          defaultPaperSize: config.paperSizeId,
+          defaultOrientation: config.orientation,
+          hasCuttingGuides: config.cuttingGuidesType !== "none",
+        },
+      })
+    );
+  }
 }
 
 /**
- * Triggers native system browser print dialog for multiple pages (e.g. Page 1 Front, Page 2 Back)
+ * Triggers centralized application printing system for multiple pages (e.g. Page 1 Front, Page 2 Back)
  */
 export function printIdCardCanvases(canvases: HTMLCanvasElement[], config: IdCardStudioConfig) {
-  if (!canvases.length) return;
-  const dataUrls = canvases.map((c) => c.toDataURL("image/png"));
-  const win = window.open("", "_blank");
-  if (!win) return;
-
-  const rawPaperW = config.paperWidthMm;
-  const rawPaperH = config.paperHeightMm;
-  const paperWMm = config.orientation === "landscape" ? Math.max(rawPaperW, rawPaperH) : Math.min(rawPaperW, rawPaperH);
-  const paperHMm = config.orientation === "landscape" ? Math.min(rawPaperW, rawPaperH) : Math.max(rawPaperW, rawPaperH);
-
-  win.document.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Print ID Card / CNIC Sheet (${paperWMm.toFixed(1)}mm × ${paperHMm.toFixed(1)}mm)</title>
-        <style>
-          @page {
-            size: ${paperWMm}mm ${paperHMm}mm;
-            margin: 0;
-          }
-          html, body {
-            margin: 0;
-            padding: 0;
-            background: #fff;
-          }
-          .page-container {
-            width: ${paperWMm}mm;
-            height: ${paperHMm}mm;
-            page-break-after: always;
-            break-after: page;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-sizing: border-box;
-            overflow: hidden;
-          }
-          .page-container:last-child {
-            page-break-after: auto;
-            break-after: auto;
-          }
-          img {
-            width: ${paperWMm}mm;
-            height: ${paperHMm}mm;
-            object-fit: contain;
-            display: block;
-          }
-        </style>
-      </head>
-      <body>
-        ${dataUrls.map((url) => `<div class="page-container"><img src="${url}" /></div>`).join("")}
-        <script>
-          window.addEventListener('load', () => {
-            setTimeout(() => {
-              window.print();
-              window.close();
-            }, 300);
-          });
-        </script>
-      </body>
-    </html>
-  `);
-  win.document.close();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("omniscan:open-print-dialog", {
+        detail: {
+          type: "id-card",
+          title: "ID Card / CNIC Multi-Page Print Job",
+          idCardConfig: config,
+          defaultPaperSize: config.paperSizeId,
+          defaultOrientation: config.orientation,
+          hasCuttingGuides: config.cuttingGuidesType !== "none",
+        },
+      })
+    );
+  }
 }
 
 /**

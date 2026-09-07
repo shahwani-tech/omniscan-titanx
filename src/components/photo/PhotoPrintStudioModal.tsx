@@ -92,6 +92,7 @@ import {
   Zap,
 } from "lucide-react";
 import { PhotoFilterNumericInput } from "./PhotoFilterNumericInput";
+import { usePrint } from "../../context/PrintContext";
 
 interface PhotoPrintStudioModalProps {
   pages: OmniPage[];
@@ -112,6 +113,8 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   onInsertIntoDocument,
   onOpenScanModal,
 }) => {
+  const { openPrintDialog } = usePrint();
+
   // Active Studio Mode: 'crop' | 'filters' | 'sheet'
   const [studioStep, setStudioStep] = useState<"crop" | "filters" | "sheet">("crop");
 
@@ -923,9 +926,16 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handlePrintSheet = () => {
-    if (!previewCanvas) return;
-    printPhotoSheetCanvas(previewCanvas, sheetConfig);
-    showToast("Print dialog opened. Select 'Actual Size' in print properties.");
+    const photoUrl = processedPhotoDataUrl || rawSourceImage;
+    openPrintDialog({
+      type: "photo-sheet",
+      title: `Photo Sheet (${sheetConfig.paperSizeId.toUpperCase()}) - ${currentPassportSpec.name}`,
+      photoSheetConfig: sheetConfig,
+      photoSheetImages: { "photo-1": photoUrl },
+      defaultPaperSize: sheetConfig.paperSizeId,
+      defaultOrientation: sheetConfig.orientation,
+      hasCuttingGuides: sheetConfig.cuttingGuides.type !== "none",
+    });
   };
 
   const handleInsertIntoDocument = () => {

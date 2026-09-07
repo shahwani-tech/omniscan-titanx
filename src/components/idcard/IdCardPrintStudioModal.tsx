@@ -66,6 +66,7 @@ import { DEFAULT_FILTERS } from "../../engine/vision";
 import { ImageFilterPipeline, OmniPage } from "../../types";
 import { IdCardCropModal, IdCardCropState } from "./IdCardCropModal";
 import { IdCardFilterNumericInput } from "./IdCardFilterNumericInput";
+import { usePrint } from "../../context/PrintContext";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageThumbnail, renderPDFPageToDataUrl } from "../../engine/pdf";
 
@@ -92,6 +93,8 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   pages = [],
   activePageIndex = 0,
 }) => {
+  const { openPrintDialog } = usePrint();
+
   // -------------------------------------------------------------
   // Configuration State (Completely Isolated from Main App)
   // -------------------------------------------------------------
@@ -1062,34 +1065,19 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     }
   };
 
-  const handlePrint = async () => {
-    try {
-      setIsExporting(true);
-      setStatusMessage("Preparing Two-Page Print Document...");
+  const handlePrint = () => {
+    const printFront = fullResFrontImageRef.current || frontImage;
+    const printBack = fullResBackImageRef.current || backImage;
 
-      const printFront = fullResFrontImageRef.current || frontImage;
-      const printBack = fullResBackImageRef.current || backImage;
-
-      // Render high-res 300 DPI canvases for both pages
-      const page1 = await renderIdCardSheetCanvas(config, printFront, printBack, {
-        targetDpi: 300,
-        pageIndex: 0,
-      });
-
-      const page2 = await renderIdCardSheetCanvas(config, printFront, printBack, {
-        targetDpi: 300,
-        pageIndex: 1,
-      });
-
-      printIdCardCanvases([page1, page2], config);
-      setStatusMessage(null);
-    } catch (err) {
-      console.error("Print preparation failed:", err);
-      setStatusMessage("Failed to open print dialog.");
-      setTimeout(() => setStatusMessage(null), 3000);
-    } finally {
-      setIsExporting(false);
-    }
+    openPrintDialog({
+      type: "id-card",
+      title: "ID Card / CNIC Print Job",
+      idCardConfig: config,
+      idCardImages: { front: printFront, back: printBack },
+      defaultPaperSize: config.paperSizeId,
+      defaultOrientation: config.orientation,
+      hasCuttingGuides: config.cuttingGuidesType !== "none",
+    });
   };
 
   // Centralized Shortcut Management for ID Card / CNIC Studio

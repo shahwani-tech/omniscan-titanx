@@ -59,6 +59,7 @@ import {
 } from "../../engine/a6HalfCardLayout";
 import { renderPDFPageToDataUrl } from "../../engine/pdf";
 import { useShortcuts } from "../../commands/ShortcutContext";
+import { usePrint } from "../../context/PrintContext";
 import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
 import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
@@ -86,6 +87,8 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   onClose,
   onInsertIntoDocument,
 }) => {
+  const { openPrintDialog } = usePrint();
+
   // -------------------------------------------------------------
   // Configuration State
   // -------------------------------------------------------------
@@ -906,27 +909,16 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   // -------------------------------------------------------------
   // Export & Print Handlers
   // -------------------------------------------------------------
-  const handleDirectPrint = async () => {
-    setIsExporting(true);
-    try {
-      const canvases: HTMLCanvasElement[] = [];
-      for (let i = 0; i < layout.pages.length; i++) {
-        const c = await renderA6SheetCanvas(
-          config,
-          { front: frontImage, back: backImage },
-          i,
-          { dpi: 300, showGuidesOverlay: false }
-        );
-        canvases.push(c);
-      }
-      printA6Canvases(canvases, config);
-      showToast("Sent to printer.");
-    } catch (err) {
-      console.error("Print error:", err);
-      showToast("Print failed. Please try again.");
-    } finally {
-      setIsExporting(false);
-    }
+  const handleDirectPrint = () => {
+    openPrintDialog({
+      type: "a6-card",
+      title: "A6 Half-Card Print Job",
+      a6Config: config,
+      a6Images: { front: frontImage, back: backImage },
+      defaultPaperSize: "a6",
+      defaultOrientation: config.orientation,
+      hasCuttingGuides: config.showCuttingGuides,
+    });
   };
 
   const handleExportPdf = async () => {
