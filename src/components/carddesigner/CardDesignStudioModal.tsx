@@ -36,6 +36,8 @@ import {
   ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
   PdfImportPageResult,
 } from "../common/PdfImportDialog";
+import { analyzeFile } from "../../services/upload/FileTypeRegistry";
+import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
 import {
   renderA6SheetToCanvas,
   exportProjectToPdf,
@@ -341,6 +343,66 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
     setSelectedPdfFile(null);
   };
 
+  // Direct Drag & Drop Handler for Card Canvas
+  const handleDropFiles = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+    const firstFile = files[0];
+    const analysis = analyzeFile(firstFile);
+
+    if (analysis.category === "pdf") {
+      setSelectedPdfFile(firstFile);
+      setIsPdfImportOpen(true);
+      return;
+    }
+
+    if (analysis.category === "document") {
+      try {
+        const pages = await parseDocumentFile(firstFile);
+        if (pages.length > 0) {
+          const firstPage = pages[0];
+          handlePdfImportToCard(
+            {
+              pageNum: 1,
+              dataUrl: firstPage.dataUrl,
+              width: firstPage.width,
+              height: firstPage.height,
+              fileName: firstFile.name,
+              side: activeSide,
+            },
+            activeSide
+          );
+        }
+      } catch (err: any) {
+        console.error("Document import error in Card Designer:", err);
+      }
+      return;
+    }
+
+    if (analysis.category === "image") {
+      if (analysis.extension === "svg") {
+        setIsVectorImportOpen(true);
+        return;
+      }
+      try {
+        const { dataUrl, width, height } = await decodeImageFile(firstFile);
+        handlePdfImportToCard(
+          {
+            pageNum: 1,
+            dataUrl,
+            width,
+            height,
+            fileName: firstFile.name,
+            side: activeSide,
+          },
+          activeSide
+        );
+      } catch (err: any) {
+        console.error("Image decode error in Card Designer:", err);
+      }
+      return;
+    }
+  };
+
   // Switch Template
   const handleLoadTemplate = (type: "corporate" | "official" | "visitor" | "blank") => {
     let tpl: CardDesignerProject;
@@ -607,6 +669,7 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
           setPanOffset={setPanOffset}
           onCommitHistory={commitHistory}
           onEditCrop={(obj) => setCropTargetObject(obj)}
+          onDropFiles={handleDropFiles}
         />
 
         {/* Right: Properties Inspector Sidebar */}

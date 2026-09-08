@@ -63,6 +63,8 @@ import { PrintProvider, usePrint } from "./context/PrintContext";
 import { PrintDialog } from "./components/print/PrintDialog";
 import { executeFilterPipeline } from "./engine/filters";
 import { isRTL } from "./engine/i18n";
+import { analyzeFile, ACCEPT_ALL_SUPPORTED } from "./services/upload/FileTypeRegistry";
+import { parseDocumentFile, decodeImageFile } from "./services/upload/DocumentImportService";
 import {
   Scan,
   Download,
@@ -261,6 +263,8 @@ export function AppContent() {
             return {
               ...p,
               thumbnailDataUrl: thumbnailUrl,
+              processedDataUrl: p.isPendingRender ? thumbnailUrl : p.processedDataUrl,
+              originalDataUrl: p.isPendingRender ? thumbnailUrl : p.originalDataUrl,
               width: width || p.width,
               height: height || p.height,
               isBlank: isBlank ?? p.isBlank,
@@ -278,12 +282,20 @@ export function AppContent() {
     return () => window.removeEventListener("titan-pdf-thumbnail-ready", handleThumbReady);
   }, []);
 
+  // Track in-flight on-demand page rendering requests to avoid duplicates
+  const inFlightRenderingRef = useRef<Set<string>>(new Set());
+
   // Progressive High-Res On-Demand Rendering for Active Viewport Page
   useEffect(() => {
     const activePage = document.pages[activePageIndex];
     if (!activePage || !activePage.isPendingRender || !activePage.pdfDocId) return;
 
+    const pageKey = `${activePage.pdfDocId}-${activePage.pageNumber}`;
+    if (inFlightRenderingRef.current.has(pageKey)) return;
+
+    inFlightRenderingRef.current.add(pageKey);
     let isCancelled = false;
+
     // Prioritize active page and surrounding pages in thumbnail/worker queue
     prioritizePdfThumbnailPages([
       activePage.pageNumber,
@@ -292,11 +304,13 @@ export function AppContent() {
     ]);
 
     renderPdfPageOnDemand(activePage.pdfDocId, activePage.pageNumber).then((rendered) => {
+      inFlightRenderingRef.current.delete(pageKey);
       if (isCancelled || !rendered) return;
+
       setDocument((prev) => ({
         ...prev,
-        pages: prev.pages.map((p, idx) =>
-          idx === activePageIndex && p.id === activePage.id
+        pages: prev.pages.map((p) =>
+          p.id === activePage.id
             ? {
                 ...p,
                 processedDataUrl: rendered.dataUrl,
@@ -311,14 +325,32 @@ export function AppContent() {
             : p
         ),
       }));
+
+      // Classify page content automatically once high-res image is rendered
+      classifyImageContent(rendered.thumbnailUrl).then((classification) => {
+        setDocument((prev) => ({
+          ...prev,
+          pages: prev.pages.map((p) =>
+            p.id === activePage.id && !p.detectedContent
+              ? {
+                  ...p,
+                  detectedContent: classification,
+                  filters: { ...classification.recommendedFilters },
+                  filterSource: "auto-detected",
+                }
+              : p
+          ),
+        }));
+      }).catch(() => {});
     }).catch((err) => {
+      inFlightRenderingRef.current.delete(pageKey);
       console.warn(`On-demand render failed for page ${activePage.pageNumber}:`, err);
     });
 
     return () => {
       isCancelled = true;
     };
-  }, [activePageIndex, document.pages]);
+  }, [activePageIndex, document.pages[activePageIndex]?.id, document.pages[activePageIndex]?.isPendingRender, document.pages[activePageIndex]?.pdfDocId]);
 
   // -------------------------------------------------------------
   // CamScanner Filter Modal Apply (Single vs Batch All Pages)
@@ -1230,7 +1262,7 @@ export function AppContent() {
   // -------------------------------------------------------------
   // Import Files (PDF + Images) & Scan Handlers
   // -------------------------------------------------------------
-  const handleProcessPdfFile = async (file: File, password?: string) => {
+  const handleProcessPdfFile = async (file: File, password?: string, appendOnly = false) => {
     setIsProcessing(true);
     setProcessingMessage(`Parsing and indexing PDF document "${file.name}"...`);
 
@@ -1261,22 +1293,26 @@ export function AppContent() {
         },
       };
 
-      // Run content classification on imported PDF pages
-      for (const p of imported.pages) {
-        if (!p.detectedContent && (p.thumbnailDataUrl || p.originalDataUrl)) {
-          try {
-            const classification = await classifyImageContent(p.thumbnailDataUrl || p.originalDataUrl);
-            p.detectedContent = classification;
-            p.filters = { ...classification.recommendedFilters };
-            p.filterSource = "auto-detected";
-          } catch {}
-        }
+      // Run content classification immediately on Page 1 only (which is already rendered)
+      // Remaining pages are classified on-demand when rendered to avoid main thread freeze
+      if (imported.pages[0] && !imported.pages[0].detectedContent) {
+        try {
+          const classification = await classifyImageContent(
+            imported.pages[0].thumbnailDataUrl || imported.pages[0].originalDataUrl
+          );
+          imported.pages[0].detectedContent = classification;
+          imported.pages[0].filters = { ...classification.recommendedFilters };
+          imported.pages[0].filterSource = "auto-detected";
+        } catch {}
       }
 
       setDocument((prev) => {
         // If previous doc was initial sample or empty, replace it; otherwise append
         const isSample =
-          prev.name.includes("TITAN_Commercial_Contract_2026") && prev.pages.length <= 4;
+          !appendOnly &&
+          prev.name.includes("TITAN_Commercial_Contract_2026") &&
+          prev.pages.length <= 4;
+
         if (isSample || prev.pages.length === 0) {
           // Free previous cached PDF document resources
           prev.pages.forEach((p) => {
@@ -1301,7 +1337,9 @@ export function AppContent() {
         }
       });
 
-      setActivePageIndex(0);
+      if (!appendOnly) {
+        setActivePageIndex(0);
+      }
       setIsDirty(true);
       setPasswordModalState({ isOpen: false, file: null });
     } catch (err: any) {
@@ -1329,31 +1367,110 @@ export function AppContent() {
     if (!files || files.length === 0) return;
 
     const fileArray = Array.from(files);
-    const pdfFiles = fileArray.filter(
-      (f) => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")
-    );
-    const imgFiles = fileArray.filter(
-      (f) => f.type.startsWith("image/") || /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|avif)$/i.test(f.name)
-    );
+    const pdfFiles: File[] = [];
+    const docFiles: File[] = [];
+    const imgFiles: File[] = [];
 
-    // Handle PDF files
-    for (const pdfFile of pdfFiles) {
-      await handleProcessPdfFile(pdfFile);
+    for (const f of fileArray) {
+      const analysis = analyzeFile(f);
+      if (analysis.category === "pdf") {
+        pdfFiles.push(f);
+      } else if (analysis.category === "document") {
+        docFiles.push(f);
+      } else if (analysis.category === "image") {
+        imgFiles.push(f);
+      }
     }
 
-    // Handle Image files
+    // 1. Handle PDF files sequentially with detailed batch progress
+    if (pdfFiles.length > 0) {
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const pdfFile = pdfFiles[i];
+        setProcessingMessage(
+          `Importing PDF ${i + 1} of ${pdfFiles.length}: "${pdfFile.name}"...`
+        );
+        await handleProcessPdfFile(pdfFile, undefined, i > 0);
+      }
+    }
+
+    // 2. Handle Text & Office Documents (DOCX, TXT, RTF, DOC)
+    if (docFiles.length > 0) {
+      setIsProcessing(true);
+      setProcessingMessage(`Importing ${docFiles.length} document(s)...`);
+
+      const docPages: OmniPage[] = [];
+      for (const docFile of docFiles) {
+        try {
+          const parsedPages = await parseDocumentFile(docFile);
+          for (let pIdx = 0; pIdx < parsedPages.length; pIdx++) {
+            const parsed = parsedPages[pIdx];
+            let classification: ContentClassificationResult;
+            try {
+              classification = await classifyImageContent(parsed.dataUrl);
+            } catch {
+              classification = getFallbackClassification();
+            }
+
+            docPages.push({
+              id: `doc-${Date.now()}-${docFile.name}-${pIdx}`,
+              pageNumber: document.pages.length + docPages.length + 1,
+              originalDataUrl: parsed.dataUrl,
+              processedDataUrl: parsed.dataUrl,
+              thumbnailDataUrl: parsed.dataUrl,
+              width: parsed.width || 1200,
+              height: parsed.height || 1600,
+              dpi: 300,
+              sizeBytes: docFile.size,
+              isBlank: false,
+              blankScore: 0,
+              filters: { ...classification.recommendedFilters },
+              detectedContent: classification,
+              filterSource: "auto-detected",
+              annotations: [],
+              redactions: [],
+              formFields: [],
+              isModified: true,
+              lastModifiedAt: new Date().toISOString(),
+            });
+          }
+        } catch (err) {
+          console.error(`Error parsing document ${docFile.name}:`, err);
+        }
+      }
+
+      if (docPages.length > 0) {
+        recordHistorySnapshot(document);
+        setDocument((prev) => ({
+          ...prev,
+          pages: [...prev.pages, ...docPages],
+        }));
+        setActivePageIndex(document.pages.length);
+        setIsDirty(true);
+      }
+
+      setIsProcessing(false);
+      setProcessingMessage("");
+    }
+
+    // 3. Handle Image files (JPG, PNG, WEBP, BMP, TIFF, GIF, SVG)
     if (imgFiles.length > 0) {
       setIsProcessing(true);
-      setProcessingMessage(`Importing ${imgFiles.length} images...`);
+      setProcessingMessage(`Importing ${imgFiles.length} image(s)...`);
 
       const newPages: OmniPage[] = [];
       for (let i = 0; i < imgFiles.length; i++) {
         const file = imgFiles[i];
-        const dataUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
+        let dataUrl: string;
+        try {
+          const decoded = await decodeImageFile(file);
+          dataUrl = decoded.dataUrl;
+        } catch {
+          dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+        }
 
         const img = new Image();
         img.src = dataUrl;
@@ -1848,9 +1965,9 @@ export function AppContent() {
             <div className="w-16 h-16 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center animate-bounce">
               <FolderOpen className="w-8 h-8" />
             </div>
-            <h3 className="text-lg font-bold text-white">Drop PDF or Images to Import</h3>
+            <h3 className="text-lg font-bold text-white">Drop PDF, Images, or Documents</h3>
             <p className="text-xs text-neutral-400">
-              Files will be imported, rendered, and indexed into your active document session
+              Supports PDF, JPG, PNG, WEBP, BMP, TIFF, SVG, DOCX, TXT, RTF into your active session
             </p>
           </div>
         </div>
@@ -1861,7 +1978,7 @@ export function AppContent() {
         ref={fileInputRef}
         type="file"
         multiple
-        accept=".pdf,application/pdf,image/*,.png,.jpg,.jpeg,.webp,.bmp,.tiff"
+        accept={ACCEPT_ALL_SUPPORTED}
         onChange={handleFileImport}
         className="hidden"
       />
@@ -2022,6 +2139,7 @@ export function AppContent() {
         pages={document.pages}
         onClose={() => setIsBatchModalOpen(false)}
         onExecuteBatch={handleExecuteBatch}
+        onAddFiles={handleImportFiles}
       />
 
       <DocumentCompareModal

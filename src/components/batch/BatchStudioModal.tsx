@@ -3,7 +3,7 @@
  * Visual Pipeline Builder & High-Throughput Document Processing Engine
  */
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   Layers,
   Play,
@@ -18,14 +18,17 @@ import {
   Download,
   Shield,
   Activity,
+  Upload,
 } from "lucide-react";
 import { OmniPage, AppLanguage } from "../../types";
+import { ACCEPT_ALL_SUPPORTED } from "../../services/upload/FileTypeRegistry";
 
 interface BatchStudioModalProps {
   isOpen: boolean;
   pages: OmniPage[];
   onClose: () => void;
   onExecuteBatch: (config: BatchConfig) => Promise<void>;
+  onAddFiles?: (files: FileList | File[]) => Promise<void>;
 }
 
 export interface BatchConfig {
@@ -46,6 +49,7 @@ export const BatchStudioModal: React.FC<BatchStudioModalProps> = ({
   pages,
   onClose,
   onExecuteBatch,
+  onAddFiles,
 }) => {
   const [config, setConfig] = useState<BatchConfig>({
     autoDeskew: true,
@@ -63,8 +67,21 @@ export const BatchStudioModal: React.FC<BatchStudioModalProps> = ({
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
+  const [isAddingFiles, setIsAddingFiles] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !onAddFiles) return;
+    setIsAddingFiles(true);
+    try {
+      await onAddFiles(e.target.files);
+    } finally {
+      setIsAddingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const handleStart = async () => {
     setIsRunning(true);
@@ -258,9 +275,32 @@ export const BatchStudioModal: React.FC<BatchStudioModalProps> = ({
 
         {/* Footer */}
         <div className="p-3 bg-neutral-850 border-t border-neutral-800 flex items-center justify-between">
-          <span className="text-neutral-400 text-[11px]">
-            Target: <strong className="text-white">{pages.length} Pages</strong> ready for execution
-          </span>
+          <div className="flex items-center space-x-3">
+            <span className="text-neutral-400 text-[11px]">
+              Target: <strong className="text-white">{pages.length} Pages</strong> ready for execution
+            </span>
+            {onAddFiles && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={ACCEPT_ALL_SUPPORTED}
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isRunning || isAddingFiles}
+                  className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-750 text-indigo-300 border border-neutral-700 font-medium text-[11px] disabled:opacity-50"
+                >
+                  <Upload className="w-3 h-3 text-indigo-400" />
+                  <span>{isAddingFiles ? "Importing..." : "Add Files to Batch"}</span>
+                </button>
+              </>
+            )}
+          </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={onClose}

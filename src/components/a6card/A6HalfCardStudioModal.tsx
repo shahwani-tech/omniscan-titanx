@@ -40,6 +40,8 @@ import {
   MousePointer,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
+import { analyzeFile, ACCEPT_ALL_SUPPORTED } from "../../services/upload/FileTypeRegistry";
+import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
 import {
   A6HalfCardConfig,
   A6LayoutMode,
@@ -58,7 +60,7 @@ import {
   createSampleA6CardSvg,
   getA6SheetDimensions,
 } from "../../engine/a6HalfCardLayout";
-import { renderPDFPageToDataUrl } from "../../engine/pdf";
+import { renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
 import { useShortcuts } from "../../commands/ShortcutContext";
 import { usePrint } from "../../context/PrintContext";
 import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
@@ -393,6 +395,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
           else backObjectUrlRef.current = objectUrl;
         } catch {}
 
+        ensurePdfWorker();
         const loadingTask = objectUrl
           ? pdfjsLib.getDocument({ url: objectUrl, useSystemFonts: true })
           : pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), useSystemFonts: true });
@@ -433,29 +436,63 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
       } finally {
         setIsRendering(false);
       }
-    } else if (file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp|svg)$/i.test(file.name)) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
+    } else {
+      const analysis = analyzeFile(file);
+
+      if (analysis.category === "document") {
+        try {
+          setIsRendering(true);
+          showToast(`Parsing ${analysis.extension.toUpperCase()} document...`);
+          const pages = await parseDocumentFile(file);
+          if (pages.length === 0) {
+            throw new Error("No readable pages in document");
+          }
+          const pageDataUrl = pages[0].dataUrl;
           if (side === "front") {
-            setFrontPdf(null); // Clear PDF metadata since user uploaded image
-            setFrontImage(reader.result);
-            setFrontRawImage(reader.result);
+            setFrontPdf(null);
+            setFrontImage(pageDataUrl);
+            setFrontRawImage(pageDataUrl);
+            setFrontCropState(null);
+            showToast(`Loaded ${file.name} to Front card.`);
+          } else {
+            setBackPdf(null);
+            setBackImage(pageDataUrl);
+            setBackRawImage(pageDataUrl);
+            setBackCropState(null);
+            showToast(`Loaded ${file.name} to Back card.`);
+          }
+        } catch (err: any) {
+          console.error("Document load error:", err);
+          showToast(`Failed to parse document: ${err.message || String(err)}`);
+        } finally {
+          setIsRendering(false);
+        }
+      } else if (analysis.category === "image") {
+        try {
+          setIsRendering(true);
+          const { dataUrl } = await decodeImageFile(file);
+          if (side === "front") {
+            setFrontPdf(null);
+            setFrontImage(dataUrl);
+            setFrontRawImage(dataUrl);
             setFrontCropState(null);
             showToast("Front image loaded successfully.");
           } else {
             setBackPdf(null);
-            setBackImage(reader.result);
-            setBackRawImage(reader.result);
+            setBackImage(dataUrl);
+            setBackRawImage(dataUrl);
             setBackCropState(null);
             showToast("Back image loaded successfully.");
           }
+        } catch (err: any) {
+          console.error("Image decode error:", err);
+          showToast("Failed to read image file. Please verify format.");
+        } finally {
+          setIsRendering(false);
         }
-      };
-      reader.onerror = () => showToast("Could not read image file.");
-      reader.readAsDataURL(file);
-    } else {
-      showToast("Unsupported file format. Please upload JPG, PNG, WEBP, or PDF.");
+      } else {
+        showToast(`Unsupported file format (${analysis.extension.toUpperCase()}). Please upload PDF, image, or document.`);
+      }
     }
   };
 
@@ -1111,12 +1148,12 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md select-none overflow-hidden animate-fadeIn">
-      {/* Hidden File Inputs for Front and Back (Supports JPG, PNG, WEBP, and PDF) */}
+      {/* Hidden File Inputs for Front and Back (Supports PDF, Images, and Text Documents) */}
       <input
         ref={frontInputRef}
         id="a6-front-file-input"
         type="file"
-        accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml"
+        accept={ACCEPT_ALL_SUPPORTED}
         onChange={handleFrontUpload}
         className="hidden"
       />
@@ -1124,7 +1161,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
         ref={backInputRef}
         id="a6-back-file-input"
         type="file"
-        accept=".pdf,.png,.jpg,.jpeg,.webp,.svg,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml"
+        accept={ACCEPT_ALL_SUPPORTED}
         onChange={handleBackUpload}
         className="hidden"
       />

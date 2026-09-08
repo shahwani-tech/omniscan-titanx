@@ -15,6 +15,8 @@ import {
   importPdfPageAsCardObject,
   importSignaturePng,
 } from "../../engine/carddesigner/vectorImporter";
+import { analyzeFile } from "../../services/upload/FileTypeRegistry";
+import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
 import {
   FileCode,
   UploadCloud,
@@ -96,22 +98,62 @@ export const CardDesignerVectorImportModal: React.FC<CardDesignerVectorImportMod
           });
         }
       }
-      // 4. PNG Signature / Logo Image
-      else if (fileName.endsWith(".png") || fileName.endsWith(".jpg") || fileName.endsWith(".webp")) {
-        const result = await importSignaturePng(file, targetSide);
-        if (result.success && result.objects.length > 0) {
-          onImportObjects(result.objects, targetSide);
+      // 4. Image (PNG, JPG, WEBP, BMP, TIFF, GIF)
+      else {
+        const analysis = analyzeFile(file);
+        if (analysis.category === "image") {
+          const result = await importSignaturePng(file, targetSide);
+          if (result.success && result.objects.length > 0) {
+            onImportObjects(result.objects, targetSide);
+            setStatusMessage({
+              type: "success",
+              text: `Imported ${analysis.extension.toUpperCase()} image into ${targetSide} card!`,
+            });
+            setTimeout(() => onClose(), 1200);
+          } else {
+            setStatusMessage({
+              type: "error",
+              text: result.message || "Failed to load image file.",
+            });
+          }
+        } else if (analysis.category === "document") {
+          const pages = await parseDocumentFile(file);
+          if (pages.length > 0) {
+            const docObj: CardObject = {
+              id: `doc-layer-${Date.now()}`,
+              name: `Imported ${file.name}`,
+              type: "image",
+              targetSide,
+              x: 5,
+              y: 5,
+              width: 64,
+              height: 95,
+              rotation: 0,
+              opacity: 1,
+              zIndex: 10,
+              visible: true,
+              locked: false,
+              aspectRatioLocked: true,
+              flipX: false,
+              flipY: false,
+              src: pages[0].dataUrl,
+              originalSrc: pages[0].dataUrl,
+              naturalWidth: pages[0].width,
+              naturalHeight: pages[0].height,
+            };
+            onImportObjects([docObj], targetSide);
+            setStatusMessage({
+              type: "success",
+              text: `Imported document page 1 into ${targetSide} card!`,
+            });
+            setTimeout(() => onClose(), 1200);
+          }
+        } else {
           setStatusMessage({
-            type: "success",
-            text: `Imported transparent PNG with alpha channel preserved into ${targetSide} card!`,
+            type: "error",
+            text: `Unsupported format (${analysis.extension.toUpperCase()}). Please upload SVG, PDF, or image.`,
           });
-          setTimeout(() => onClose(), 1200);
         }
-      } else {
-        setStatusMessage({
-          type: "error",
-          text: "Unsupported file format. Please upload SVG, PDF, PNG, or JPG.",
-        });
       }
     } catch (err) {
       setStatusMessage({
@@ -185,10 +227,11 @@ export const CardDesignerVectorImportModal: React.FC<CardDesignerVectorImportMod
             </span>
             <input
               type="file"
-              accept=".svg,.pdf,.png,.jpg,.jpeg,.webp,.cdr"
+              accept=".svg,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif,.gif,.cdr,.docx,.txt"
               onChange={(e) => {
                 if (e.target.files && e.target.files[0]) {
                   handleFile(e.target.files[0]);
+                  e.target.value = "";
                 }
               }}
               className="hidden"

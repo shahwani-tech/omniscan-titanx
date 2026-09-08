@@ -37,6 +37,7 @@ import {
   AlignRight,
   AlignJustify,
   FileCode,
+  FileText,
   Shield,
   HelpCircle,
   Group,
@@ -84,6 +85,7 @@ interface CardDesignerToolbarProps {
   onAlign: (alignment: "left" | "center" | "right" | "top" | "middle" | "bottom" | "center-card") => void;
   onSelectTemplate: (templateId: string) => void;
   onOpenImportModal: () => void;
+  onOpenPdfImport?: () => void;
   onSaveProject: () => void;
   onLoadProject: () => void;
   onOpenPrintDialog: () => void;
@@ -127,6 +129,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
   onAlign,
   onSelectTemplate,
   onOpenImportModal,
+  onOpenPdfImport,
   onSaveProject,
   onLoadProject,
   onOpenPrintDialog,
@@ -540,6 +543,19 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
           <FileCode className="w-3.5 h-3.5 text-indigo-400" />
           <span className="font-semibold">Vector / Corel Import</span>
         </button>
+
+        {/* PDF Page Import Button */}
+        {onOpenPdfImport && (
+          <button
+            type="button"
+            onClick={onOpenPdfImport}
+            className="px-2.5 py-1.5 rounded-lg bg-red-950/70 hover:bg-red-900/80 text-red-300 border border-red-700/40 transition-colors flex items-center space-x-1.5"
+            title="Import Page from PDF Document"
+          >
+            <FileText className="w-3.5 h-3.5 text-red-400" />
+            <span className="font-semibold">PDF Page</span>
+          </button>
+        )}
       </div>
 
       {/* Right Group: Guides, Zoom, Save/Load, Print, Export */}

@@ -44,6 +44,8 @@ import {
   ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
   PdfImportPageResult,
 } from "../common/PdfImportDialog";
+import { analyzeFile } from "../../services/upload/FileTypeRegistry";
+import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
 import {
   X,
   Printer,
@@ -1517,21 +1519,34 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                       if (!file) return;
                       e.target.value = "";
 
-                      const isPdf =
-                        file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+                      const analysis = analyzeFile(file);
 
-                      if (isPdf) {
+                      if (analysis.category === "pdf") {
                         setSelectedPdfFile(file);
                         setIsPdfImportDialogOpen(true);
+                      } else if (analysis.category === "document") {
+                        showToast(`Parsing ${analysis.extension.toUpperCase()} document...`);
+                        parseDocumentFile(file)
+                          .then((pages) => {
+                            if (pages.length > 0) {
+                              setRawSourceImage(pages[0].dataUrl);
+                              showToast(`Loaded ${file.name}`);
+                            }
+                          })
+                          .catch((err) => {
+                            console.error("Document read error:", err);
+                            showToast("Failed to parse document content.");
+                          });
                       } else {
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          if (typeof event.target?.result === "string") {
-                            setRawSourceImage(event.target.result);
+                        decodeImageFile(file)
+                          .then((decoded) => {
+                            setRawSourceImage(decoded.dataUrl);
                             showToast(`Loaded ${file.name}`);
-                          }
-                        };
-                        reader.readAsDataURL(file);
+                          })
+                          .catch((err) => {
+                            console.error("Image decode error:", err);
+                            showToast("Failed to read image file.");
+                          });
                       }
                     }}
                   />

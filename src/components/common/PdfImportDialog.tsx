@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Lock,
   Layers,
+  ChevronLeft,
   ChevronRight,
   Sparkles,
   ArrowRight,
@@ -17,7 +18,13 @@ import {
   Copy,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
-import { renderPDFPageThumbnail, renderPDFPageToDataUrl } from "../../engine/pdf";
+import { renderPDFPageThumbnail, renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
+import {
+  ACCEPT_ALL_SUPPORTED,
+  ACCEPT_PDF_AND_IMAGES,
+  ACCEPT_PDF_ONLY,
+  ACCEPT_IMAGES_ONLY,
+} from "../../services/upload/FileTypeRegistry";
 
 export interface PdfImportPageResult {
   pageNum: number;
@@ -25,6 +32,7 @@ export interface PdfImportPageResult {
   width: number;
   height: number;
   fileName: string;
+  side?: "front" | "back";
 }
 
 export interface PdfImportDialogProps {
@@ -33,7 +41,7 @@ export interface PdfImportDialogProps {
   initialFile?: File | null;
   title?: string;
   description?: string;
-  selectionMode?: "single" | "multiple";
+  selectionMode?: "single" | "multiple" | "both";
   showSideSelector?: boolean;
   initialSide?: "front" | "back";
   showPlacementModeSelector?: boolean;
@@ -52,9 +60,8 @@ export interface PdfImportDialogProps {
   ) => void;
 }
 
-export const ACCEPTED_PDF_FILE_TYPES = ".pdf,application/pdf";
-export const ACCEPTED_DOCUMENT_AND_IMAGE_TYPES =
-  ".pdf,.png,.jpg,.jpeg,.webp,.svg,application/pdf,image/png,image/jpeg,image/webp,image/svg+xml";
+export const ACCEPTED_PDF_FILE_TYPES = ACCEPT_PDF_ONLY;
+export const ACCEPTED_DOCUMENT_AND_IMAGE_TYPES = ACCEPT_ALL_SUPPORTED;
 
 export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
   isOpen,
@@ -150,6 +157,7 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
           currentObjectUrlRef.current = objectUrl;
         } catch {}
 
+        ensurePdfWorker();
         const loadingTask = objectUrl
           ? pdfjsLib.getDocument({
               url: objectUrl,
@@ -296,6 +304,7 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
       ? selectedPageNums
       : [activePageNum];
 
+    isCancelledRef.current = false;
     setIsProcessingImport(true);
     setRenderProgress({ current: 0, total: pagesToRender.length });
 
@@ -303,11 +312,19 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
       const results: PdfImportPageResult[] = [];
 
       for (let i = 0; i < pagesToRender.length; i++) {
+        if (isCancelledRef.current) {
+          setIsProcessingImport(false);
+          setRenderProgress(null);
+          return;
+        }
+
         const pageNum = pagesToRender[i];
         setRenderProgress({ current: i + 1, total: pagesToRender.length });
 
         // Render at 300 DPI for pristine print resolution
         const rendered = await renderPDFPageToDataUrl(pdfDoc, pageNum, 300);
+
+        if (isCancelledRef.current) return;
 
         results.push({
           pageNum,
@@ -315,6 +332,7 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
           width: rendered.width,
           height: rendered.height,
           fileName: activeFile.name,
+          side: chosenSide,
         });
       }
 
@@ -329,12 +347,20 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
 
       onClose();
     } catch (err: any) {
-      console.error("High-res PDF import rendering error:", err);
-      setErrorMessage(`Failed to render PDF page: ${err.message}`);
+      if (!isCancelledRef.current) {
+        console.error("High-res PDF import rendering error:", err);
+        setErrorMessage(`Failed to render PDF page: ${err.message}`);
+      }
     } finally {
       setIsProcessingImport(false);
       setRenderProgress(null);
     }
+  };
+
+  const handleCancelOngoing = () => {
+    isCancelledRef.current = true;
+    setIsProcessingImport(false);
+    setRenderProgress(null);
   };
 
   return (
@@ -463,30 +489,63 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
               )}
             </div>
 
-            {/* Selection Controls for Multi-Page */}
-            {selectionMode === "multiple" && (
-              <div className="flex items-center space-x-2">
-                <span className="text-neutral-400 text-[11px]">
-                  Selected:{" "}
-                  <strong className="text-white font-mono">{selectedPageNums.length}</strong> of{" "}
-                  <span className="font-mono">{totalPages}</span>
+            {/* Multi-Page Navigation Controls */}
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center bg-neutral-950 rounded-lg p-0.5 border border-neutral-800">
+                <button
+                  type="button"
+                  disabled={activePageNum <= 1}
+                  onClick={() => {
+                    const prev = Math.max(1, activePageNum - 1);
+                    handleToggleSelectPage(prev);
+                  }}
+                  className="p-1 rounded text-neutral-400 hover:text-white disabled:opacity-30 disabled:hover:text-neutral-400 transition-colors"
+                  title="Previous Page"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[11px] font-mono px-2 text-neutral-300">
+                  Page <strong className="text-white">{activePageNum}</strong> / {totalPages}
                 </span>
                 <button
                   type="button"
-                  onClick={handleSelectAll}
-                  className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded text-[11px] font-medium transition-colors"
+                  disabled={activePageNum >= totalPages}
+                  onClick={() => {
+                    const next = Math.min(totalPages, activePageNum + 1);
+                    handleToggleSelectPage(next);
+                  }}
+                  className="p-1 rounded text-neutral-400 hover:text-white disabled:opacity-30 disabled:hover:text-neutral-400 transition-colors"
+                  title="Next Page"
                 >
-                  Select All
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearSelection}
-                  className="px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded text-[11px] font-medium transition-colors"
-                >
-                  Reset
+                  <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
-            )}
+
+              {/* Selection Controls for Multi-Page */}
+              {(selectionMode === "multiple" || selectionMode === "both") && (
+                <div className="flex items-center space-x-1.5 pl-2 border-l border-neutral-800">
+                  <span className="text-neutral-400 text-[11px] hidden sm:inline">
+                    Selected:{" "}
+                    <strong className="text-white font-mono">{selectedPageNums.length}</strong> /{" "}
+                    <span className="font-mono">{totalPages}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSelectAll}
+                    className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded text-[11px] font-medium transition-colors"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearSelection}
+                    className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded text-[11px] font-medium transition-colors"
+                  >
+                    Reset
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -708,15 +767,36 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
             )}
           </div>
 
-          <div className="flex items-center space-x-3">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isProcessingImport}
-              className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
+          <div className="flex items-center space-x-2">
+            {isProcessingImport ? (
+              <button
+                type="button"
+                onClick={handleCancelOngoing}
+                className="px-4 py-2 bg-red-900/80 hover:bg-red-800 text-red-200 rounded-xl text-xs font-bold transition-colors flex items-center space-x-1.5 shadow-lg shadow-red-950/40"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Cancel Rendering</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded-xl text-xs font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+
+            {pdfDoc && !isProcessingImport && totalPages > 1 && (selectionMode === "multiple" || selectionMode === "both") && (
+              <button
+                type="button"
+                onClick={() => handleExecuteImport(undefined, activePageNum)}
+                className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white rounded-xl text-xs font-semibold transition-colors flex items-center space-x-1.5 border border-neutral-700"
+                title={`Import only current page (${activePageNum})`}
+              >
+                <span>Import Current (p.{activePageNum})</span>
+              </button>
+            )}
 
             {pdfDoc && (
               <button
@@ -741,7 +821,7 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
                     <Check className="w-4 h-4" />
                     <span>
                       {primaryButtonLabel ||
-                        (selectionMode === "multiple"
+                        (selectionMode === "multiple" || selectionMode === "both"
                           ? `Import ${selectedPageNums.length} Selected ${
                               selectedPageNums.length === 1 ? "Page" : "Pages"
                             }`

@@ -11,13 +11,20 @@ import { DocumentMetadata, OmniDocument, OmniPage, OmniRedaction, OmniAnnotation
 import { DEFAULT_FILTERS, analyzePageBlankness } from "./vision";
 
 // Configure PDF.js worker locally for 100% offline execution
-if (typeof window !== "undefined") {
-  try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-  } catch (e) {
-    console.warn("Could not set PDF worker URL:", e);
+export function ensurePdfWorker(): void {
+  if (typeof window !== "undefined") {
+    try {
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+      }
+    } catch (e) {
+      console.warn("Could not set PDF worker URL:", e);
+    }
   }
 }
+ensurePdfWorker();
+
+export { pdfjsLib };
 
 export interface PDFExportOptions {
   standard: "PDF/A-1b" | "PDF/A-2b" | "PDF/A-3b" | "Standard PDF (1.7)";
@@ -101,23 +108,38 @@ const inFlightRenderTasks = new Map<
  */
 const activePdfRenderTasks = new Map<string, any>();
 
-// Active import sequence to cancel obsolete background rendering
-let currentImportJobId = 0;
+// Active per-document import sequence to cancel obsolete background rendering without cross-document interference
+const activeDocJobIds = new Map<string, number>();
 let prioritizedPageNums: number[] = [];
 
 export function prioritizePdfThumbnailPages(pageNums: number[]): void {
   prioritizedPageNums = [...pageNums];
 }
 
-export function cancelBackgroundPdfRendering(): void {
-  currentImportJobId++;
-  // Cancel active background render tasks
-  for (const [key, task] of activePdfRenderTasks.entries()) {
-    if (key.includes("thumb-bg-")) {
-      try {
-        task.cancel();
-      } catch {}
-      activePdfRenderTasks.delete(key);
+export function cancelBackgroundPdfRendering(pdfDocId?: string): void {
+  if (pdfDocId) {
+    activeDocJobIds.set(pdfDocId, (activeDocJobIds.get(pdfDocId) || 0) + 1);
+    for (const [key, task] of activePdfRenderTasks.entries()) {
+      if (key.startsWith(`${pdfDocId}-`)) {
+        try {
+          task.cancel();
+        } catch {}
+        activePdfRenderTasks.delete(key);
+      }
+    }
+  } else {
+    // Increment all active document job IDs
+    for (const docId of activeDocJobIds.keys()) {
+      activeDocJobIds.set(docId, (activeDocJobIds.get(docId) || 0) + 1);
+    }
+    // Cancel active background render tasks
+    for (const [key, task] of activePdfRenderTasks.entries()) {
+      if (key.includes("thumb-") || key.includes("page-")) {
+        try {
+          task.cancel();
+        } catch {}
+        activePdfRenderTasks.delete(key);
+      }
     }
   }
 }
@@ -237,6 +259,10 @@ export async function renderPDFPageThumbnail(
     isBlank,
     blankScore,
   };
+
+  // Immediate canvas memory recycling to prevent GPU buffer exhaustion
+  canvas.width = 0;
+  canvas.height = 0;
 
   if (cacheKey) {
     thumbnailCache.set(cacheKey, result);
@@ -369,6 +395,9 @@ export async function renderPDFPageToDataUrl(
       }
     }
     thumbnailUrl = thumbCanvas.toDataURL("image/jpeg", 0.75);
+    // Immediate canvas memory recycling
+    thumbCanvas.width = 0;
+    thumbCanvas.height = 0;
     if (thumbKey) {
       thumbnailCache.set(thumbKey, {
         thumbnailUrl,
@@ -388,6 +417,10 @@ export async function renderPDFPageToDataUrl(
     isBlank,
     blankScore,
   };
+
+  // Immediate canvas memory recycling to prevent GPU buffer exhaustion
+  canvas.width = 0;
+  canvas.height = 0;
 
   if (cacheKey) {
     renderedPageCache.set(cacheKey, result);
@@ -574,14 +607,15 @@ export async function importPDFFile(
 
   // Step 3: Progressive background thumbnail generator with dynamic prioritization & cooperative scheduling
   if (numPages > 1) {
-    const jobId = ++currentImportJobId;
+    const docJobId = (activeDocJobIds.get(pdfDocId) || 0) + 1;
+    activeDocJobIds.set(pdfDocId, docJobId);
     setTimeout(async () => {
       // Build list of remaining pages
       const remainingPages = new Set<number>();
       for (let p = 2; p <= numPages; p++) remainingPages.add(p);
 
       while (remainingPages.size > 0) {
-        if (jobId !== currentImportJobId) break; // Cancelled by newer import
+        if (activeDocJobIds.get(pdfDocId) !== docJobId) break; // Cancelled for this document
 
         // Pick next page: check if any prioritized page is pending
         let nextP: number | null = null;
@@ -601,7 +635,7 @@ export async function importPDFFile(
 
         try {
           const thumb = await renderPDFPageThumbnail(pdfDoc, nextP, 220, pdfDocId);
-          if (jobId !== currentImportJobId) break;
+          if (activeDocJobIds.get(pdfDocId) !== docJobId) break;
 
           if (typeof window !== "undefined") {
             window.dispatchEvent(

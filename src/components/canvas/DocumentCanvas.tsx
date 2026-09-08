@@ -1190,32 +1190,72 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         )}
 
         {/* Render Two-Page Book Spread */}
-        {viewMode === "two-page" && (
-          <div
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: "center center",
-            }}
-            className="flex items-center space-x-4"
-          >
-            {pages.slice(0, 2).map((page, idx) => (
-              <div
-                key={page.id}
-                onClick={() => onSelectPage(idx)}
-                className="relative shadow-2xl rounded bg-neutral-900 border border-neutral-800"
-              >
-                <img
-                  src={page.processedDataUrl || page.thumbnailDataUrl}
-                  alt={`Spread ${idx + 1}`}
-                  className="max-h-[78vh] w-auto pointer-events-none object-contain"
-                />
-                <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 font-mono text-xs text-neutral-300">
-                  Page {idx + 1}
-                </span>
+        {viewMode === "two-page" && (() => {
+          const spreadStartIndex = Math.floor(activePageIndex / 2) * 2;
+          const spreadPages = pages.slice(spreadStartIndex, spreadStartIndex + 2);
+          const hasPrevSpread = spreadStartIndex > 0;
+          const hasNextSpread = spreadStartIndex + 2 < pages.length;
+
+          return (
+            <div
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                transformOrigin: "center center",
+              }}
+              className="flex flex-col items-center space-y-4"
+            >
+              <div className="flex items-center space-x-4">
+                {spreadPages.map((page, idx) => {
+                  const actualIndex = spreadStartIndex + idx;
+                  const isActive = actualIndex === activePageIndex;
+                  return (
+                    <div
+                      key={page.id}
+                      onClick={() => onSelectPage(actualIndex)}
+                      className={`relative shadow-2xl rounded bg-neutral-900 border transition-all cursor-pointer ${
+                        isActive ? "border-sky-500 ring-2 ring-sky-500/40" : "border-neutral-800 hover:border-neutral-700"
+                      }`}
+                    >
+                      <img
+                        src={page.processedDataUrl || page.thumbnailDataUrl}
+                        alt={`Page ${actualIndex + 1}`}
+                        className="max-h-[78vh] w-auto pointer-events-none object-contain"
+                      />
+                      <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 font-mono text-xs text-neutral-300 font-bold">
+                        Page {actualIndex + 1}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        )}
+
+              {/* Spread Navigator Controls if document has > 2 pages */}
+              {pages.length > 2 && (
+                <div className="flex items-center space-x-3 bg-neutral-900/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-neutral-800 shadow-xl pointer-events-auto">
+                  <button
+                    type="button"
+                    disabled={!hasPrevSpread}
+                    onClick={() => onSelectPage(Math.max(0, spreadStartIndex - 2))}
+                    className="px-2.5 py-1 rounded text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-neutral-800 text-neutral-200 transition-colors"
+                  >
+                    ← Previous Spread
+                  </button>
+                  <span className="font-mono text-xs text-neutral-400">
+                    Pages {spreadStartIndex + 1}–{Math.min(spreadStartIndex + 2, pages.length)} of {pages.length}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!hasNextSpread}
+                    onClick={() => onSelectPage(Math.min(pages.length - 1, spreadStartIndex + 2))}
+                    className="px-2.5 py-1 rounded text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-neutral-800 text-neutral-200 transition-colors"
+                  >
+                    Next Spread →
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Render Grid View */}
         {viewMode === "grid" && (

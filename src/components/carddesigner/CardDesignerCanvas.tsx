@@ -14,6 +14,7 @@
  */
 
 import React, { useRef, useState, useEffect, useCallback } from "react";
+import { Upload } from "lucide-react";
 import {
   CardDesignerProject,
   CardObject,
@@ -37,6 +38,7 @@ interface CardDesignerCanvasProps {
   setPanOffset: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   onCommitHistory: () => void;
   onEditCrop: (obj: CardObject) => void;
+  onDropFiles?: (files: File[]) => void;
 }
 
 // Convert mm to screen pixels at 100% zoom (assume 3.7795 px per mm for standard 96 DPI CSS screen display)
@@ -56,8 +58,10 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
   setPanOffset,
   onCommitHistory,
   onEditCrop,
+  onDropFiles,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isDragOverFile, setIsDragOverFile] = useState(false);
 
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
@@ -436,10 +440,42 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
       onPointerDown={handleCanvasPointerDown}
       onPointerMove={handleCanvasPointerMove}
       onPointerUp={handleCanvasPointerUp}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverFile(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverFile(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOverFile(false);
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0 && onDropFiles) {
+          onDropFiles(Array.from(e.dataTransfer.files));
+        }
+      }}
       className={`relative flex-1 bg-neutral-950 overflow-hidden flex items-center justify-center select-none ${
         activeTool === "pan" || isPanning ? "cursor-grab active:cursor-grabbing" : "cursor-default"
       }`}
     >
+      {/* Drag & Drop File Overlay */}
+      {isDragOverFile && (
+        <div className="absolute inset-0 z-50 bg-indigo-950/80 backdrop-blur-sm border-2 border-dashed border-indigo-400 flex flex-col items-center justify-center pointer-events-none animate-in fade-in duration-150">
+          <div className="p-5 rounded-2xl bg-neutral-900/95 border border-indigo-500/50 shadow-2xl flex flex-col items-center space-y-2 text-center max-w-sm">
+            <div className="w-12 h-12 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center animate-bounce">
+              <Upload className="w-6 h-6" />
+            </div>
+            <p className="text-sm font-bold text-white">Drop File onto {activeSide.toUpperCase()} Card</p>
+            <p className="text-xs text-neutral-400">
+              Supports PDF, Corel SVG, PNG/JPG, WEBP, BMP, TIFF, DOCX, TXT
+            </p>
+          </div>
+        </div>
+      )}
       {/* Dynamic Grid Background Pattern */}
       <div
         className="absolute inset-0 pointer-events-none opacity-20"

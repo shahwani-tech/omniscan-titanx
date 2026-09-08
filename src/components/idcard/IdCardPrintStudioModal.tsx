@@ -76,6 +76,8 @@ import {
   ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
   PdfImportPageResult,
 } from "../common/PdfImportDialog";
+import { analyzeFile } from "../../services/upload/FileTypeRegistry";
+import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
 
 const loadImage = (src: string): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
@@ -1101,64 +1103,84 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     setTimeout(() => setStatusMessage(null), 2500);
   };
 
-  const processUploadedFile = (file: File, side: "front" | "back") => {
+  const applyImageDataToSide = (dataUrl: string, side: "front" | "back") => {
+    if (side === "front") {
+      setOriginalFrontImage(dataUrl);
+      setFrontBaseImage(dataUrl);
+      setFrontCropState(null);
+      setFrontImage(dataUrl);
+      fullResFrontImageRef.current = dataUrl;
+      classifyImageContent(dataUrl)
+        .then((res) => {
+          setFrontDetectedContent(res);
+          setFrontFilterSource("auto-detected");
+          setFrontFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+          frontFiltersRef.current = { ...frontFiltersRef.current, ...res.recommendedFilters };
+          executeFilterPipelineScheduled(false, "front");
+        })
+        .catch((err) => console.warn("Front upload auto-classify error:", err));
+    } else {
+      setOriginalBackImage(dataUrl);
+      setBackBaseImage(dataUrl);
+      setBackCropState(null);
+      setBackImage(dataUrl);
+      fullResBackImageRef.current = dataUrl;
+      classifyImageContent(dataUrl)
+        .then((res) => {
+          setBackDetectedContent(res);
+          setBackFilterSource("auto-detected");
+          setBackFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
+          backFiltersRef.current = { ...backFiltersRef.current, ...res.recommendedFilters };
+          executeFilterPipelineScheduled(false, "back");
+        })
+        .catch((err) => console.warn("Back upload auto-classify error:", err));
+    }
+  };
+
+  const processUploadedFile = async (file: File, side: "front" | "back") => {
     if (!file) return;
 
-    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+    const analysis = analyzeFile(file);
+
+    if (analysis.category === "pdf") {
       handleOpenPdfDialog(file, side);
       return;
     }
 
-    const validImageTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg", "image/svg+xml"];
-    const isKnownExt = /\.(jpe?g|png|webp|svg)$/i.test(file.name);
-    if (!validImageTypes.includes(file.type) && !isKnownExt) {
-      setStatusMessage("Please select a valid image (JPG, PNG, WEBP, SVG) or PDF file.");
-      setTimeout(() => setStatusMessage(null), 3500);
+    if (analysis.category === "document") {
+      try {
+        setStatusMessage(`Reading ${analysis.extension.toUpperCase()} document...`);
+        const pages = await parseDocumentFile(file);
+        if (pages.length === 0) {
+          throw new Error("No readable pages found in document");
+        }
+        applyImageDataToSide(pages[0].dataUrl, side);
+        setStatusMessage(`Loaded ${file.name} as ${side === "front" ? "Front" : "Back"} ID card.`);
+        setTimeout(() => setStatusMessage(null), 3000);
+      } catch (err: any) {
+        console.error("Document upload parsing error:", err);
+        setStatusMessage(`Failed to read document: ${err.message || String(err)}`);
+        setTimeout(() => setStatusMessage(null), 3500);
+      }
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      if (side === "front") {
-        setOriginalFrontImage(dataUrl);
-        setFrontBaseImage(dataUrl);
-        setFrontCropState(null);
-        setFrontImage(dataUrl);
-        fullResFrontImageRef.current = dataUrl;
-        classifyImageContent(dataUrl)
-          .then((res) => {
-            setFrontDetectedContent(res);
-            setFrontFilterSource("auto-detected");
-            setFrontFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
-            frontFiltersRef.current = { ...frontFiltersRef.current, ...res.recommendedFilters };
-            executeFilterPipelineScheduled(false, "front");
-          })
-          .catch((err) => console.warn("Front upload auto-classify error:", err));
-      } else {
-        setOriginalBackImage(dataUrl);
-        setBackBaseImage(dataUrl);
-        setBackCropState(null);
-        setBackImage(dataUrl);
-        fullResBackImageRef.current = dataUrl;
-        classifyImageContent(dataUrl)
-          .then((res) => {
-            setBackDetectedContent(res);
-            setBackFilterSource("auto-detected");
-            setBackFilters((prev) => ({ ...prev, ...res.recommendedFilters }));
-            backFiltersRef.current = { ...backFiltersRef.current, ...res.recommendedFilters };
-            executeFilterPipelineScheduled(false, "back");
-          })
-          .catch((err) => console.warn("Back upload auto-classify error:", err));
+    if (analysis.category === "image") {
+      try {
+        const { dataUrl } = await decodeImageFile(file);
+        applyImageDataToSide(dataUrl, side);
+        setStatusMessage(`${side === "front" ? "Front" : "Back"} ID card uploaded.`);
+        setTimeout(() => setStatusMessage(null), 2500);
+      } catch (err: any) {
+        console.error("Image upload reading error:", err);
+        setStatusMessage("Failed to read image file. Please verify the format.");
+        setTimeout(() => setStatusMessage(null), 3500);
       }
-      setStatusMessage(`${side === "front" ? "Front" : "Back"} ID card uploaded.`);
-      setTimeout(() => setStatusMessage(null), 2500);
-    };
-    reader.onerror = () => {
-      setStatusMessage("Failed to read image file.");
-      setTimeout(() => setStatusMessage(null), 3000);
-    };
-    reader.readAsDataURL(file);
+      return;
+    }
+
+    setStatusMessage(`Unsupported file format (${analysis.extension.toUpperCase()}). Please select a PDF, image, or document.`);
+    setTimeout(() => setStatusMessage(null), 4000);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, side: "front" | "back") => {
