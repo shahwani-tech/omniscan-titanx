@@ -15,19 +15,18 @@ export function createBlankProject(
   const pageWidthMm = isPortrait ? 105 : 148;
   const pageHeightMm = isPortrait ? 148 : 105;
 
-  // Front card (top) and Back card (underneath)
-  // Default card dimensions: 74 mm width x 105 mm height for vertical cards,
-  // or 105 mm width x 74 mm height for horizontal cards
-  const cardWidthMm = isPortrait ? 74 : 105;
-  const cardHeightMm = isPortrait ? 105 : 74;
+  // In portrait A6: sheet is 105mm wide x 148mm high.
+  // Upper half zone (front): 105mm wide x 74mm high at (0, 0)
+  // Lower half zone (back): 105mm wide x 74mm high at (0, 74)
+  const cardWidthMm = 105;
+  const cardHeightMm = 74;
 
-  // Center the two cards on the physical A6 page
   const frontPosMm = isPortrait
-    ? { x: Math.max(0, (pageWidthMm - cardWidthMm) / 2), y: 5 }
+    ? { x: 0, y: 0 }
     : { x: 5, y: Math.max(0, (pageHeightMm - cardHeightMm) / 2) };
 
   const backPosMm = isPortrait
-    ? { x: Math.max(0, (pageWidthMm - cardWidthMm) / 2), y: 5 + cardHeightMm + 6 }
+    ? { x: 0, y: 74 }
     : { x: 5 + cardWidthMm + 8, y: Math.max(0, (pageHeightMm - cardHeightMm) / 2) };
 
   return {
@@ -41,6 +40,13 @@ export function createBlankProject(
     pageHeightMm,
     cardWidthMm,
     cardHeightMm,
+    trueCardWidthMm: 85.6,
+    trueCardHeightMm: 54.0,
+    trueCardOrientation: "landscape",
+    cardPreset: "id1_cr80",
+    showCardBoundary: true,
+    showBleedShading: true,
+    cardCornerRadiusMm: 3.18,
     frontPosMm,
     backPosMm,
     safeAreaMarginMm: 3,
@@ -52,10 +58,11 @@ export function createBlankProject(
     showGrid: false,
     snapToGrid: true,
     snapToObjects: true,
+    snapToCardBoundary: true,
     gridSizeMm: 2,
     guides: {
-      horizontal: [frontPosMm.y, frontPosMm.y + cardHeightMm, backPosMm.y, backPosMm.y + cardHeightMm],
-      vertical: [frontPosMm.x, frontPosMm.x + cardWidthMm],
+      horizontal: [10, 64, 84, 138],
+      vertical: [9.7, 95.3],
     },
     front: {
       background: {

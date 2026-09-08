@@ -205,21 +205,32 @@ export const BackgroundImageControls: React.FC<BackgroundImageControlsProps> = (
             </div>
           </div>
 
-          {/* Scale & Zoom Slider */}
+          {/* Scale & Zoom Slider + Direct Numeric Input */}
           <div className="bg-neutral-950 p-2.5 rounded-lg border border-neutral-800 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-semibold text-neutral-400 uppercase">
                 Zoom / Scale
               </span>
-              <span className="font-mono text-emerald-400 text-[11px]">
-                {Math.round((transform.scale || 1) * 100)}%
-              </span>
+              <div className="flex items-center space-x-1">
+                <input
+                  type="number"
+                  min="10"
+                  max="500"
+                  step="1"
+                  value={Math.round((transform.scale || 1) * 100)}
+                  onChange={(e) =>
+                    onTransformChange({ ...transform, scale: Math.max(0.1, Number(e.target.value) / 100) })
+                  }
+                  className="w-14 bg-neutral-900 border border-neutral-750 rounded px-1.5 py-0.5 text-right font-mono text-emerald-400 text-[11px] outline-none"
+                />
+                <span className="text-[10px] text-neutral-500 font-mono">%</span>
+              </div>
             </div>
             <input
               type="range"
               min="0.2"
               max="3"
-              step="0.05"
+              step="0.02"
               value={transform.scale || 1}
               onChange={(e) =>
                 onTransformChange({ ...transform, scale: Number(e.target.value) })
@@ -227,17 +238,30 @@ export const BackgroundImageControls: React.FC<BackgroundImageControlsProps> = (
               className="w-full accent-emerald-500 cursor-pointer"
             />
 
-            {/* Position X & Y */}
+            {/* Position X & Y with Numeric Controls */}
             <div className="grid grid-cols-2 gap-2 pt-1 border-t border-neutral-850">
               <div>
-                <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+                <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
                   <span>Pan X</span>
-                  <span className="font-mono text-neutral-300">{Math.round(transform.x)}px</span>
+                  <div className="flex items-center space-x-0.5">
+                    <input
+                      type="number"
+                      min="-1000"
+                      max="1000"
+                      step="1"
+                      value={Math.round(transform.x)}
+                      onChange={(e) =>
+                        onTransformChange({ ...transform, x: Number(e.target.value) })
+                      }
+                      className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-neutral-300 text-[10px] outline-none"
+                    />
+                    <span className="text-[9px] text-neutral-500">px</span>
+                  </div>
                 </div>
                 <input
                   type="range"
-                  min="-200"
-                  max="200"
+                  min="-300"
+                  max="300"
                   value={transform.x}
                   onChange={(e) =>
                     onTransformChange({ ...transform, x: Number(e.target.value) })
@@ -246,14 +270,27 @@ export const BackgroundImageControls: React.FC<BackgroundImageControlsProps> = (
                 />
               </div>
               <div>
-                <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+                <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
                   <span>Pan Y</span>
-                  <span className="font-mono text-neutral-300">{Math.round(transform.y)}px</span>
+                  <div className="flex items-center space-x-0.5">
+                    <input
+                      type="number"
+                      min="-1000"
+                      max="1000"
+                      step="1"
+                      value={Math.round(transform.y)}
+                      onChange={(e) =>
+                        onTransformChange({ ...transform, y: Number(e.target.value) })
+                      }
+                      className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-neutral-300 text-[10px] outline-none"
+                    />
+                    <span className="text-[9px] text-neutral-500">px</span>
+                  </div>
                 </div>
                 <input
                   type="range"
-                  min="-200"
-                  max="200"
+                  min="-300"
+                  max="300"
                   value={transform.y}
                   onChange={(e) =>
                     onTransformChange({ ...transform, y: Number(e.target.value) })
@@ -263,11 +300,42 @@ export const BackgroundImageControls: React.FC<BackgroundImageControlsProps> = (
               </div>
             </div>
 
-            {/* Rotation */}
+            {/* Quick Alignment / Center Buttons */}
+            <div className="flex items-center space-x-1.5 pt-0.5">
+              <button
+                onClick={() => onTransformChange({ ...transform, x: 0, y: 0 })}
+                className="flex-1 py-0.5 rounded bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-white text-[10px] transition-colors"
+                title="Center Background Image"
+              >
+                Center (0, 0)
+              </button>
+              <button
+                onClick={() => onTransformChange({ ...transform, rotation: 0 })}
+                className="flex-1 py-0.5 rounded bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-white text-[10px] transition-colors"
+                title="Zero Rotation"
+              >
+                0° Angle
+              </button>
+            </div>
+
+            {/* Rotation with Numeric Input */}
             <div className="pt-1 border-t border-neutral-850">
-              <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+              <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
                 <span>Rotation</span>
-                <span className="font-mono text-emerald-400">{transform.rotation}°</span>
+                <div className="flex items-center space-x-0.5">
+                  <input
+                    type="number"
+                    min="-360"
+                    max="360"
+                    step="1"
+                    value={Math.round(transform.rotation)}
+                    onChange={(e) =>
+                      onTransformChange({ ...transform, rotation: Number(e.target.value) })
+                    }
+                    className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-emerald-400 text-[10px] outline-none"
+                  />
+                  <span className="text-[9px] text-neutral-500">°</span>
+                </div>
               </div>
               <input
                 type="range"
@@ -281,19 +349,33 @@ export const BackgroundImageControls: React.FC<BackgroundImageControlsProps> = (
               />
             </div>
 
-            {/* Opacity */}
+            {/* Opacity with Numeric Input */}
             <div className="pt-1 border-t border-neutral-850">
-              <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+              <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
                 <span>Layer Opacity</span>
-                <span className="font-mono text-emerald-400">
-                  {Math.round((transform.opacity ?? 1) * 100)}%
-                </span>
+                <div className="flex items-center space-x-0.5">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={Math.round((transform.opacity ?? 1) * 100)}
+                    onChange={(e) =>
+                      onTransformChange({
+                        ...transform,
+                        opacity: Math.max(0, Math.min(100, Number(e.target.value))) / 100,
+                      })
+                    }
+                    className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-emerald-400 text-[10px] outline-none"
+                  />
+                  <span className="text-[9px] text-neutral-500">%</span>
+                </div>
               </div>
               <input
                 type="range"
                 min="0"
                 max="1"
-                step="0.02"
+                step="0.01"
                 value={transform.opacity ?? 1}
                 onChange={(e) =>
                   onTransformChange({ ...transform, opacity: Number(e.target.value) })

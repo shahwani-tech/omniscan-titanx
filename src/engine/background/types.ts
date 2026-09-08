@@ -4,6 +4,7 @@
  */
 
 import type { BackgroundRemovalOptions, BackgroundRemovalResult, ShadowRemovalLevel, ManualBrushStroke } from "../backgroundRemover";
+export type { BackgroundRemovalOptions, BackgroundRemovalResult, ShadowRemovalLevel, ManualBrushStroke };
 
 export type BackgroundMode = "original" | "transparent" | "color" | "image" | "gradient" | "preset";
 

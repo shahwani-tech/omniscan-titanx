@@ -43,6 +43,11 @@ import {
   renderA6SheetToCanvas,
   exportProjectToPdf,
 } from "../../engine/carddesigner/renderExport";
+import {
+  saveProjectToDisk,
+  openProjectFileDialog,
+  parseProjectJson,
+} from "../../engine/carddesigner/projectFileManager";
 import { usePrint } from "../../context/PrintContext";
 import {
   Printer,
@@ -55,6 +60,8 @@ import {
   ZoomOut,
   Sparkles,
   FileText,
+  FolderOpen,
+  Save,
 } from "lucide-react";
 
 interface CardDesignStudioModalProps {
@@ -202,6 +209,12 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
         e.preventDefault();
         handleRedo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        handleSaveProject();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        handleOpenProject();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         handleDeleteSelected();
@@ -350,6 +363,25 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
   const handleDropFiles = async (files: File[]) => {
     if (!files || files.length === 0) return;
     const firstFile = files[0];
+    const fileName = firstFile.name.toLowerCase();
+
+    // Native .ocard project drop
+    if (fileName.endsWith(".ocard") || fileName.endsWith(".omniscanproj")) {
+      try {
+        const text = await firstFile.text();
+        const loadedProject = parseProjectJson(text);
+        setProject(loadedProject);
+        historyRef.current = new HistoryManager(loadedProject);
+        setCanUndo(false);
+        setCanRedo(false);
+        setSelectedIds([]);
+        setActiveSide("front");
+      } catch (err: any) {
+        alert(`Failed to load dropped project file: ${err.message}`);
+      }
+      return;
+    }
+
     const analysis = analyzeFile(firstFile);
 
     if (analysis.category === "pdf") {
@@ -420,6 +452,32 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
     setCanRedo(false);
     setSelectedIds([]);
     setIsTemplateMenuOpen(false);
+  };
+
+  // Save Project File (.ocard)
+  const handleSaveProject = () => {
+    try {
+      saveProjectToDisk(project);
+    } catch (err: any) {
+      alert(`Save failed: ${err.message}`);
+    }
+  };
+
+  // Open Project File (.ocard)
+  const handleOpenProject = async () => {
+    try {
+      const loadedProject = await openProjectFileDialog();
+      setProject(loadedProject);
+      historyRef.current = new HistoryManager(loadedProject);
+      setCanUndo(false);
+      setCanRedo(false);
+      setSelectedIds([]);
+      setActiveSide("front");
+    } catch (err: any) {
+      if (err?.message && err.message !== "No file selected.") {
+        alert(err.message);
+      }
+    }
   };
 
   const { openPrintDialog } = usePrint();
@@ -555,6 +613,28 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* Open .ocard Native Project */}
+          <button
+            type="button"
+            onClick={handleOpenProject}
+            className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors border border-neutral-700/60"
+            title="Open saved .ocard project file (Ctrl+O)"
+          >
+            <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+            <span>Open .ocard</span>
+          </button>
+
+          {/* Save Project as .ocard */}
+          <button
+            type="button"
+            onClick={handleSaveProject}
+            className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-sky-200 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-colors border border-sky-600/50"
+            title="Save editable project file as .ocard (Ctrl+S)"
+          >
+            <Save className="w-3.5 h-3.5 text-sky-400" />
+            <span>Save .ocard</span>
+          </button>
 
           {/* CorelDRAW / Vector Import */}
           <button

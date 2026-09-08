@@ -14,7 +14,7 @@
  */
 
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Upload } from "lucide-react";
+import { Upload, Minus, Plus, Maximize2 } from "lucide-react";
 import {
   CardDesignerProject,
   CardObject,
@@ -23,6 +23,7 @@ import {
   TransformHandle,
   SnapGuideLine,
 } from "../../engine/carddesigner/types";
+import { getTrueCardBoundsInZone } from "../../engine/carddesigner/cardGeometry";
 
 interface CardDesignerCanvasProps {
   project: CardDesignerProject;
@@ -34,6 +35,7 @@ interface CardDesignerCanvasProps {
   activeTool: ActiveToolType;
   setActiveTool: (tool: ActiveToolType) => void;
   zoom: number;
+  setZoom?: React.Dispatch<React.SetStateAction<number>>;
   panOffset: { x: number; y: number };
   setPanOffset: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
   onCommitHistory: () => void;
@@ -54,6 +56,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
   activeTool,
   setActiveTool,
   zoom,
+  setZoom,
   panOffset,
   setPanOffset,
   onCommitHistory,
@@ -62,6 +65,25 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragOverFile, setIsDragOverFile] = useState(false);
+
+  // Wheel Zoom Listener
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !setZoom) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = -e.deltaY;
+      const factor = delta > 0 ? 1.1 : 0.9;
+      setZoom((prev) => {
+        const next = Math.min(3.0, Math.max(0.25, Math.round(prev * factor * 100) / 100));
+        return next;
+      });
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, [setZoom]);
 
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
@@ -199,6 +221,69 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
         finalDeltaY = Math.round(finalDeltaY / project.gridSizeMm) * project.gridSizeMm;
       }
 
+      // Magnetic Snapping to True Card Boundaries & Centerlines
+      if (project.snapToCardBoundary !== false && selectedIds.length > 0) {
+        const trueCard = getTrueCardBoundsInZone(project);
+        const primaryInit = objectInitialTransforms.get(selectedIds[0]);
+        if (primaryInit) {
+          const rawX = primaryInit.x + deltaX;
+          const rawY = primaryInit.y + deltaY;
+          const allObjs = [...project.front.objects, ...project.back.objects];
+          const primaryObj = allObjs.find((o) => o.id === selectedIds[0]);
+          const objW = primaryObj?.width || primaryInit.width;
+          const objH = primaryObj?.height || primaryInit.height;
+          const snapDist = 1.0; // 1mm magnetic threshold
+
+          // X Snapping (Left, Center, Right of True Card and Zone)
+          const xTargets = [
+            { pos: trueCard.x, label: "Card Left" },
+            { pos: trueCard.centerX, label: "Card Center" },
+            { pos: trueCard.right, label: "Card Right" },
+            { pos: project.cardWidthMm / 2, label: "Zone Center" },
+          ];
+
+          for (const t of xTargets) {
+            if (Math.abs(rawX - t.pos) < snapDist) {
+              finalDeltaX = t.pos - primaryInit.x;
+              snapLines.push({ type: "v", positionMm: t.pos, cardSide: activeSide });
+              break;
+            } else if (Math.abs(rawX + objW / 2 - t.pos) < snapDist) {
+              finalDeltaX = t.pos - objW / 2 - primaryInit.x;
+              snapLines.push({ type: "v", positionMm: t.pos, cardSide: activeSide });
+              break;
+            } else if (Math.abs(rawX + objW - t.pos) < snapDist) {
+              finalDeltaX = t.pos - objW - primaryInit.x;
+              snapLines.push({ type: "v", positionMm: t.pos, cardSide: activeSide });
+              break;
+            }
+          }
+
+          // Y Snapping (Top, Center, Bottom of True Card and Zone)
+          const yTargets = [
+            { pos: trueCard.y, label: "Card Top" },
+            { pos: trueCard.centerY, label: "Card Center" },
+            { pos: trueCard.bottom, label: "Card Bottom" },
+            { pos: project.cardHeightMm / 2, label: "Zone Center" },
+          ];
+
+          for (const t of yTargets) {
+            if (Math.abs(rawY - t.pos) < snapDist) {
+              finalDeltaY = t.pos - primaryInit.y;
+              snapLines.push({ type: "h", positionMm: t.pos, cardSide: activeSide });
+              break;
+            } else if (Math.abs(rawY + objH / 2 - t.pos) < snapDist) {
+              finalDeltaY = t.pos - objH / 2 - primaryInit.y;
+              snapLines.push({ type: "h", positionMm: t.pos, cardSide: activeSide });
+              break;
+            } else if (Math.abs(rawY + objH - t.pos) < snapDist) {
+              finalDeltaY = t.pos - objH - primaryInit.y;
+              snapLines.push({ type: "h", positionMm: t.pos, cardSide: activeSide });
+              break;
+            }
+          }
+        }
+      }
+
       setProject((prev) => {
         const updateObjects = (objs: CardObject[]) =>
           objs.map((obj) => {
@@ -209,9 +294,9 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
             let newX = Math.round((initial.x + finalDeltaX) * 10) / 10;
             let newY = Math.round((initial.y + finalDeltaY) * 10) / 10;
 
-            // Keep within card bounds if desired or allow bleed
-            newX = Math.max(-5, Math.min(project.cardWidthMm, newX));
-            newY = Math.max(-5, Math.min(project.cardHeightMm, newY));
+            // Generous boundary allowing full bleed past edge
+            newX = Math.max(-25, Math.min(project.cardWidthMm + 25, newX));
+            newY = Math.max(-25, Math.min(project.cardHeightMm + 25, newY));
 
             return { ...obj, x: newX, y: newY };
           });
@@ -246,15 +331,24 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
           let newRot = initial.rotation;
 
           if (activeHandle === "rot") {
-            // Calculate angle from center of object
-            const sidePos = o.targetSide === "front" ? project.frontPosMm : project.backPosMm;
-            const centerMmX = sidePos.x + initial.x + initial.width / 2;
-            const centerMmY = sidePos.y + initial.y + initial.height / 2;
-            const rad = Math.atan2(currentMouseMmY - centerMmY, currentMouseMmX - centerMmX);
-            let deg = (rad * 180) / Math.PI + 90;
-            if (deg < 0) deg += 360;
-            if (e.shiftKey) deg = Math.round(deg / 15) * 15; // 15-degree increments
-            newRot = Math.round(deg);
+            // Calculate angle from center of object in viewport coordinates
+            const cRect = containerRef.current?.getBoundingClientRect();
+            if (cRect) {
+              const stageCenterX = cRect.width / 2 + panOffset.x;
+              const stageCenterY = cRect.height / 2 + panOffset.y;
+              const sheetLeftPx = cRect.left + stageCenterX - sheetWidthPx / 2;
+              const sheetTopPx = cRect.top + stageCenterY - sheetHeightPx / 2;
+              const sidePos = o.targetSide === "front" ? project.frontPosMm : project.backPosMm;
+              const centerClientX =
+                sheetLeftPx + (sidePos.x + initial.x + initial.width / 2) * SCREEN_PX_PER_MM * zoom;
+              const centerClientY =
+                sheetTopPx + (sidePos.y + initial.y + initial.height / 2) * SCREEN_PX_PER_MM * zoom;
+              const rad = Math.atan2(e.clientY - centerClientY, e.clientX - centerClientX);
+              let deg = (rad * 180) / Math.PI + 90;
+              if (deg < 0) deg += 360;
+              if (e.shiftKey) deg = Math.round(deg / 15) * 15; // 15-degree increments
+              newRot = Math.round(deg);
+            }
           } else {
             if (activeHandle.includes("e")) newW = Math.max(2, initial.width + deltaX);
             if (activeHandle.includes("s")) newH = Math.max(2, initial.height + deltaY);
@@ -306,10 +400,55 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
       } catch {}
     }
 
-    if (isMarqueeSelecting) {
+    if (isMarqueeSelecting && containerRef.current) {
       setIsMarqueeSelecting(false);
-      // Determine objects within marquee bounds
-      // (Selection code calculates overlap)
+      const cRect = containerRef.current.getBoundingClientRect();
+      const minX = Math.min(marqueeStartPx.x, marqueeCurrentPx.x);
+      const maxX = Math.max(marqueeStartPx.x, marqueeCurrentPx.x);
+      const minY = Math.min(marqueeStartPx.y, marqueeCurrentPx.y);
+      const maxY = Math.max(marqueeStartPx.y, marqueeCurrentPx.y);
+
+      if (maxX - minX > 4 || maxY - minY > 4) {
+        // Calculate page screen position inside container
+        const stageCenterX = cRect.width / 2 + panOffset.x;
+        const stageCenterY = cRect.height / 2 + panOffset.y;
+        const sheetLeftPx = stageCenterX - sheetWidthPx / 2;
+        const sheetTopPx = stageCenterY - sheetHeightPx / 2;
+
+        const sidePos = activeSide === "front" ? project.frontPosMm : project.backPosMm;
+        const sideXPx = sidePos.x * SCREEN_PX_PER_MM * zoom;
+        const sideYPx = sidePos.y * SCREEN_PX_PER_MM * zoom;
+
+        const currentSideObjs = activeSide === "front" ? project.front.objects : project.back.objects;
+        const newlySelected: string[] = [];
+
+        currentSideObjs.forEach((o) => {
+          if (!o.visible || o.locked) return;
+          const objLeft = sheetLeftPx + sideXPx + o.x * SCREEN_PX_PER_MM * zoom;
+          const objTop = sheetTopPx + sideYPx + o.y * SCREEN_PX_PER_MM * zoom;
+          const objRight = objLeft + o.width * SCREEN_PX_PER_MM * zoom;
+          const objBottom = objTop + o.height * SCREEN_PX_PER_MM * zoom;
+
+          // Check AABB overlap with marquee box
+          const overlaps = !(
+            objRight < minX ||
+            objLeft > maxX ||
+            objBottom < minY ||
+            objTop > maxY
+          );
+
+          if (overlaps) {
+            newlySelected.push(o.id);
+          }
+        });
+
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          const combined = Array.from(new Set([...selectedIds, ...newlySelected]));
+          setSelectedIds(combined);
+        } else {
+          setSelectedIds(newlySelected);
+        }
+      }
     }
 
     if (isDraggingObject || activeHandle) {
@@ -552,17 +691,16 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
             {/* Front Card Label Banner */}
             <div className="absolute top-1 left-2 z-20 pointer-events-none">
               <span className="text-[9px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded bg-sky-600/90 text-white shadow-sm">
-                FRONT CARD (74 × 105 mm)
+                FRONT CARD ({project.cardWidthMm} × {project.cardHeightMm} mm)
               </span>
             </div>
 
-            {/* Safe Area & Bleed Guides */}
-            {project.showSafeArea && (
-              <div
-                className="absolute inset-[11px] border border-dashed border-amber-400/60 pointer-events-none z-10"
-                title="Safe Margins (3mm Inset)"
-              />
-            )}
+            {/* True Card Cut-Line Frame & Bleed Guide */}
+            <TrueCardGuide
+              project={project}
+              side="front"
+              zoom={zoom}
+            />
 
             {/* Render Front Card Objects */}
             {project.front.objects.map((obj) => (
@@ -607,17 +745,16 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
             {/* Back Card Label Banner */}
             <div className="absolute top-1 left-2 z-20 pointer-events-none">
               <span className="text-[9px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded bg-indigo-600/90 text-white shadow-sm">
-                BACK CARD (74 × 105 mm)
+                BACK CARD ({project.cardWidthMm} × {project.cardHeightMm} mm)
               </span>
             </div>
 
-            {/* Safe Area Guides */}
-            {project.showSafeArea && (
-              <div
-                className="absolute inset-[11px] border border-dashed border-amber-400/60 pointer-events-none z-10"
-                title="Safe Margins (3mm Inset)"
-              />
-            )}
+            {/* True Card Cut-Line Frame & Bleed Guide */}
+            <TrueCardGuide
+              project={project}
+              side="back"
+              zoom={zoom}
+            />
 
             {/* Render Back Card Objects */}
             {project.back.objects.map((obj) => (
@@ -703,6 +840,76 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Marquee Selection Rectangle */}
+      {isMarqueeSelecting && (
+        <div
+          className="absolute border border-sky-400 bg-sky-500/15 pointer-events-none z-50"
+          style={{
+            left: `${Math.min(marqueeStartPx.x, marqueeCurrentPx.x)}px`,
+            top: `${Math.min(marqueeStartPx.y, marqueeCurrentPx.y)}px`,
+            width: `${Math.abs(marqueeCurrentPx.x - marqueeStartPx.x)}px`,
+            height: `${Math.abs(marqueeCurrentPx.y - marqueeStartPx.y)}px`,
+          }}
+        />
+      )}
+
+      {/* Floating Canvas Zoom & View Controls */}
+      <div className="absolute bottom-4 right-4 z-40 flex items-center bg-neutral-900/90 backdrop-blur-md border border-neutral-700/80 rounded-xl px-2 py-1 shadow-2xl space-x-1 text-xs text-white">
+        <button
+          type="button"
+          onClick={() => setZoom && setZoom((z) => Math.max(0.25, Math.round((z - 0.15) * 100) / 100))}
+          className="p-1.5 hover:bg-neutral-800 rounded-lg text-neutral-300 hover:text-white transition-colors"
+          title="Zoom Out (Ctrl -)"
+        >
+          <Minus className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (setZoom) setZoom(1.0);
+            setPanOffset({ x: 0, y: 0 });
+          }}
+          className="px-2 py-1 hover:bg-neutral-800 rounded-lg font-mono text-[11px] font-medium text-sky-400"
+          title="Reset to 100% Real Size"
+        >
+          {Math.round(zoom * 100)}%
+        </button>
+        <button
+          type="button"
+          onClick={() => setZoom && setZoom((z) => Math.min(3.0, Math.round((z + 0.15) * 100) / 100))}
+          className="p-1.5 hover:bg-neutral-800 rounded-lg text-neutral-300 hover:text-white transition-colors"
+          title="Zoom In (Ctrl +)"
+        >
+          <Plus className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-px h-4 bg-neutral-700 mx-1" />
+        <button
+          type="button"
+          onClick={() => {
+            if (containerRef.current && setZoom) {
+              const rect = containerRef.current.getBoundingClientRect();
+              const pageW = project.pageWidthMm * SCREEN_PX_PER_MM;
+              const pageH = project.pageHeightMm * SCREEN_PX_PER_MM;
+              const fitRatio = Math.min((rect.width - 40) / pageW, (rect.height - 40) / pageH);
+              setZoom(Math.min(2.5, Math.max(0.3, Math.round(fitRatio * 90) / 100)));
+            }
+            setPanOffset({ x: 0, y: 0 });
+          }}
+          className="px-2 py-1 hover:bg-neutral-800 rounded-lg text-[10px] font-semibold text-neutral-300 hover:text-white"
+          title="Fit Page to Screen"
+        >
+          Fit Page
+        </button>
+        <button
+          type="button"
+          onClick={() => setPanOffset({ x: 0, y: 0 })}
+          className="p-1.5 hover:bg-neutral-800 rounded-lg text-neutral-300 hover:text-white"
+          title="Center Canvas"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
     </div>
   );
 };
@@ -742,6 +949,17 @@ const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
 
   const mirrorTransform = `${obj.flipX ? "scaleX(-1) " : ""}${obj.flipY ? "scaleY(-1) " : ""}`;
 
+  const maskRadiusPx =
+    obj.maskShape === "circle"
+      ? "9999px"
+      : obj.maskShape === "rounded-rect"
+      ? `${(obj.maskCornerRadius || 3) * SCREEN_PX_PER_MM * zoom}px`
+      : obj.cropRect?.shape === "circle"
+      ? "9999px"
+      : obj.cropRect?.shape === "rounded"
+      ? `${(obj.cropRect.cornerRadius || 2) * SCREEN_PX_PER_MM * zoom}px`
+      : "0px";
+
   return (
     <div
       onPointerDown={onPointerDown}
@@ -756,6 +974,7 @@ const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
         transformOrigin: "center center",
         opacity: obj.opacity ?? 1,
         zIndex: obj.zIndex,
+        mixBlendMode: (obj.blendMode as React.CSSProperties["mixBlendMode"]) || "normal",
       }}
       className={`group transition-all ${
         isSelected ? "ring-1 ring-sky-400" : "hover:ring-1 hover:ring-sky-300/40"
@@ -834,12 +1053,7 @@ const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
               width: "100%",
               height: "100%",
               objectFit: obj.fitMode || "contain",
-              borderRadius:
-                obj.cropRect?.shape === "circle"
-                  ? "9999px"
-                  : obj.cropRect?.shape === "rounded"
-                  ? `${(obj.cropRect.cornerRadius || 2) * SCREEN_PX_PER_MM * zoom}px`
-                  : "0px",
+              borderRadius: maskRadiusPx,
               filter: obj.imageFilters
                 ? `brightness(${100 + (obj.imageFilters.brightness || 0)}%) contrast(${
                     100 + (obj.imageFilters.contrast || 0)
@@ -851,6 +1065,137 @@ const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
             className="w-full h-full select-none"
           />
         )}
+    </div>
+  );
+};
+
+/**
+ * True Card Guide Frame, Bleed Shading, and Corner Marks
+ */
+const TrueCardGuide: React.FC<{
+  project: CardDesignerProject;
+  side: CardSide;
+  zoom: number;
+}> = ({ project, side, zoom }) => {
+  if (project.showCardBoundary === false) return null;
+
+  const trueCard = getTrueCardBoundsInZone(project);
+  const leftPx = trueCard.x * SCREEN_PX_PER_MM * zoom;
+  const topPx = trueCard.y * SCREEN_PX_PER_MM * zoom;
+  const widthPx = trueCard.width * SCREEN_PX_PER_MM * zoom;
+  const heightPx = trueCard.height * SCREEN_PX_PER_MM * zoom;
+  const cornerRadiusPx = (project.cardCornerRadiusMm ?? 3.18) * SCREEN_PX_PER_MM * zoom;
+  const strokeColor = side === "front" ? "#0284c7" : "#6366f1";
+  const badgeColor =
+    side === "front"
+      ? "bg-sky-700/90 text-sky-100"
+      : "bg-indigo-700/90 text-indigo-100";
+
+  return (
+    <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden select-none">
+      {/* Bleed Shading: 4 edge zones outside the true card cut-line */}
+      {project.showBleedShading !== false && (
+        <>
+          <div
+            className="absolute left-0 right-0 top-0 bg-neutral-900/10 backdrop-blur-[0.5px]"
+            style={{ height: `${topPx}px` }}
+          />
+          <div
+            className="absolute left-0 right-0 bottom-0 bg-neutral-900/10 backdrop-blur-[0.5px]"
+            style={{
+              height: `${
+                (project.cardHeightMm - (trueCard.y + trueCard.height)) *
+                SCREEN_PX_PER_MM *
+                zoom
+              }px`,
+            }}
+          />
+          <div
+            className="absolute left-0 bg-neutral-900/10 backdrop-blur-[0.5px]"
+            style={{
+              top: `${topPx}px`,
+              height: `${heightPx}px`,
+              width: `${leftPx}px`,
+            }}
+          />
+          <div
+            className="absolute right-0 bg-neutral-900/10 backdrop-blur-[0.5px]"
+            style={{
+              top: `${topPx}px`,
+              height: `${heightPx}px`,
+              width: `${
+                (project.cardWidthMm - (trueCard.x + trueCard.width)) *
+                SCREEN_PX_PER_MM *
+                zoom
+              }px`,
+            }}
+          />
+        </>
+      )}
+
+      {/* True Card Cut-Line Frame */}
+      <div
+        style={{
+          position: "absolute",
+          left: `${leftPx}px`,
+          top: `${topPx}px`,
+          width: `${widthPx}px`,
+          height: `${heightPx}px`,
+          borderRadius: `${cornerRadiusPx}px`,
+          border: `1.5px dashed ${strokeColor}`,
+        }}
+        className="pointer-events-none"
+      >
+        {/* Dimension Label Tag at bottom-right */}
+        <div className="absolute -bottom-4 right-1 pointer-events-none">
+          <span
+            className={`text-[8px] font-mono font-bold tracking-tight px-1.5 py-0.5 rounded shadow-sm ${badgeColor}`}
+          >
+            {project.cardPreset && project.cardPreset !== "custom"
+              ? project.cardPreset.toUpperCase()
+              : "CARD"}{" "}
+            CUT: {trueCard.width.toFixed(1)} × {trueCard.height.toFixed(1)} mm (R{" "}
+            {project.cardCornerRadiusMm ?? 3.18}mm)
+          </span>
+        </div>
+
+        {/* L-shaped corner crop marks */}
+        <div
+          className="absolute -top-1.5 -left-1.5 w-3 h-3 border-t-2 border-l-2"
+          style={{ borderColor: strokeColor }}
+        />
+        <div
+          className="absolute -top-1.5 -right-1.5 w-3 h-3 border-t-2 border-r-2"
+          style={{ borderColor: strokeColor }}
+        />
+        <div
+          className="absolute -bottom-1.5 -left-1.5 w-3 h-3 border-b-2 border-l-2"
+          style={{ borderColor: strokeColor }}
+        />
+        <div
+          className="absolute -bottom-1.5 -right-1.5 w-3 h-3 border-b-2 border-r-2"
+          style={{ borderColor: strokeColor }}
+        />
+
+        {/* 3mm Safe Margin Guide within the true card boundary */}
+        {project.showSafeArea && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${3 * SCREEN_PX_PER_MM * zoom}px`,
+              top: `${3 * SCREEN_PX_PER_MM * zoom}px`,
+              right: `${3 * SCREEN_PX_PER_MM * zoom}px`,
+              bottom: `${3 * SCREEN_PX_PER_MM * zoom}px`,
+              borderRadius: `${Math.max(
+                0,
+                cornerRadiusPx - 3 * SCREEN_PX_PER_MM * zoom
+              )}px`,
+              border: "1px dotted rgba(245, 158, 11, 0.8)",
+            }}
+            title="Safe Margin (3mm inside cut-line)"
+          />
+        )}
+      </div>
     </div>
   );
 };

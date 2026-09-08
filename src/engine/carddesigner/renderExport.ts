@@ -11,6 +11,7 @@
 
 import { PDFDocument } from "pdf-lib";
 import { CardDesignerProject, CardObject, CardSide } from "./types";
+import { getTrueCardBoundsInZone } from "./cardGeometry";
 import { PrintJobPayload } from "../../types/print";
 
 const MM_TO_INCH = 1 / 25.4;
@@ -67,6 +68,10 @@ async function renderObjectOnCanvas(
   }
 
   ctx.globalAlpha = Math.max(0, Math.min(1, obj.opacity));
+
+  if (obj.blendMode && obj.blendMode !== "normal") {
+    ctx.globalCompositeOperation = obj.blendMode as GlobalCompositeOperation;
+  }
 
   if (obj.shadow) {
     ctx.shadowColor = obj.shadow.color;
@@ -173,13 +178,21 @@ async function renderObjectOnCanvas(
       if (obj.src) {
         try {
           const img = await preloadImage(obj.src);
-          // Handle crop or image filters
-          if (obj.cropRect && obj.cropRect.shape === "circle") {
+          // Handle crop or image mask shapes
+          if (
+            obj.maskShape === "circle" ||
+            obj.maskShape === "oval" ||
+            (obj.cropRect && obj.cropRect.shape === "circle")
+          ) {
             ctx.beginPath();
             ctx.ellipse(0, 0, width / 2, height / 2, 0, 0, Math.PI * 2);
             ctx.clip();
-          } else if (obj.cropRect && obj.cropRect.shape === "rounded") {
-            const radius = Math.min((obj.cropRect.cornerRadius || 3) * scale, width / 2, height / 2);
+          } else if (
+            obj.maskShape === "rounded" ||
+            (obj.cropRect && obj.cropRect.shape === "rounded")
+          ) {
+            const rVal = obj.maskCornerRadius || obj.cropRect?.cornerRadius || 3;
+            const radius = Math.min(rVal * scale, width / 2, height / 2);
             ctx.beginPath();
             ctx.roundRect(drawX, drawY, width, height, radius);
             ctx.clip();
@@ -310,11 +323,35 @@ export async function renderA6SheetToCanvas(
     ctx.lineWidth = Math.max(1, Math.round(0.15 * scale)); // 0.15 mm hairline
     const markLength = Math.round(4 * scale); // 4 mm line length
 
-    // Guides for Front Card
+    // Guides for Front Card (Sheet zone)
     drawCornerCropMarks(ctx, frontX, frontY, frontCanvas.width, frontCanvas.height, markLength);
 
-    // Guides for Back Card
+    // Guides for Back Card (Sheet zone)
     drawCornerCropMarks(ctx, backX, backY, backCanvas.width, backCanvas.height, markLength);
+
+    // True Card Cut-Line Marks (Exact ID-1 CR-80 or preset card boundaries)
+    if (project.showCardBoundary) {
+      const cardBounds = getTrueCardBoundsInZone(project);
+
+      ctx.strokeStyle = "#0ea5e9"; // Distinct sky blue for true card boundary cut marks
+      drawCornerCropMarks(
+        ctx,
+        Math.round(frontX + cardBounds.x * scale),
+        Math.round(frontY + cardBounds.y * scale),
+        Math.round(cardBounds.width * scale),
+        Math.round(cardBounds.height * scale),
+        markLength
+      );
+
+      drawCornerCropMarks(
+        ctx,
+        Math.round(backX + cardBounds.x * scale),
+        Math.round(backY + cardBounds.y * scale),
+        Math.round(cardBounds.width * scale),
+        Math.round(cardBounds.height * scale),
+        markLength
+      );
+    }
 
     // Center fold / separation dashed line
     ctx.save();

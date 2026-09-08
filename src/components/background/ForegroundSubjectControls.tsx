@@ -71,15 +71,26 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
           <span className="text-[10px] font-semibold text-neutral-400 uppercase">
             Subject Scale / Zoom
           </span>
-          <span className="font-mono text-emerald-400 text-[11px]">
-            {Math.round((transform.scale || 1) * 100)}%
-          </span>
+          <div className="flex items-center space-x-1">
+            <input
+              type="number"
+              min="20"
+              max="300"
+              step="1"
+              value={Math.round((transform.scale || 1) * 100)}
+              onChange={(e) =>
+                onChange({ ...transform, scale: Math.max(0.1, Number(e.target.value) / 100) })
+              }
+              className="w-14 bg-neutral-900 border border-neutral-750 rounded px-1.5 py-0.5 text-right font-mono text-emerald-400 text-[11px] outline-none"
+            />
+            <span className="text-[10px] text-neutral-500 font-mono">%</span>
+          </div>
         </div>
         <input
           type="range"
           min="0.5"
           max="2"
-          step="0.02"
+          step="0.01"
           value={transform.scale || 1}
           onChange={(e) => onChange({ ...transform, scale: Number(e.target.value) })}
           className="w-full accent-emerald-500 cursor-pointer"
@@ -88,9 +99,20 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
         {/* Pan X & Y */}
         <div className="grid grid-cols-2 gap-2 pt-1 border-t border-neutral-850">
           <div>
-            <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+            <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
               <span>Nudge X</span>
-              <span className="font-mono text-neutral-300">{Math.round(transform.x)}px</span>
+              <div className="flex items-center space-x-0.5">
+                <input
+                  type="number"
+                  min="-300"
+                  max="300"
+                  step="1"
+                  value={Math.round(transform.x)}
+                  onChange={(e) => onChange({ ...transform, x: Number(e.target.value) })}
+                  className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-neutral-300 text-[10px] outline-none"
+                />
+                <span className="text-[9px] text-neutral-500">px</span>
+              </div>
             </div>
             <input
               type="range"
@@ -102,9 +124,20 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
             />
           </div>
           <div>
-            <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+            <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
               <span>Nudge Y</span>
-              <span className="font-mono text-neutral-300">{Math.round(transform.y)}px</span>
+              <div className="flex items-center space-x-0.5">
+                <input
+                  type="number"
+                  min="-300"
+                  max="300"
+                  step="1"
+                  value={Math.round(transform.y)}
+                  onChange={(e) => onChange({ ...transform, y: Number(e.target.value) })}
+                  className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-neutral-300 text-[10px] outline-none"
+                />
+                <span className="text-[9px] text-neutral-500">px</span>
+              </div>
             </div>
             <input
               type="range"
@@ -117,11 +150,40 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
           </div>
         </div>
 
+        {/* Quick Center / Zero */}
+        <div className="flex items-center space-x-1.5 pt-0.5">
+          <button
+            onClick={() => onChange({ ...transform, x: 0, y: 0 })}
+            className="flex-1 py-0.5 rounded bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-white text-[10px] transition-colors"
+            title="Center Subject"
+          >
+            Center (0, 0)
+          </button>
+          <button
+            onClick={() => onChange({ ...transform, rotation: 0 })}
+            className="flex-1 py-0.5 rounded bg-neutral-900 hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-white text-[10px] transition-colors"
+            title="Zero Angle"
+          >
+            0° Angle
+          </button>
+        </div>
+
         {/* Rotation */}
         <div className="pt-1 border-t border-neutral-850">
-          <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+          <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
             <span>Subject Rotation</span>
-            <span className="font-mono text-emerald-400">{transform.rotation}°</span>
+            <div className="flex items-center space-x-0.5">
+              <input
+                type="number"
+                min="-180"
+                max="180"
+                step="1"
+                value={Math.round(transform.rotation)}
+                onChange={(e) => onChange({ ...transform, rotation: Number(e.target.value) })}
+                className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-emerald-400 text-[10px] outline-none"
+              />
+              <span className="text-[9px] text-neutral-500">°</span>
+            </div>
           </div>
           <input
             type="range"
@@ -135,17 +197,31 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
 
         {/* Opacity */}
         <div className="pt-1 border-t border-neutral-850">
-          <div className="flex justify-between text-[10px] text-neutral-400 mb-0.5">
+          <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
             <span>Subject Opacity</span>
-            <span className="font-mono text-emerald-400">
-              {Math.round((transform.opacity ?? 1) * 100)}%
-            </span>
+            <div className="flex items-center space-x-0.5">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={Math.round((transform.opacity ?? 1) * 100)}
+                onChange={(e) =>
+                  onChange({
+                    ...transform,
+                    opacity: Math.max(0, Math.min(100, Number(e.target.value))) / 100,
+                  })
+                }
+                className="w-12 bg-neutral-900 border border-neutral-750 rounded px-1 py-0.2 text-right font-mono text-emerald-400 text-[10px] outline-none"
+              />
+              <span className="text-[9px] text-neutral-500">%</span>
+            </div>
           </div>
           <input
             type="range"
             min="0.1"
             max="1"
-            step="0.02"
+            step="0.01"
             value={transform.opacity ?? 1}
             onChange={(e) => onChange({ ...transform, opacity: Number(e.target.value) })}
             className="w-full accent-emerald-500 cursor-pointer"

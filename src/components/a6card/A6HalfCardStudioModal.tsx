@@ -66,6 +66,8 @@ import { usePrint } from "../../context/PrintContext";
 import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
 import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
+import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
+import { BackgroundStudioState } from "../../engine/background/types";
 import { OmniPage } from "../../types";
 
 interface A6HalfCardStudioModalProps {
@@ -154,6 +156,12 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   // Crop modal state
   const [isCropModalOpen, setIsCropModalOpen] = useState<boolean>(false);
   const [cropTargetSide, setCropTargetSide] = useState<"front" | "back">("front");
+
+  // Centralized Background Studio state
+  const [isBgStudioOpen, setIsBgStudioOpen] = useState<boolean>(false);
+  const [bgStudioTargetSide, setBgStudioTargetSide] = useState<"front" | "back">("front");
+  const [frontBgState, setFrontBgState] = useState<BackgroundStudioState | null>(null);
+  const [backBgState, setBackBgState] = useState<BackgroundStudioState | null>(null);
 
   // Refs
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -521,6 +529,27 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (file) processUploadedFile(file, "back");
+  };
+
+  // Background Studio Handlers
+  const handleOpenBgStudio = (side: "front" | "back") => {
+    setBgStudioTargetSide(side);
+    setIsBgStudioOpen(true);
+  };
+
+  const handleApplyBgStudio = (compositeUrl: string, fullState: BackgroundStudioState) => {
+    if (bgStudioTargetSide === "front") {
+      setFrontBgState(fullState);
+      setFrontImage(compositeUrl);
+      setFrontRawImage(compositeUrl);
+      showToast("Updated Front card background.");
+    } else {
+      setBackBgState(fullState);
+      setBackImage(compositeUrl);
+      setBackRawImage(compositeUrl);
+      showToast("Updated Back card background.");
+    }
+    setIsBgStudioOpen(false);
   };
 
   // Page selector page change handler
@@ -1327,6 +1356,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                         Crop
                       </button>
                       <button
+                        onClick={() => handleOpenBgStudio("front")}
+                        className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 transition-colors"
+                        title="Background Studio & Matting for Front Card"
+                      >
+                        BG
+                      </button>
+                      <button
                         onClick={handleClearFront}
                         className="p-1 rounded text-neutral-400 hover:text-red-400 hover:bg-neutral-800 transition-colors"
                         title="Remove Front"
@@ -1440,6 +1476,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                         title="Crop Back Card"
                       >
                         Crop
+                      </button>
+                      <button
+                        onClick={() => handleOpenBgStudio("back")}
+                        className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 transition-colors"
+                        title="Background Studio & Matting for Back Card"
+                      >
+                        BG
                       </button>
                       <button
                         onClick={handleClearBack}
@@ -1824,7 +1867,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
             </div>
 
             {/* Quick Actions for Selected Side */}
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
               <button
                 onClick={() => {
                   setCropTargetSide(activeSideTab);
@@ -1833,7 +1876,15 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                 className="py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 flex items-center justify-center space-x-1 font-medium transition-colors cursor-pointer"
               >
                 <Crop className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Crop Card</span>
+                <span>Crop</span>
+              </button>
+              <button
+                onClick={() => handleOpenBgStudio(activeSideTab)}
+                className="py-1.5 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/80 flex items-center justify-center space-x-1 font-medium transition-colors cursor-pointer"
+                title="Open Background Studio for this card"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>BG Studio</span>
               </button>
               <button
                 onClick={() => handleRepeatCard(activeSideTab)}
@@ -1841,7 +1892,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                 title="Duplicate active card to other side"
               >
                 <Copy className="w-3.5 h-3.5 text-sky-400" />
-                <span>Repeat to Other</span>
+                <span>Repeat</span>
               </button>
             </div>
 
@@ -2608,6 +2659,19 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
             }
           }}
           onClose={() => setIsCropModalOpen(false)}
+        />
+      )}
+
+      {/* Centralized Unified Background Studio Modal */}
+      {isBgStudioOpen && (
+        <UnifiedBackgroundStudioModal
+          isOpen={isBgStudioOpen}
+          onClose={() => setIsBgStudioOpen(false)}
+          initialImage={bgStudioTargetSide === "front" ? (frontRawImage || frontImage) : (backRawImage || backImage)}
+          initialState={bgStudioTargetSide === "front" ? (frontBgState || undefined) : (backBgState || undefined)}
+          title={`A6 ${bgStudioTargetSide === "front" ? "Front" : "Back"} Card Background Studio`}
+          subtitle="AI Matting • Multi-Layer Composition • Solid Colors & Custom Textures"
+          onApply={handleApplyBgStudio}
         />
       )}
     </div>

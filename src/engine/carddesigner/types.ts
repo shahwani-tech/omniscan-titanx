@@ -118,6 +118,8 @@ export interface CardObject {
   fitMode?: "cover" | "contain" | "fill";
   isSignature?: boolean;
   preserveAlpha?: boolean;
+  maskShape?: "rect" | "rounded" | "circle" | "oval";
+  maskCornerRadius?: number; // mm
 
   // Type-specific: Barcodes & QR
   barcodeType?: BarcodeType;
@@ -150,6 +152,67 @@ export interface CardSideState {
 
 export type A6Orientation = "portrait" | "landscape";
 
+export type CardPresetType =
+  | "id1_cr80"
+  | "business_eu"
+  | "business_us"
+  | "id2"
+  | "a6_half"
+  | "custom";
+
+export const STANDARD_CARD_PRESETS: Array<{
+  id: CardPresetType;
+  name: string;
+  widthMm: number;
+  heightMm: number;
+  description: string;
+}> = [
+  {
+    id: "id1_cr80",
+    name: "CR-80 Standard Die-Cut (85.6 × 54.0 mm)",
+    widthMm: 85.6,
+    heightMm: 54.0,
+    description: "Real physical die-cut/punch standard size for CR-80 ID cards, badges & licenses (R 3.18mm)",
+  },
+  {
+    id: "business_eu",
+    name: "Standard Business Card (85 × 55 mm)",
+    widthMm: 85.0,
+    heightMm: 55.0,
+    description: "Standard European business card size",
+  },
+  {
+    id: "business_us",
+    name: "US Business Card (88.9 × 50.8 mm)",
+    widthMm: 88.9,
+    heightMm: 50.8,
+    description: "Standard 3.5 × 2.0 inches US business card size",
+  },
+  {
+    id: "id2",
+    name: "ISO ID-2 Card (105 × 74 mm)",
+    widthMm: 105.0,
+    heightMm: 74.0,
+    description: "Official ISO/IEC 7810 ID-2 visa and document format",
+  },
+  {
+    id: "a6_half",
+    name: "Full A6 Half Zone (105 × 74 mm)",
+    widthMm: 105.0,
+    heightMm: 74.0,
+    description: "Fills the entire front/back half of physical A6 sheet",
+  },
+  {
+    id: "custom",
+    name: "Custom Millimeter Dimensions",
+    widthMm: 85.6,
+    heightMm: 54.0,
+    description: "Enter arbitrary width and height in millimeters",
+  },
+];
+
+export const CARD_PRESETS = STANDARD_CARD_PRESETS;
+
 export interface CardDesignerProject {
   id: string;
   name: string;
@@ -162,9 +225,18 @@ export interface CardDesignerProject {
   pageWidthMm: number; // 105 for portrait A6, 148 for landscape A6
   pageHeightMm: number; // 148 for portrait A6, 105 for landscape A6
 
-  // Card Dimensions (Default 74 mm × 105 mm)
+  // Zone Dimensions on Sheet (Default 105 mm × 74 mm each)
   cardWidthMm: number;
   cardHeightMm: number;
+
+  // Exact True Card Boundary Specifications (Standard CR-80: 85.6 × 54.0 mm, R 3.18mm)
+  trueCardWidthMm: number; // 85.6 mm default
+  trueCardHeightMm: number; // 54.0 mm default
+  trueCardOrientation: "landscape" | "portrait";
+  cardPreset: CardPresetType;
+  showCardBoundary: boolean; // default true
+  showBleedShading: boolean; // default true (subtly tints area outside card boundary)
+  cardCornerRadiusMm: number; // default 3.18 mm (standard CR-80 corner radius)
 
   // Positions on the A6 page
   frontPosMm: { x: number; y: number };
@@ -180,6 +252,7 @@ export interface CardDesignerProject {
   showGrid: boolean;
   snapToGrid: boolean;
   snapToObjects: boolean;
+  snapToCardBoundary?: boolean;
   gridSizeMm: number; // Default 2mm
 
   // Guides
@@ -191,6 +264,17 @@ export interface CardDesignerProject {
   // Card Content
   front: CardSideState;
   back: CardSideState;
+}
+
+/**
+ * Native Editable Project File Format (.ocard / .omniscanproj)
+ */
+export interface OCardProjectFile {
+  format: "omniscan-card-project";
+  version: "2.0.0";
+  app: "OMNISCAN PRO ULTRA";
+  exportedAt: string;
+  project: CardDesignerProject;
 }
 
 export type ActiveToolType =

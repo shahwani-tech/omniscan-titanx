@@ -35,20 +35,24 @@ export class CardDesignerHistory {
   /**
    * Undo to previous state
    */
-  public undo(currentState: CardDesignerProject): CardDesignerProject | null {
+  public undo(currentState?: CardDesignerProject): CardDesignerProject | null {
     if (this.past.length === 0) return null;
     const previous = this.past.pop()!;
-    this.future.push(JSON.parse(JSON.stringify(currentState)));
+    if (currentState) {
+      this.future.push(JSON.parse(JSON.stringify(currentState)));
+    }
     return previous;
   }
 
   /**
    * Redo to next state
    */
-  public redo(currentState: CardDesignerProject): CardDesignerProject | null {
+  public redo(currentState?: CardDesignerProject): CardDesignerProject | null {
     if (this.future.length === 0) return null;
     const next = this.future.pop()!;
-    this.past.push(JSON.parse(JSON.stringify(currentState)));
+    if (currentState) {
+      this.past.push(JSON.parse(JSON.stringify(currentState)));
+    }
     return next;
   }
 

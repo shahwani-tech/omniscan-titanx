@@ -123,6 +123,20 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
     setState(newState);
   }, [state]);
 
+  const commitHistory = useCallback(() => {
+    setHistory((prev) => [...prev.slice(-25), state]);
+    setFuture([]);
+  }, [state]);
+
+  const updateState = useCallback((updater: (prev: BackgroundStudioState) => BackgroundStudioState) => {
+    setState((curr) => {
+      const next = updater(curr);
+      setHistory((h) => [...h.slice(-25), curr]);
+      setFuture([]);
+      return next;
+    });
+  }, []);
+
   const handleUndo = () => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
@@ -268,6 +282,130 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
     const updatedStrokes = [...state.manualStrokes, stroke];
     setState((prev) => ({ ...prev, manualStrokes: updatedStrokes }));
     executeRemoval(state.removalOptions, updatedStrokes);
+  };
+
+  // -------------------------------------------------------------
+  // Canvas Interactive Drag & Zoom Controls (Independent Layers)
+  // -------------------------------------------------------------
+  const isLayerDraggingRef = useRef<boolean>(false);
+  const dragStartPointRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const dragInitialPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isLayerDragging, setIsLayerDragging] = useState<boolean>(false);
+
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    if (viewMode !== "composite") return;
+    const delta = e.deltaY < 0 ? 0.05 : -0.05;
+    if (activeTab === "image" && state.backgroundImage) {
+      e.preventDefault();
+      const currentScale = state.backgroundTransform.scale || 1;
+      const nextScale = Math.max(0.1, Math.min(4, currentScale + delta));
+      updateState((prev) => ({
+        ...prev,
+        backgroundTransform: {
+          ...prev.backgroundTransform,
+          scale: nextScale,
+        },
+      }));
+    } else if (activeTab === "foreground" && (state.foregroundImage || state.originalImage)) {
+      e.preventDefault();
+      const currentScale = state.foregroundTransform.scale || 1;
+      const nextScale = Math.max(0.2, Math.min(3, currentScale + delta));
+      updateState((prev) => ({
+        ...prev,
+        foregroundTransform: {
+          ...prev.foregroundTransform,
+          scale: nextScale,
+        },
+      }));
+    }
+  };
+
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (manualRefineActive) {
+      setIsPainting(true);
+      handleAddBrushPoint(e.clientX, e.clientY, e.currentTarget);
+      return;
+    }
+
+    if (viewMode !== "composite") return;
+
+    if (activeTab === "image" && state.backgroundImage) {
+      isLayerDraggingRef.current = true;
+      dragStartPointRef.current = { x: e.clientX, y: e.clientY };
+      dragInitialPosRef.current = {
+        x: state.backgroundTransform.x,
+        y: state.backgroundTransform.y,
+      };
+      setIsLayerDragging(true);
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {}
+    } else if (activeTab === "foreground" && (state.foregroundImage || state.originalImage)) {
+      isLayerDraggingRef.current = true;
+      dragStartPointRef.current = { x: e.clientX, y: e.clientY };
+      dragInitialPosRef.current = {
+        x: state.foregroundTransform.x,
+        y: state.foregroundTransform.y,
+      };
+      setIsLayerDragging(true);
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {}
+    }
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setBrushCursorPos({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+
+    if (manualRefineActive && isPainting) {
+      handleAddBrushPoint(e.clientX, e.clientY, e.currentTarget);
+      return;
+    }
+
+    if (!isLayerDraggingRef.current) return;
+
+    const dx = e.clientX - dragStartPointRef.current.x;
+    const dy = e.clientY - dragStartPointRef.current.y;
+
+    if (activeTab === "image") {
+      setState((prev) => ({
+        ...prev,
+        backgroundTransform: {
+          ...prev.backgroundTransform,
+          x: Math.round(dragInitialPosRef.current.x + dx),
+          y: Math.round(dragInitialPosRef.current.y + dy),
+        },
+      }));
+    } else if (activeTab === "foreground") {
+      setState((prev) => ({
+        ...prev,
+        foregroundTransform: {
+          ...prev.foregroundTransform,
+          x: Math.round(dragInitialPosRef.current.x + dx),
+          y: Math.round(dragInitialPosRef.current.y + dy),
+        },
+      }));
+    }
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (manualRefineActive) {
+      setIsPainting(false);
+      return;
+    }
+
+    if (isLayerDraggingRef.current) {
+      isLayerDraggingRef.current = false;
+      setIsLayerDragging(false);
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      commitHistory();
+    }
   };
 
   // -------------------------------------------------------------
@@ -532,30 +670,51 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
               </div>
             ) : (
               <div
-                onPointerDown={(e) => {
-                  if (!manualRefineActive) return;
-                  setIsPainting(true);
-                  handleAddBrushPoint(e.clientX, e.clientY, e.currentTarget);
-                }}
-                onPointerMove={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setBrushCursorPos({
-                    x: e.clientX - rect.left,
-                    y: e.clientY - rect.top,
-                  });
-                  if (manualRefineActive && isPainting) {
-                    handleAddBrushPoint(e.clientX, e.clientY, e.currentTarget);
-                  }
-                }}
-                onPointerUp={() => setIsPainting(false)}
+                onWheel={handleCanvasWheel}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
                 onPointerLeave={() => {
-                  setIsPainting(false);
+                  if (manualRefineActive) setIsPainting(false);
+                  if (isLayerDraggingRef.current) {
+                    isLayerDraggingRef.current = false;
+                    setIsLayerDragging(false);
+                    commitHistory();
+                  }
                   setBrushCursorPos(null);
                 }}
                 className={`relative max-w-full max-h-full flex items-center justify-center ${
-                  manualRefineActive ? "cursor-crosshair" : ""
+                  manualRefineActive
+                    ? "cursor-crosshair"
+                    : isLayerDragging
+                    ? "cursor-grabbing"
+                    : (activeTab === "image" && state.backgroundImage) ||
+                      (activeTab === "foreground" && (state.foregroundImage || state.originalImage))
+                    ? "cursor-grab"
+                    : ""
                 }`}
               >
+                {/* Floating Interactive Canvas Layer HUD */}
+                {viewMode === "composite" && !manualRefineActive && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 pointer-events-none bg-neutral-900/90 backdrop-blur border border-neutral-700/80 rounded-full px-3 py-1 text-[10px] text-neutral-300 flex items-center space-x-2 shadow-lg">
+                    {activeTab === "image" && state.backgroundImage ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>Background Image Active: <strong className="text-white">Drag to Pan</strong> • <strong className="text-white">Scroll to Zoom</strong> ({Math.round((state.backgroundTransform.scale || 1) * 100)}%)</span>
+                      </>
+                    ) : activeTab === "foreground" ? (
+                      <>
+                        <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                        <span>Foreground Subject Active: <strong className="text-white">Drag to Pan</strong> • <strong className="text-white">Scroll to Zoom</strong> ({Math.round((state.foregroundTransform.scale || 1) * 100)}%)</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-neutral-500" />
+                        <span>Select Background Image or Foreground tab to drag and zoom layers</span>
+                      </>
+                    )}
+                  </div>
+                )}
                 {/* Virtual Brush Cursor Ring */}
                 {manualRefineActive && brushCursorPos && (
                   <div
