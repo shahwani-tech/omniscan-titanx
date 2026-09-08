@@ -3,7 +3,7 @@
  * Visual Face Alignment Oval, Crown/Chin Markers, Aspect Lock & Precision Framing
  */
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { PassportStandardSpec } from "../../types";
 import { X, Check, ZoomIn, ZoomOut, RotateCw, User } from "lucide-react";
 
@@ -29,6 +29,9 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
 
+  const imgRef = useRef<HTMLImageElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+
   const targetAspect = passportSpec.widthInches / passportSpec.heightInches;
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -43,17 +46,19 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
   };
 
   const handleApply = async () => {
-    // Generate cropped image from canvas
+    // Exact target dimensions at high DPI (300 DPI)
+    const targetW = Math.round(passportSpec.widthInches * 300);
+    const targetH = Math.round(passportSpec.heightInches * 300);
+
     const canvas = document.createElement("canvas");
-    const targetW = 600;
-    const targetH = Math.round(600 / targetAspect);
     canvas.width = targetW;
     canvas.height = targetH;
 
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
 
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.src = sourceImageUrl;
     await new Promise((res) => {
       img.onload = res;
@@ -63,10 +68,23 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
     ctx.fillRect(0, 0, targetW, targetH);
 
     ctx.save();
-    ctx.translate(targetW / 2 + panX, targetH / 2 + panY);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+
+    const frameRect = frameRef.current?.getBoundingClientRect();
+    const frameW = frameRect?.width || 288 * targetAspect;
+    const frameH = frameRect?.height || 288;
+
+    const dispImgW = imgRef.current?.offsetWidth || (img.naturalWidth / img.naturalHeight) * 320;
+    const dispImgH = imgRef.current?.offsetHeight || 320;
+
+    const scaleFactorX = targetW / frameW;
+    const scaleFactorY = targetH / frameH;
+
+    ctx.translate(targetW / 2 + panX * scaleFactorX, targetH / 2 + panY * scaleFactorY);
     ctx.rotate((rotation * Math.PI) / 180);
-    ctx.scale(zoom, zoom);
-    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+    ctx.scale(zoom * scaleFactorX, zoom * scaleFactorY);
+    ctx.drawImage(img, -dispImgW / 2, -dispImgH / 2, dispImgW, dispImgH);
     ctx.restore();
 
     const cropped = canvas.toDataURL("image/jpeg", 0.95);
@@ -116,11 +134,12 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
             }}
             className="pointer-events-none"
           >
-            <img src={sourceImageUrl} alt="Crop Source" className="max-h-80 w-auto object-contain" />
+            <img ref={imgRef} src={sourceImageUrl} alt="Crop Source" className="max-h-80 w-auto object-contain" />
           </div>
 
           {/* Biometric Framing & Face Overlay */}
           <div
+            ref={frameRef}
             style={{
               aspectRatio: `${passportSpec.widthInches} / ${passportSpec.heightInches}`,
             }}

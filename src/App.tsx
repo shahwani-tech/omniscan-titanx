@@ -55,6 +55,7 @@ import { CamScannerFilterModal } from "./components/filters/CamScannerFilterModa
 import { PhotoPrintStudioModal } from "./components/photo/PhotoPrintStudioModal";
 import { IdCardPrintStudioModal } from "./components/idcard/IdCardPrintStudioModal";
 import { CardDesignStudioModal } from "./components/carddesigner/CardDesignStudioModal";
+import { DocumentWorkspaceModal } from "./components/converter/DocumentWorkspaceModal";
 import { PasswordModal } from "./components/modals/PasswordModal";
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
 import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
@@ -149,6 +150,7 @@ export function AppContent() {
   const [isPhotoPrintStudioModalOpen, setIsPhotoPrintStudioModalOpen] = useState<boolean>(false);
   const [isIdCardStudioModalOpen, setIsIdCardStudioModalOpen] = useState<boolean>(false);
   const [isCardDesignerModalOpen, setIsCardDesignerModalOpen] = useState<boolean>(false);
+  const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState<boolean>(false);
   const [idCardStudioInitialMode, setIdCardStudioInitialMode] = useState<"idcard" | "a6">("idcard");
   const [isSplitPdfModalOpen, setIsSplitPdfModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -1771,6 +1773,7 @@ export function AppContent() {
       }),
       registerAction("studio.batch", () => setIsBatchModalOpen(true)),
       registerAction("studio.compare", () => setIsCompareModalOpen(true)),
+      registerAction("studio.converter", () => setIsWorkspaceModalOpen(true)),
       registerAction("studio.split", () => setIsSplitPdfModalOpen(true)),
       registerAction("app.help", () => setIsKeyboardShortcutsModalOpen(true)),
     ];
@@ -1882,6 +1885,13 @@ export function AppContent() {
         setIdCardStudioInitialMode("idcard");
         setIsIdCardStudioModalOpen(true);
       },
+    },
+    {
+      id: "cmd-workspace-converter",
+      title: "All-in-One Document Workspace & File Converter (Merge, Split, Word, Excel, PPT, Image)",
+      category: "Tools",
+      icon: <Layers className="w-4 h-4 text-sky-400" />,
+      action: () => setIsWorkspaceModalOpen(true),
     },
     {
       id: "cmd-card-designer",
@@ -2021,6 +2031,7 @@ export function AppContent() {
           setIsIdCardStudioModalOpen(true);
         }}
         onOpenCardDesigner={() => setIsCardDesignerModalOpen(true)}
+        onOpenDocumentConverter={() => setIsWorkspaceModalOpen(true)}
         onOpenBatchStudio={() => setIsBatchModalOpen(true)}
         onOpenCompare={() => setIsCompareModalOpen(true)}
         onOpenSecurity={() => setIsSecurityModalOpen(true)}
@@ -2139,7 +2150,7 @@ export function AppContent() {
         pages={document.pages}
         onClose={() => setIsBatchModalOpen(false)}
         onExecuteBatch={handleExecuteBatch}
-        onAddFiles={handleImportFiles}
+        onAddFiles={handleProcessFiles}
       />
 
       <DocumentCompareModal
@@ -2231,6 +2242,84 @@ export function AppContent() {
         document={document}
         onClose={() => setIsSplitPdfModalOpen(false)}
       />
+
+      {/* All-in-One Document Workspace & File Converter Suite */}
+      {isWorkspaceModalOpen && (
+        <DocumentWorkspaceModal
+          isOpen={isWorkspaceModalOpen}
+          onClose={() => setIsWorkspaceModalOpen(false)}
+          onOpenInPdfStudio={async (file) => {
+            await handleProcessPdfFile(file);
+            setIsWorkspaceModalOpen(false);
+          }}
+          onOpenInImageEditor={(_dataUrl) => {
+            setIsWorkspaceModalOpen(false);
+            setIsFilterStudioModalOpen(true);
+          }}
+          onOpenInPassportStudio={(_file) => {
+            setIsWorkspaceModalOpen(false);
+            setIsPhotoPrintStudioModalOpen(true);
+          }}
+          onOpenInIdCardStudio={(_file) => {
+            setIsWorkspaceModalOpen(false);
+            setIdCardStudioInitialMode("idcard");
+            setIsIdCardStudioModalOpen(true);
+          }}
+          onOpenInCardDesigner={() => {
+            setIsWorkspaceModalOpen(false);
+            setIsCardDesignerModalOpen(true);
+          }}
+          onOpenPrintDialog={async (file) => {
+            if (file.name.toLowerCase().endsWith(".pdf")) {
+              try {
+                const imported = await importPDFFile(file);
+                openPrintDialog({
+                  type: "document",
+                  title: file.name,
+                  document: {
+                    id: "print-" + Date.now(),
+                    name: file.name,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    pages: imported.pages,
+                    activePageIndex: 0,
+                    selectedPageIds: [],
+                    tags: [],
+                    isDirty: false,
+                    metadata: {
+                      title: file.name,
+                      author: "User",
+                      subject: "",
+                      keywords: "",
+                      creator: "OmniScan Titan X",
+                      producer: "OmniScan Titan X",
+                      creationDate: new Date().toISOString(),
+                      modificationDate: new Date().toISOString(),
+                      pdfAStandard: "Standard PDF (1.7)",
+                    },
+                  },
+                  defaultPaperSize: "a4",
+                  defaultOrientation: "portrait",
+                });
+              } catch {
+                openPrintDialog({
+                  type: "document",
+                  title: file.name,
+                  document: document,
+                  defaultPaperSize: "a4",
+                  defaultOrientation: "portrait",
+                });
+              }
+            } else {
+              openPrintDialog({
+                type: "images",
+                title: file.name,
+                images: [{ url: URL.createObjectURL(file) }],
+              });
+            }
+          }}
+        />
+      )}
 
       {/* Password Protected PDF Decryption Modal */}
       <PasswordModal

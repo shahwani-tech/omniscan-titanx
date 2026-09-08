@@ -66,6 +66,8 @@ import { DEFAULT_FILTERS } from "../../engine/vision";
 import { ImageFilterPipeline, OmniPage } from "../../types";
 import { IdCardCropModal, IdCardCropState } from "./IdCardCropModal";
 import { IdCardFilterNumericInput } from "./IdCardFilterNumericInput";
+import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
+import { BackgroundStudioState } from "../../engine/background/types";
 import { usePrint } from "../../context/PrintContext";
 import { classifyImageContent, ContentClassificationResult } from "../../engine/autoClassifier";
 import * as pdfjsLib from "pdfjs-dist";
@@ -197,6 +199,12 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   const [backCropState, setBackCropState] = useState<IdCardCropState | null>(null);
   const [cropModalOpen, setCropModalOpen] = useState<boolean>(false);
   const [cropTargetSide, setCropTargetSide] = useState<"front" | "back">("front");
+
+  // Centralized Background Studio States
+  const [bgModalOpen, setBgModalOpen] = useState<boolean>(false);
+  const [bgTargetSide, setBgTargetSide] = useState<"front" | "back">("front");
+  const [frontBgState, setFrontBgState] = useState<BackgroundStudioState | null>(null);
+  const [backBgState, setBackBgState] = useState<BackgroundStudioState | null>(null);
 
   // Non-destructive Filter Pipeline States
   const [frontFilters, setFrontFilters] = useState<ImageFilterPipeline>({ ...DEFAULT_FILTERS });
@@ -831,6 +839,26 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   const handleOpenCrop = (side: "front" | "back") => {
     setCropTargetSide(side);
     setCropModalOpen(true);
+  };
+
+  const handleOpenBgStudio = (side: "front" | "back") => {
+    setBgTargetSide(side);
+    setBgModalOpen(true);
+  };
+
+  const handleApplyBgStudio = (compositeUrl: string, fullState: BackgroundStudioState) => {
+    if (bgTargetSide === "front") {
+      setFrontBgState(fullState);
+      setFrontBaseImage(compositeUrl);
+      setOriginalFrontImage(compositeUrl);
+      executeFilterPipelineScheduled(false, "front");
+    } else {
+      setBackBgState(fullState);
+      setBackBaseImage(compositeUrl);
+      setOriginalBackImage(compositeUrl);
+      executeFilterPipelineScheduled(false, "back");
+    }
+    setBgModalOpen(false);
   };
 
   const handleApplyCroppedImage = (croppedDataUrl: string, finalState?: IdCardCropState) => {
@@ -1545,6 +1573,14 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                     <Crop className="w-3 h-3" />
                     <span>Crop</span>
                   </button>
+                  <button
+                    onClick={() => handleOpenBgStudio("front")}
+                    className="flex-1 py-1 px-1 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-[10px] rounded text-emerald-400 font-medium flex items-center justify-center space-x-0.5"
+                    title="Background Studio & AI Removal for Front Card"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>BG</span>
+                  </button>
                 </div>
               </div>
 
@@ -1605,6 +1641,14 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                   >
                     <Crop className="w-3 h-3" />
                     <span>Crop</span>
+                  </button>
+                  <button
+                    onClick={() => handleOpenBgStudio("back")}
+                    className="flex-1 py-1 px-1 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-[10px] rounded text-emerald-400 font-medium flex items-center justify-center space-x-0.5"
+                    title="Background Studio & AI Removal for Back Card"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>BG</span>
                   </button>
                 </div>
               </div>
@@ -2850,6 +2894,19 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         showDualSideButtons={true}
         primaryButtonLabel={`Use as ${pdfTargetSide === "front" ? "Front" : "Back"} Card`}
         onImportSingle={handlePdfImport}
+      />
+
+      {/* -------------------------------------------------------------
+          Centralized Background Studio Modal (Front / Back Card)
+         ------------------------------------------------------------- */}
+      <UnifiedBackgroundStudioModal
+        isOpen={bgModalOpen}
+        onClose={() => setBgModalOpen(false)}
+        initialImage={bgTargetSide === "front" ? originalFrontImage : originalBackImage}
+        initialState={bgTargetSide === "front" ? (frontBgState || undefined) : (backBgState || undefined)}
+        title={`ID Card ${bgTargetSide === "front" ? "Front" : "Back"} Background Studio`}
+        subtitle="Automatic Matting • Solid Colors & Gradients • Texture Layers • Local AI & GitHub Backend"
+        onApply={handleApplyBgStudio}
       />
     </div>
   );

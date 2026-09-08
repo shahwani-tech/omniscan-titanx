@@ -36,6 +36,8 @@ import {
   ManualBrushStroke,
   ShadowRemovalLevel,
 } from "../../engine/backgroundRemover";
+import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
+import { BackgroundStudioState } from "../../engine/background/types";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageToDataUrl } from "../../engine/pdf";
 import { useShortcuts } from "../../commands/ShortcutContext";
@@ -221,31 +223,14 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
   const cropContainerRef = useRef<HTMLDivElement>(null);
   const cropImageRef = useRef<HTMLImageElement>(null);
+  const cropStageLayoutRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+  const originalRawSourceImageRef = useRef<string>("");
 
   // -------------------------------------------------------------
   // Professional Background Remover State
   // -------------------------------------------------------------
   const [isBgRemoverOpen, setIsBgRemoverOpen] = useState<boolean>(false);
-  const [bgRemoverOptions, setBgRemoverOptions] = useState<BackgroundRemovalOptions>(DEFAULT_BG_REMOVAL_OPTIONS);
-  const [bgRemoverPreviewUrl, setBgRemoverPreviewUrl] = useState<string | null>(null);
-  const [bgRemoverMaskUrl, setBgRemoverMaskUrl] = useState<string | null>(null);
-  const [bgRemoverTransparentUrl, setBgRemoverTransparentUrl] = useState<string | null>(null);
-  const [bgRemoverEdgeUrl, setBgRemoverEdgeUrl] = useState<string | null>(null);
-  const [bgConfidenceScore, setBgConfidenceScore] = useState<number>(98);
-  const [isProcessingBgRemoval, setIsProcessingBgRemoval] = useState<boolean>(false);
-  const [bgPreviewMode, setBgPreviewMode] = useState<"composite" | "transparent" | "mask" | "edge" | "original" | "split">("composite");
-  const [splitSliderPos, setSplitSliderPos] = useState<number>(50);
-
-  // Manual Mask Refine Brush State
-  const [manualRefineActive, setManualRefineActive] = useState<boolean>(false);
-  const [brushAction, setBrushAction] = useState<"add" | "remove">("add");
-  const [brushRadius, setBrushRadius] = useState<number>(24);
-  const [brushHardness, setBrushHardness] = useState<number>(0.6);
-  const [brushOpacity, setBrushOpacity] = useState<number>(1.0);
-  const [manualStrokes, setManualStrokes] = useState<ManualBrushStroke[]>([]);
-  const [isPainting, setIsPainting] = useState<boolean>(false);
-  const [brushCursorPos, setBrushCursorPos] = useState<{ x: number; y: number } | null>(null);
-  const bgPreviewCanvasRef = useRef<HTMLDivElement>(null);
+  const [bgStudioState, setBgStudioState] = useState<BackgroundStudioState | null>(null);
 
   // -------------------------------------------------------------
   // CamScanner Filter Engine & Retouch State
@@ -518,14 +503,19 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       }
 
       if (!activeHandle || !cropImageRef.current) return;
-      const rect = cropImageRef.current.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
+      const containerW =
+        cropImageRef.current?.offsetWidth || cropStageLayoutRef.current.width || 400;
+      const containerH =
+        cropImageRef.current?.offsetHeight || cropStageLayoutRef.current.height || 500;
+      if (containerW <= 0 || containerH <= 0) return;
 
-      const deltaNormX = (e.clientX - dragStartMouse.x) / rect.width;
-      const deltaNormY = (e.clientY - dragStartMouse.y) / rect.height;
+      cropStageLayoutRef.current = { width: containerW, height: containerH };
+
+      const deltaNormX = (e.clientX - dragStartMouse.x) / containerW;
+      const deltaNormY = (e.clientY - dragStartMouse.y) / containerH;
 
       const targetRatio = currentPassportSpec.widthInches / currentPassportSpec.heightInches;
-      const imgAspect = rect.width / rect.height;
+      const imgAspect = containerW / containerH;
 
       setCropBox(() => {
         let newX = dragStartCropBox.x;
@@ -684,28 +674,43 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       ctx.fillRect(0, 0, outW, outH);
     }
 
-    // Exact WYSIWYG crop transformation with image zoom, pan, and crop rotation
-    const scaleX = outW / (cropBox.width * img.width);
-    const scaleY = outH / (cropBox.height * img.height);
+    // Exact WYSIWYG crop transformation with stable layout dimensions
+    let layoutW = cropImageRef.current?.offsetWidth || 0;
+    let layoutH = cropImageRef.current?.offsetHeight || 0;
+
+    if (layoutW > 0 && layoutH > 0) {
+      cropStageLayoutRef.current = { width: layoutW, height: layoutH };
+    } else if (cropStageLayoutRef.current.width > 0 && cropStageLayoutRef.current.height > 0) {
+      layoutW = cropStageLayoutRef.current.width;
+      layoutH = cropStageLayoutRef.current.height;
+    } else {
+      const naturalAspect = (img.naturalWidth || img.width) / (img.naturalHeight || img.height);
+      layoutH = 500;
+      layoutW = layoutH * naturalAspect;
+      cropStageLayoutRef.current = { width: layoutW, height: layoutH };
+    }
+
+    const boxW = Math.max(1, cropBox.width * layoutW);
+    const boxH = Math.max(1, cropBox.height * layoutH);
+    const boxX = cropBox.x * layoutW;
+    const boxY = cropBox.y * layoutH;
 
     ctx.save();
-    ctx.scale(scaleX, scaleY);
-    ctx.translate(-cropBox.x * img.width, -cropBox.y * img.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
-    const centerX = img.width / 2;
-    const centerY = img.height / 2;
-    const displayImgWidth = cropImageRef.current?.getBoundingClientRect().width || img.width;
-    const displayImgHeight = cropImageRef.current?.getBoundingClientRect().height || img.height;
+    // 1. Map canvas [0, outW] x [0, outH] to cover crop box [boxX, boxY, boxW, boxH] in layout space
+    ctx.scale(outW / boxW, outH / boxH);
+    ctx.translate(-boxX, -boxY);
 
-    ctx.translate(
-      centerX + (cropImagePan.x / displayImgWidth) * img.width,
-      centerY + (cropImagePan.y / displayImgHeight) * img.height
-    );
+    // 2. Apply the exact CSS display transform from the DOM image
+    ctx.translate(layoutW / 2 + cropImagePan.x, layoutH / 2 + cropImagePan.y);
     ctx.rotate((cropRotation * Math.PI) / 180);
     ctx.scale(cropZoom, cropZoom);
-    ctx.translate(-centerX, -centerY);
+    ctx.translate(-layoutW / 2, -layoutH / 2);
 
-    ctx.drawImage(img, 0, 0);
+    // 3. Render source image to the un-transformed layout rectangle [0, 0, layoutW, layoutH]
+    ctx.drawImage(img, 0, 0, layoutW, layoutH);
     ctx.restore();
 
     // Execute CamScanner Computer Vision Filter Pipeline directly on crop canvas
@@ -755,6 +760,70 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     activePreset,
   ]);
 
+  // Smooth transitions between studio steps with synchronized crop generation
+  const handleProceedToFilters = async () => {
+    if (cropImageRef.current && cropImageRef.current.offsetWidth > 0) {
+      cropStageLayoutRef.current = {
+        width: cropImageRef.current.offsetWidth,
+        height: cropImageRef.current.offsetHeight,
+      };
+    }
+    try {
+      await generateProcessedPhoto();
+      setStudioStep("filters");
+    } catch (err) {
+      console.error("Proceed to filters error:", err);
+      showToast("Failed to process crop. Please try again.");
+    }
+  };
+
+  const handleSelectStep = async (step: "crop" | "filters" | "sheet") => {
+    if (step !== "crop" && studioStep === "crop") {
+      if (cropImageRef.current && cropImageRef.current.offsetWidth > 0) {
+        cropStageLayoutRef.current = {
+          width: cropImageRef.current.offsetWidth,
+          height: cropImageRef.current.offsetHeight,
+        };
+      }
+      await generateProcessedPhoto();
+    }
+    setStudioStep(step);
+  };
+
+  const handleRotateImage = async (angleDelta: number = 90) => {
+    if (!rawSourceImage) return;
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = rawSourceImage;
+      await new Promise((resolve, reject) => {
+        img.onload = () => resolve(true);
+        img.onerror = reject;
+      });
+
+      const is90or270 = Math.abs(angleDelta % 180) === 90;
+      const rotCanvas = document.createElement("canvas");
+      rotCanvas.width = is90or270 ? (img.naturalHeight || img.height) : (img.naturalWidth || img.width);
+      rotCanvas.height = is90or270 ? (img.naturalWidth || img.width) : (img.naturalHeight || img.height);
+
+      const ctx = rotCanvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.translate(rotCanvas.width / 2, rotCanvas.height / 2);
+      ctx.rotate((angleDelta * Math.PI) / 180);
+      ctx.drawImage(img, -(img.naturalWidth || img.width) / 2, -(img.naturalHeight || img.height) / 2);
+
+      const rotatedDataUrl = rotCanvas.toDataURL("image/png");
+      setRawSourceImage(rotatedDataUrl);
+      setCropRotation(0);
+      setCropImagePan({ x: 0, y: 0 });
+      setCropZoom(1.0);
+    } catch (e) {
+      console.error("Rotate failure:", e);
+      setCropRotation((prev) => (prev + angleDelta) % 360);
+    }
+  };
+
   // Re-generate photo buffer smoothly when entering sheet mode or changing filters
   useEffect(() => {
     if (!isOpen) return;
@@ -772,82 +841,10 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   }, [generateProcessedPhoto, isOpen]);
 
   // -------------------------------------------------------------
-  // Background Remover Execution Handler & Manual Mask Refinement
+  // Background Remover Execution Handler
   // -------------------------------------------------------------
-  const executeBgRemoval = async (opts = bgRemoverOptions, strokes = manualStrokes) => {
-    setIsProcessingBgRemoval(true);
-    try {
-      const mergedOpts: BackgroundRemovalOptions = {
-        ...opts,
-        manualStrokes: strokes,
-      };
-      const res = await removeBackground(rawSourceImage, mergedOpts);
-      setBgRemoverPreviewUrl(res.resultDataUrl);
-      setBgRemoverMaskUrl(res.maskDataUrl);
-      setBgRemoverTransparentUrl(res.transparentDataUrl);
-      setBgRemoverEdgeUrl(res.edgeDataUrl);
-      setBgConfidenceScore(res.confidenceScore);
-    } catch (err) {
-      console.error("Background removal failure:", err);
-      showToast("Background removal encountered an error.");
-    } finally {
-      setIsProcessingBgRemoval(false);
-    }
-  };
-
   const handleOpenBgRemover = () => {
     setIsBgRemoverOpen(true);
-    setManualStrokes([]);
-    executeBgRemoval(bgRemoverOptions, []);
-  };
-
-  const handleApplyBgRemoval = () => {
-    if (bgRemoverPreviewUrl) {
-      setRawSourceImage(bgRemoverPreviewUrl);
-      showToast("Studio background replacement applied.");
-      setIsBgRemoverOpen(false);
-    }
-  };
-
-  const handleResetBgRemoval = () => {
-    setBgRemoverOptions(DEFAULT_BG_REMOVAL_OPTIONS);
-    setManualStrokes([]);
-    executeBgRemoval(DEFAULT_BG_REMOVAL_OPTIONS, []);
-    showToast("Background remover reset to biometric defaults.");
-  };
-
-  const handleUndoManualStroke = () => {
-    if (manualStrokes.length === 0) return;
-    const updated = manualStrokes.slice(0, -Math.min(manualStrokes.length, 12));
-    setManualStrokes(updated);
-    executeBgRemoval(bgRemoverOptions, updated);
-    showToast("Reverted previous brush strokes.");
-  };
-
-  const handleClearAllManualStrokes = () => {
-    setManualStrokes([]);
-    executeBgRemoval(bgRemoverOptions, []);
-    showToast("Cleared manual mask corrections.");
-  };
-
-  const handleAddBrushPoint = (clientX: number, clientY: number, targetElem: HTMLElement) => {
-    const rect = targetElem.getBoundingClientRect();
-    const nx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const ny = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-    const normRadius = brushRadius / rect.width;
-
-    const newStroke: ManualBrushStroke = {
-      x: nx,
-      y: ny,
-      radius: normRadius,
-      action: brushAction,
-      hardness: brushHardness,
-      opacity: brushOpacity,
-    };
-
-    const updated = [...manualStrokes, newStroke];
-    setManualStrokes(updated);
-    executeBgRemoval(bgRemoverOptions, updated);
   };
 
   // -------------------------------------------------------------
@@ -1119,7 +1116,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
           {/* Stepper Tabs */}
           <div className="flex items-center bg-neutral-900 p-1 rounded-lg border border-neutral-800 space-x-1">
             <button
-              onClick={() => setStudioStep("crop")}
+              onClick={() => handleSelectStep("crop")}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 studioStep === "crop"
                   ? "bg-sky-600 text-white shadow-sm"
@@ -1130,7 +1127,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
               <span>1. Biometric Cutout</span>
             </button>
             <button
-              onClick={() => setStudioStep("filters")}
+              onClick={() => handleSelectStep("filters")}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 studioStep === "filters"
                   ? "bg-sky-600 text-white shadow-sm"
@@ -1141,7 +1138,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
               <span>2. Retouch & Tone</span>
             </button>
             <button
-              onClick={() => setStudioStep("sheet")}
+              onClick={() => handleSelectStep("sheet")}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 studioStep === "sheet"
                   ? "bg-sky-600 text-white shadow-sm"
@@ -1192,6 +1189,15 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                     src={rawSourceImage}
                     alt="Source Crop"
                     className="max-h-[62vh] max-w-[50vw] object-contain block pointer-events-none"
+                    onLoad={(e) => {
+                      const target = e.currentTarget;
+                      if (target.offsetWidth > 0 && target.offsetHeight > 0) {
+                        cropStageLayoutRef.current = {
+                          width: target.offsetWidth,
+                          height: target.offsetHeight,
+                        };
+                      }
+                    }}
                     style={{
                       transform: `translate(${cropImagePan.x}px, ${cropImagePan.y}px) rotate(${cropRotation}deg) scale(${cropZoom})`,
                       transformOrigin: "center center",
@@ -1403,9 +1409,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
               <div className="h-3 w-px bg-neutral-750 mx-0.5" />
 
               <button
-                onClick={() => setCropRotation((prev) => (prev + 90) % 360)}
+                onClick={() => handleRotateImage(90)}
                 className="p-1 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white"
-                title="Rotate 90°"
+                title="Rotate 90° CW"
               >
                 <RotateCw className="w-3.5 h-3.5" />
               </button>
@@ -1684,7 +1690,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
                 {/* Next Step Button */}
                 <button
-                  onClick={() => setStudioStep("filters")}
+                  onClick={handleProceedToFilters}
                   className="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg flex items-center justify-center space-x-2 transition-colors shadow-md mt-4"
                 >
                   <span>Proceed to Retouch & Filters</span>
@@ -2486,758 +2492,21 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
           </div>
         </div>
 
-        {/* ------------------------------------------------------------- */}
-        {/* DEDICATED PROFESSIONAL BACKGROUND REMOVER MODAL (INSIDE STUDIO) */}
-        {/* ------------------------------------------------------------- */}
-        {isBgRemoverOpen && (
-          <div className="fixed inset-0 z-60 bg-black/90 backdrop-blur-lg flex items-center justify-center p-3 animate-in fade-in duration-150">
-            <div className="bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[90vh] overflow-hidden">
-              {/* Modal Top Bar */}
-              <div className="flex items-center justify-between px-5 py-3 border-b border-neutral-800 bg-neutral-850">
-                <div className="flex items-center space-x-3">
-                  <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-                    <Wand2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wide">
-                        Professional Studio Background Remover
-                      </h3>
-                      <div className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-[10px] text-emerald-300 font-semibold">
-                        <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                        <span>{bgConfidenceScore}% Biometric Validated</span>
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-neutral-400">
-                      Biometric Anatomical Matting • Hair Strand Preservation • Manual Mask Refinement • ICAO 9303 Compliance
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setIsBgRemoverOpen(false)}
-                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Modal Main Area (2 Columns) */}
-              <div className="flex flex-1 overflow-hidden">
-                {/* Left: Interactive Preview Canvas & Manual Refine Stage */}
-                <div className="flex-1 bg-neutral-950 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none">
-                  {/* View Mode Switcher */}
-                  <div className="absolute top-3 inset-x-0 flex flex-col items-center z-20 space-y-2">
-                    <div className="flex bg-neutral-900/95 backdrop-blur-md p-1 rounded-lg border border-neutral-800 space-x-1 text-xs shadow-xl">
-                      <button
-                        onClick={() => setBgPreviewMode("composite")}
-                        className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                          bgPreviewMode === "composite" ? "bg-emerald-600 text-white shadow" : "text-neutral-400 hover:text-white"
-                        }`}
-                      >
-                        Result Composite
-                      </button>
-                      <button
-                        onClick={() => setBgPreviewMode("transparent")}
-                        className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                          bgPreviewMode === "transparent" ? "bg-emerald-600 text-white shadow" : "text-neutral-400 hover:text-white"
-                        }`}
-                      >
-                        Transparent Cutout
-                      </button>
-                      <button
-                        onClick={() => setBgPreviewMode("mask")}
-                        className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                          bgPreviewMode === "mask" ? "bg-emerald-600 text-white shadow" : "text-neutral-400 hover:text-white"
-                        }`}
-                      >
-                        Matte Alpha Mask
-                      </button>
-                      <button
-                        onClick={() => setBgPreviewMode("edge")}
-                        className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                          bgPreviewMode === "edge" ? "bg-emerald-600 text-white shadow" : "text-neutral-400 hover:text-white"
-                        }`}
-                      >
-                        Edge Boundary View
-                      </button>
-                      <button
-                        onClick={() => setBgPreviewMode("original")}
-                        className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                          bgPreviewMode === "original" ? "bg-emerald-600 text-white shadow" : "text-neutral-400 hover:text-white"
-                        }`}
-                      >
-                        Original Source
-                      </button>
-                      <button
-                        onClick={() => setBgPreviewMode("split")}
-                        className={`px-2.5 py-1 rounded font-medium transition-colors ${
-                          bgPreviewMode === "split" ? "bg-emerald-600 text-white shadow" : "text-neutral-400 hover:text-white"
-                        }`}
-                      >
-                        Before / After Split
-                      </button>
-                    </div>
-
-                    {/* Manual Mask Refinement Floating Toolbar */}
-                    <div className="flex items-center bg-neutral-900/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-800 space-x-3 text-xs shadow-lg">
-                      <div className="flex items-center space-x-1.5 border-r border-neutral-800 pr-2">
-                        <button
-                          onClick={() => setManualRefineActive(!manualRefineActive)}
-                          className={`px-2 py-1 rounded font-semibold flex items-center space-x-1 transition-all ${
-                            manualRefineActive
-                              ? "bg-amber-600 text-white shadow ring-2 ring-amber-400/40"
-                              : "bg-neutral-800 text-neutral-300 hover:text-white"
-                          }`}
-                        >
-                          <Paintbrush className="w-3.5 h-3.5" />
-                          <span>Manual Refine Brush</span>
-                        </button>
-                      </div>
-
-                      {manualRefineActive && (
-                        <div className="flex items-center space-x-3 animate-in fade-in duration-150">
-                          {/* Brush Mode: Add/Keep vs Erase/Remove */}
-                          <div className="flex bg-neutral-950 p-0.5 rounded border border-neutral-800">
-                            <button
-                              onClick={() => setBrushAction("add")}
-                              className={`px-2 py-0.5 rounded text-[11px] font-bold flex items-center space-x-1 ${
-                                brushAction === "add" ? "bg-emerald-600 text-white" : "text-neutral-400 hover:text-white"
-                              }`}
-                              title="Keep / Restore subject pixels (Add to foreground)"
-                            >
-                              <Paintbrush className="w-3 h-3" />
-                              <span>Add / Keep</span>
-                            </button>
-                            <button
-                              onClick={() => setBrushAction("remove")}
-                              className={`px-2 py-0.5 rounded text-[11px] font-bold flex items-center space-x-1 ${
-                                brushAction === "remove" ? "bg-rose-600 text-white" : "text-neutral-400 hover:text-white"
-                              }`}
-                              title="Erase / Remove background fragments"
-                            >
-                              <Eraser className="w-3 h-3" />
-                              <span>Erase / Remove</span>
-                            </button>
-                          </div>
-
-                          {/* Brush Size */}
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-[10px] text-neutral-400 font-semibold">Size:</span>
-                            <input
-                              type="range"
-                              min="6"
-                              max="80"
-                              value={brushRadius}
-                              onChange={(e) => setBrushRadius(Number(e.target.value))}
-                              className="w-16 accent-emerald-500 cursor-pointer"
-                            />
-                            <PhotoFilterNumericInput
-                              id="passport-input-brush-size"
-                              value={brushRadius}
-                              min={6}
-                              max={80}
-                              step={1}
-                              precision={0}
-                              unit="px"
-                              onChange={(val) => setBrushRadius(val)}
-                              ariaLabel="Brush size in pixels"
-                              className="w-11"
-                            />
-                          </div>
-
-                          {/* Brush Hardness */}
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-[10px] text-neutral-400 font-semibold">Hardness:</span>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.1"
-                              value={brushHardness}
-                              onChange={(e) => setBrushHardness(Number(e.target.value))}
-                              className="w-14 accent-emerald-500 cursor-pointer"
-                            />
-                            <PhotoFilterNumericInput
-                              id="passport-input-brush-hardness"
-                              value={brushHardness}
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              precision={1}
-                              onChange={(val) => setBrushHardness(val)}
-                              ariaLabel="Brush hardness"
-                              className="w-11"
-                            />
-                          </div>
-
-                          {/* Undo & Clear */}
-                          <div className="flex items-center space-x-1 border-l border-neutral-800 pl-2">
-                            <button
-                              onClick={handleUndoManualStroke}
-                              disabled={manualStrokes.length === 0}
-                              className="p-1 text-neutral-300 hover:text-white disabled:opacity-40 rounded hover:bg-neutral-800"
-                              title="Undo last stroke"
-                            >
-                              <Undo2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={handleClearAllManualStrokes}
-                              disabled={manualStrokes.length === 0}
-                              className="p-1 text-rose-400 hover:text-rose-300 disabled:opacity-40 rounded hover:bg-neutral-800"
-                              title="Clear all manual strokes"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {isProcessingBgRemoval ? (
-                    <div className="flex flex-col items-center space-y-2 text-neutral-400">
-                      <RefreshCw className="w-8 h-8 animate-spin text-emerald-400" />
-                      <span className="text-xs font-medium">Analyzing subject contours, matting hair & rendering...</span>
-                    </div>
-                  ) : (
-                    <div
-                      ref={bgPreviewCanvasRef}
-                      onPointerDown={(e) => {
-                        if (!manualRefineActive) return;
-                        setIsPainting(true);
-                        handleAddBrushPoint(e.clientX, e.clientY, e.currentTarget);
-                      }}
-                      onPointerMove={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setBrushCursorPos({
-                          x: e.clientX - rect.left,
-                          y: e.clientY - rect.top,
-                        });
-                        if (manualRefineActive && isPainting) {
-                          handleAddBrushPoint(e.clientX, e.clientY, e.currentTarget);
-                        }
-                      }}
-                      onPointerUp={() => setIsPainting(false)}
-                      onPointerLeave={() => {
-                        setIsPainting(false);
-                        setBrushCursorPos(null);
-                      }}
-                      className={`relative max-w-full max-h-full flex items-center justify-center ${
-                        manualRefineActive ? "cursor-crosshair" : ""
-                      }`}
-                    >
-                      {/* Virtual Brush Cursor Ring Overlay */}
-                      {manualRefineActive && brushCursorPos && (
-                        <div
-                          className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed z-30 transition-none"
-                          style={{
-                            left: brushCursorPos.x,
-                            top: brushCursorPos.y,
-                            width: brushRadius * 2,
-                            height: brushRadius * 2,
-                            borderColor: brushAction === "add" ? "#10B981" : "#F43F5E",
-                            backgroundColor: brushAction === "add" ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)",
-                          }}
-                        />
-                      )}
-
-                      {bgPreviewMode === "transparent" ? (
-                        <div
-                          className="p-1 rounded-lg border border-neutral-700 shadow-2xl max-h-[62vh] max-w-[48vw] overflow-hidden"
-                          style={{
-                            backgroundImage: `repeating-conic-gradient(#333 0% 25%, #222 0% 50%) 50% / 16px 16px`,
-                          }}
-                        >
-                          <img
-                            src={bgRemoverTransparentUrl || rawSourceImage}
-                            alt="Transparent Cutout"
-                            className="max-h-[60vh] max-w-[46vw] object-contain block pointer-events-none"
-                          />
-                        </div>
-                      ) : bgPreviewMode === "mask" ? (
-                        <div className="p-1 rounded-lg border border-neutral-700 shadow-2xl bg-black max-h-[62vh] max-w-[48vw]">
-                          <img
-                            src={bgRemoverMaskUrl || rawSourceImage}
-                            alt="Matte Mask"
-                            className="max-h-[60vh] max-w-[46vw] object-contain block pointer-events-none"
-                          />
-                        </div>
-                      ) : bgPreviewMode === "edge" ? (
-                        <div className="p-1 rounded-lg border border-cyan-500/40 shadow-2xl bg-neutral-950 max-h-[62vh] max-w-[48vw]">
-                          <img
-                            src={bgRemoverEdgeUrl || bgRemoverPreviewUrl || rawSourceImage}
-                            alt="Edge Boundary View"
-                            className="max-h-[60vh] max-w-[46vw] object-contain block pointer-events-none"
-                          />
-                        </div>
-                      ) : bgPreviewMode === "original" ? (
-                        <div className="p-1 rounded-lg border border-neutral-700 shadow-2xl bg-neutral-900 max-h-[62vh] max-w-[48vw]">
-                          <img
-                            src={rawSourceImage}
-                            alt="Original Source"
-                            className="max-h-[60vh] max-w-[46vw] object-contain block pointer-events-none"
-                          />
-                        </div>
-                      ) : bgPreviewMode === "split" ? (
-                        <div className="relative p-1 rounded-lg border border-neutral-700 shadow-2xl overflow-hidden max-h-[62vh] max-w-[48vw]">
-                          {/* Composited Image (Right Layer) */}
-                          <img
-                            src={bgRemoverPreviewUrl || rawSourceImage}
-                            alt="Result Composite"
-                            className="max-h-[60vh] max-w-[46vw] object-contain block"
-                          />
-                          {/* Original Image (Left Layer Clipped) */}
-                          <div
-                            className="absolute inset-0 overflow-hidden border-r-2 border-emerald-400"
-                            style={{ width: `${splitSliderPos}%` }}
-                          >
-                            <img
-                              src={rawSourceImage}
-                              alt="Original Source"
-                              className="max-h-[60vh] max-w-[46vw] object-contain block h-full w-auto"
-                            />
-                            <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-black/70 rounded text-[9px] font-bold text-white">
-                              ORIGINAL
-                            </div>
-                          </div>
-                          <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-emerald-950/80 border border-emerald-500/50 rounded text-[9px] font-bold text-emerald-300">
-                            REMOVED
-                          </div>
-                          {/* Draggable Split Slider Handle */}
-                          <input
-                            type="range"
-                            min="0"
-                            max="100"
-                            value={splitSliderPos}
-                            onChange={(e) => setSplitSliderPos(Number(e.target.value))}
-                            className="absolute bottom-2 inset-x-4 accent-emerald-500 cursor-ew-resize z-20"
-                          />
-                        </div>
-                      ) : (
-                        <div className="p-1 rounded-lg border border-neutral-700 shadow-2xl bg-white max-h-[62vh] max-w-[48vw]">
-                          <img
-                            src={bgRemoverPreviewUrl || rawSourceImage}
-                            alt="Composited Background Result"
-                            className="max-h-[60vh] max-w-[46vw] object-contain block pointer-events-none"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Right: Refinement & Background Replacement Controls */}
-                <div className="w-88 bg-neutral-900 border-l border-neutral-800 p-4 space-y-4 overflow-y-auto custom-scrollbar select-none text-xs text-neutral-200">
-                  {/* Re-Analyze Subject Action */}
-                  <div>
-                    <button
-                      onClick={() => executeBgRemoval(bgRemoverOptions, manualStrokes)}
-                      disabled={isProcessingBgRemoval}
-                      className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg flex items-center justify-center space-x-2 transition-colors shadow"
-                    >
-                      <Wand2 className="w-4 h-4" />
-                      <span>Re-Analyze & Segment Subject</span>
-                    </button>
-                  </div>
-
-                  {/* Target Studio Background Color */}
-                  <div>
-                    <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-2">
-                      Target Replacement Background
-                    </label>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button
-                        onClick={() => {
-                          const updated = { ...bgRemoverOptions, backgroundColor: "white" as const };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className={`p-1.5 rounded-lg border text-center transition-all ${
-                          bgRemoverOptions.backgroundColor === "white"
-                            ? "bg-emerald-950/60 border-emerald-400 text-white font-bold"
-                            : "bg-neutral-950 border-neutral-800 text-neutral-300"
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-white border border-neutral-300 mx-auto mb-1 shadow-sm" />
-                        <div className="text-[10px]">Pure White</div>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          const updated = { ...bgRemoverOptions, backgroundColor: "blue" as const };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className={`p-1.5 rounded-lg border text-center transition-all ${
-                          bgRemoverOptions.backgroundColor === "blue"
-                            ? "bg-emerald-950/60 border-emerald-400 text-white font-bold"
-                            : "bg-neutral-950 border-neutral-800 text-neutral-300"
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-sky-200 border border-sky-400 mx-auto mb-1 shadow-sm" />
-                        <div className="text-[10px]">Embassy Blue</div>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          const updated = { ...bgRemoverOptions, backgroundColor: "gray" as const };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className={`p-1.5 rounded-lg border text-center transition-all ${
-                          bgRemoverOptions.backgroundColor === "gray"
-                            ? "bg-emerald-950/60 border-emerald-400 text-white font-bold"
-                            : "bg-neutral-950 border-neutral-800 text-neutral-300"
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-neutral-200 border border-neutral-400 mx-auto mb-1 shadow-sm" />
-                        <div className="text-[10px]">Light Gray</div>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          const updated = { ...bgRemoverOptions, backgroundColor: "cream" as const };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className={`p-1.5 rounded-lg border text-center transition-all ${
-                          bgRemoverOptions.backgroundColor === "cream"
-                            ? "bg-emerald-950/60 border-emerald-400 text-white font-bold"
-                            : "bg-neutral-950 border-neutral-800 text-neutral-300"
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-amber-50 border border-amber-200 mx-auto mb-1 shadow-sm" />
-                        <div className="text-[10px]">Off-White</div>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          const updated = { ...bgRemoverOptions, backgroundColor: "transparent" as const };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className={`p-1.5 rounded-lg border text-center transition-all ${
-                          bgRemoverOptions.backgroundColor === "transparent"
-                            ? "bg-emerald-950/60 border-emerald-400 text-white font-bold"
-                            : "bg-neutral-950 border-neutral-800 text-neutral-300"
-                        }`}
-                      >
-                        <div className="w-4 h-4 rounded-full bg-neutral-800 border border-neutral-600 mx-auto mb-1 shadow-sm" />
-                        <div className="text-[10px]">Transparent</div>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          const updated = { ...bgRemoverOptions, backgroundColor: "custom" as const };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className={`p-1.5 rounded-lg border text-center transition-all ${
-                          bgRemoverOptions.backgroundColor === "custom"
-                            ? "bg-emerald-950/60 border-emerald-400 text-white font-bold"
-                            : "bg-neutral-950 border-neutral-800 text-neutral-300"
-                        }`}
-                      >
-                        <div
-                          className="w-4 h-4 rounded-full border border-neutral-400 mx-auto mb-1 shadow-sm"
-                          style={{ backgroundColor: bgRemoverOptions.customColorHex || "#FFFFFF" }}
-                        />
-                        <div className="text-[10px]">Custom</div>
-                      </button>
-                    </div>
-
-                    {bgRemoverOptions.backgroundColor === "custom" && (
-                      <div className="mt-2 flex items-center space-x-2 bg-neutral-950 p-1.5 rounded border border-neutral-800">
-                        <span className="text-neutral-400 text-[11px]">Pick Color:</span>
-                        <input
-                          type="color"
-                          value={bgRemoverOptions.customColorHex || "#FFFFFF"}
-                          onChange={(e) => {
-                            const updated = { ...bgRemoverOptions, customColorHex: e.target.value };
-                            setBgRemoverOptions(updated);
-                            executeBgRemoval(updated);
-                          }}
-                          className="w-6 h-6 rounded cursor-pointer bg-transparent border-0"
-                        />
-                        <span className="font-mono text-sky-400 text-xs">{bgRemoverOptions.customColorHex}</span>
-                      </div>
-                    )}
-
-                    {/* Dedicated Passport Background Mode */}
-                    <div className="mt-2.5 p-2 rounded bg-neutral-950 border border-neutral-800 flex items-center justify-between">
-                      <div>
-                        <div className="text-[11px] font-bold text-emerald-300 flex items-center space-x-1">
-                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                          <span>Passport Background (ICAO 9303)</span>
-                        </div>
-                        <p className="text-[9px] text-neutral-400">
-                          Enforces 100% uniform clean backdrop without shadows or gradients.
-                        </p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={bgRemoverOptions.passportSafeBackground}
-                        onChange={(e) => {
-                          const updated = { ...bgRemoverOptions, passportSafeBackground: e.target.checked };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className="accent-emerald-500 w-4 h-4 rounded"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Shadow Handling Level Selector */}
-                  <div className="bg-neutral-950 p-3 rounded-lg border border-neutral-800 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
-                        Auto Shadow Removal
-                      </span>
-                      <span className="text-[10px] text-emerald-400 uppercase font-mono">
-                        {bgRemoverOptions.shadowRemovalLevel}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-1">
-                      {(["off", "low", "medium", "high"] as ShadowRemovalLevel[]).map((lvl) => (
-                        <button
-                          key={lvl}
-                          onClick={() => {
-                            const updated = { ...bgRemoverOptions, shadowRemovalLevel: lvl, shadowHandling: lvl !== "off" };
-                            setBgRemoverOptions(updated);
-                            executeBgRemoval(updated);
-                          }}
-                          className={`py-1 rounded text-[10px] font-bold uppercase transition-colors ${
-                            bgRemoverOptions.shadowRemovalLevel === lvl
-                              ? "bg-emerald-600 text-white"
-                              : "bg-neutral-900 text-neutral-400 hover:text-white"
-                          }`}
-                        >
-                          {lvl}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-[9px] text-neutral-400">
-                      Distinguishes backdrop cast shadows from dark hair, suits and collars.
-                    </p>
-                  </div>
-
-                  {/* Hair & Edge Refinement Controls */}
-                  <div className="space-y-3 bg-neutral-950 p-3 rounded-lg border border-neutral-800">
-                    <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-                      Hair & Edge Precision
-                    </div>
-
-                    {/* Sensitivity / Tolerance */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-neutral-300">Detection Sensitivity</span>
-                        <PhotoFilterNumericInput
-                          id="passport-input-bg-sensitivity"
-                          value={bgRemoverOptions.sensitivity}
-                          min={10}
-                          max={90}
-                          step={1}
-                          precision={0}
-                          unit="%"
-                          onChange={(val) => {
-                            const updated = { ...bgRemoverOptions, sensitivity: val };
-                            setBgRemoverOptions(updated);
-                            executeBgRemoval(updated);
-                          }}
-                          ariaLabel="Detection sensitivity percentage"
-                          className="w-11"
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        min="10"
-                        max="90"
-                        value={bgRemoverOptions.sensitivity}
-                        onChange={(e) => {
-                          const updated = { ...bgRemoverOptions, sensitivity: Number(e.target.value) };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className="w-full accent-emerald-500 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Edge Feather */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-neutral-300">Edge Feather (Softness)</span>
-                        <PhotoFilterNumericInput
-                          id="passport-input-bg-feather"
-                          value={bgRemoverOptions.edgeFeather}
-                          min={0}
-                          max={12}
-                          step={1}
-                          precision={0}
-                          unit="px"
-                          onChange={(val) => {
-                            const updated = { ...bgRemoverOptions, edgeFeather: val };
-                            setBgRemoverOptions(updated);
-                            executeBgRemoval(updated);
-                          }}
-                          ariaLabel="Edge feather in pixels"
-                          className="w-11"
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="12"
-                        value={bgRemoverOptions.edgeFeather}
-                        onChange={(e) => {
-                          const updated = { ...bgRemoverOptions, edgeFeather: Number(e.target.value) };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className="w-full accent-emerald-500 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Edge Shift / Erode */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-neutral-300">Edge Shift (Erode / Expand)</span>
-                        <PhotoFilterNumericInput
-                          id="passport-input-bg-shift"
-                          value={bgRemoverOptions.edgeShift}
-                          min={-6}
-                          max={6}
-                          step={1}
-                          precision={0}
-                          unit="px"
-                          onChange={(val) => {
-                            const updated = { ...bgRemoverOptions, edgeShift: val };
-                            setBgRemoverOptions(updated);
-                            executeBgRemoval(updated);
-                          }}
-                          ariaLabel="Edge shift in pixels"
-                          className="w-11"
-                        />
-                      </div>
-                      <input
-                        type="range"
-                        min="-6"
-                        max="6"
-                        value={bgRemoverOptions.edgeShift}
-                        onChange={(e) => {
-                          const updated = { ...bgRemoverOptions, edgeShift: Number(e.target.value) };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className="w-full accent-emerald-500 cursor-pointer"
-                      />
-                    </div>
-
-                    {/* Hair Detail Preservation Toggle */}
-                    <div className="flex items-center justify-between pt-1 border-t border-neutral-850">
-                      <span className="text-neutral-300 text-[11px]">Fine Hair Strand Matting</span>
-                      <input
-                        type="checkbox"
-                        checked={bgRemoverOptions.hairDetailPreservation}
-                        onChange={(e) => {
-                          const updated = { ...bgRemoverOptions, hairDetailPreservation: e.target.checked };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className="accent-emerald-500 w-4 h-4 rounded"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Smart Artifact & Hole Cleanup */}
-                  <div className="space-y-2 bg-neutral-950 p-3 rounded-lg border border-neutral-800">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-                        Smart Background Cleanup
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={bgRemoverOptions.smartArtifactCleanup}
-                        onChange={(e) => {
-                          const updated = { ...bgRemoverOptions, smartArtifactCleanup: e.target.checked };
-                          setBgRemoverOptions(updated);
-                          executeBgRemoval(updated);
-                        }}
-                        className="accent-emerald-500 w-4 h-4 rounded"
-                      />
-                    </div>
-
-                    {bgRemoverOptions.smartArtifactCleanup && (
-                      <div className="space-y-1 pt-1">
-                        <div className="flex items-center justify-between text-[11px] mb-1">
-                          <span className="text-neutral-300">Cleanup Detail Sensitivity</span>
-                          <PhotoFilterNumericInput
-                            id="passport-input-bg-cleanup"
-                            value={bgRemoverOptions.cleanupDetailSensitivity}
-                            min={10}
-                            max={90}
-                            step={1}
-                            precision={0}
-                            unit="%"
-                            onChange={(val) => {
-                              const updated = { ...bgRemoverOptions, cleanupDetailSensitivity: val };
-                              setBgRemoverOptions(updated);
-                              executeBgRemoval(updated);
-                            }}
-                            ariaLabel="Cleanup detail sensitivity percentage"
-                            className="w-11"
-                          />
-                        </div>
-                        <input
-                          type="range"
-                          min="10"
-                          max="90"
-                          value={bgRemoverOptions.cleanupDetailSensitivity}
-                          onChange={(e) => {
-                            const updated = { ...bgRemoverOptions, cleanupDetailSensitivity: Number(e.target.value) };
-                            setBgRemoverOptions(updated);
-                            executeBgRemoval(updated);
-                          }}
-                          className="w-full accent-emerald-500 cursor-pointer"
-                        />
-                        <p className="text-[9px] text-neutral-400 mt-1">
-                          Removes isolated background noise pixels & fills internal clothing holes.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions: Apply, Reset, Cancel */}
-                  <div className="space-y-2 pt-2">
-                    <button
-                      onClick={handleApplyBgRemoval}
-                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg flex items-center justify-center space-x-2 transition-colors shadow-lg"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>Apply to Studio Photo</span>
-                    </button>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={handleResetBgRemoval}
-                        className="py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-300 rounded-lg flex items-center justify-center space-x-1 transition-colors border border-neutral-700"
-                      >
-                        <Undo2 className="w-3.5 h-3.5" />
-                        <span>Reset Defaults</span>
-                      </button>
-                      <button
-                        onClick={() => setIsBgRemoverOpen(false)}
-                        className="py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-400 hover:text-white rounded-lg transition-colors border border-neutral-700"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+                {/* Centralized Unified Background Studio Modal */}
+        <UnifiedBackgroundStudioModal
+          isOpen={isBgRemoverOpen}
+          onClose={() => setIsBgRemoverOpen(false)}
+          initialImage={rawSourceImage}
+          initialState={bgStudioState || undefined}
+          title="Passport Studio Background Editor"
+          subtitle="Biometric Subject Matting • Multi-Layer Composition • Offline AI & GitHub Backend"
+          onApply={(finalCompositeUrl, fullState) => {
+            setBgStudioState(fullState);
+            setRawSourceImage(finalCompositeUrl);
+            showToast("Passport photo background updated.");
+            setIsBgRemoverOpen(false);
+          }}
+        />
 
         {/* Centralized PDF Import Dialog */}
         <PdfImportDialog

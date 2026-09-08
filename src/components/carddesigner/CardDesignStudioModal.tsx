@@ -31,6 +31,7 @@ import { CardDesignerLayersPanel } from "./CardDesignerLayersPanel";
 import { CardDesignerCropModal } from "./CardDesignerCropModal";
 import { CardDesignerVectorImportModal } from "./CardDesignerVectorImportModal";
 import { CardDesignerExportModal } from "./CardDesignerExportModal";
+import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
 import {
   PdfImportDialog,
   ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
@@ -96,6 +97,8 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
   const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false);
   const [isPdfImportOpen, setIsPdfImportOpen] = useState(false);
   const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
+  const [bgStudioTargetObject, setBgStudioTargetObject] = useState<CardObject | null>(null);
+  const [bgStudioTargetSide, setBgStudioTargetSide] = useState<CardSide | null>(null);
 
   // Sync history state
   const commitHistory = useCallback(() => {
@@ -681,6 +684,8 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
           selectedIds={selectedIds}
           onCommitHistory={commitHistory}
           onOpenCropModal={(obj) => setCropTargetObject(obj)}
+          onOpenBackgroundStudio={(obj) => setBgStudioTargetObject(obj)}
+          onOpenCardBackgroundStudio={(side) => setBgStudioTargetSide(side)}
         />
       </div>
 
@@ -755,6 +760,58 @@ export const CardDesignStudioModal: React.FC<CardDesignStudioModalProps> = ({
         onImportSingle={(result) => handlePdfImportToCard(result, result.side || activeSide)}
         onImportMultiple={(results) => handleMultiplePdfImportToCard(results, activeSide)}
       />
+
+      {/* Centralized Background Studio Modal for Card Image Objects */}
+      {bgStudioTargetObject && (
+        <UnifiedBackgroundStudioModal
+          isOpen={true}
+          onClose={() => setBgStudioTargetObject(null)}
+          initialImage={bgStudioTargetObject.src || ""}
+          title={`Background Studio: ${bgStudioTargetObject.name || "Card Image"}`}
+          subtitle="Isolate Subject • Multi-Layer Composition • High-Res Vector Compatibility"
+          onApply={(finalUrl) => {
+            setProject((prev) => {
+              const updateList = (list: CardObject[]) =>
+                list.map((o) =>
+                  o.id === bgStudioTargetObject.id ? { ...o, src: finalUrl } : o
+                );
+              return {
+                ...prev,
+                front: { ...prev.front, objects: updateList(prev.front.objects) },
+                back: { ...prev.back, objects: updateList(prev.back.objects) },
+              };
+            });
+            setBgStudioTargetObject(null);
+            commitHistory();
+          }}
+        />
+      )}
+
+      {/* Centralized Background Studio Modal for Card Side Background */}
+      {bgStudioTargetSide && (
+        <UnifiedBackgroundStudioModal
+          isOpen={true}
+          onClose={() => setBgStudioTargetSide(null)}
+          initialImage={project[bgStudioTargetSide].background.imageUrl || ""}
+          title={`${bgStudioTargetSide === "front" ? "Front" : "Back"} Card Background Designer`}
+          subtitle="Generate or Composite Background Textures, Gradients, Colors & Custom Graphics"
+          onApply={(finalUrl) => {
+            setProject((prev) => ({
+              ...prev,
+              [bgStudioTargetSide]: {
+                ...prev[bgStudioTargetSide],
+                background: {
+                  ...prev[bgStudioTargetSide].background,
+                  type: "image",
+                  imageUrl: finalUrl,
+                },
+              },
+            }));
+            setBgStudioTargetSide(null);
+            commitHistory();
+          }}
+        />
+      )}
     </div>
   );
 };

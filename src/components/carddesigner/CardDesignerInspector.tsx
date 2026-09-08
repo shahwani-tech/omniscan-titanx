@@ -54,6 +54,8 @@ interface CardDesignerInspectorProps {
   selectedIds: string[];
   onCommitHistory: () => void;
   onOpenCropModal: (obj: CardObject) => void;
+  onOpenBackgroundStudio?: (obj: CardObject) => void;
+  onOpenCardBackgroundStudio?: (side: CardSide) => void;
 }
 
 const COMMON_FONTS = [
@@ -91,6 +93,8 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
   selectedIds,
   onCommitHistory,
   onOpenCropModal,
+  onOpenBackgroundStudio,
+  onOpenCardBackgroundStudio,
 }) => {
   const [activeTab, setActiveTab] = useState<"properties" | "sheet">("properties");
 
@@ -629,14 +633,27 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
                 <div className="space-y-3">
                   <div className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center justify-between">
                     <span>Image Controls</span>
-                    <button
-                      type="button"
-                      onClick={() => onOpenCropModal(primaryObject)}
-                      className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold flex items-center space-x-1"
-                    >
-                      <Crop className="w-3 h-3" />
-                      <span>Crop Frame</span>
-                    </button>
+                    <div className="flex items-center space-x-1">
+                      <button
+                        type="button"
+                        onClick={() => onOpenCropModal(primaryObject)}
+                        className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold flex items-center space-x-1"
+                      >
+                        <Crop className="w-3 h-3" />
+                        <span>Crop</span>
+                      </button>
+                      {onOpenBackgroundStudio && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenBackgroundStudio(primaryObject)}
+                          className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-semibold flex items-center space-x-1"
+                          title="Centralized Background Studio & AI Matting"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          <span>BG</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Fit Mode */}
@@ -896,7 +913,20 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
             {/* Background Colors for Front & Back */}
             <div className="space-y-2 pt-1">
               <div>
-                <label className="text-[10px] text-neutral-400 block mb-1">Front Card Background</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] text-neutral-400 block">Front Card Background</label>
+                  {onOpenCardBackgroundStudio && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenCardBackgroundStudio("front")}
+                      className="text-[10px] text-emerald-400 hover:text-emerald-300 font-medium flex items-center space-x-0.5"
+                      title="Open Centralized Background Studio for Front Card"
+                    >
+                      <Sparkles className="w-2.5 h-2.5" />
+                      <span>Studio BG</span>
+                    </button>
+                  )}
+                </div>
                 <div className="flex items-center space-x-1 bg-neutral-950 border border-neutral-700 rounded p-1">
                   <input
                     type="color"
@@ -919,7 +949,20 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] text-neutral-400 block mb-1">Back Card Background</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[10px] text-neutral-400 block">Back Card Background</label>
+                  {onOpenCardBackgroundStudio && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenCardBackgroundStudio("back")}
+                      className="text-[10px] text-emerald-400 hover:text-emerald-300 font-medium flex items-center space-x-0.5"
+                      title="Open Centralized Background Studio for Back Card"
+                    >
+                      <Sparkles className="w-2.5 h-2.5" />
+                      <span>Studio BG</span>
+                    </button>
+                  )}
+                </div>
                 <div className="flex items-center space-x-1 bg-neutral-950 border border-neutral-700 rounded p-1">
                   <input
                     type="color"

@@ -67,6 +67,7 @@ interface HeaderBarProps {
   onOpenPhotoPrintStudio: () => void;
   onOpenIdCardStudio?: () => void;
   onOpenCardDesigner?: () => void;
+  onOpenDocumentConverter?: () => void;
   onOpenBatchStudio: () => void;
   onOpenCompare: () => void;
   onOpenSecurity: () => void;
@@ -113,6 +114,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenPhotoPrintStudio,
   onOpenIdCardStudio,
   onOpenCardDesigner,
+  onOpenDocumentConverter,
   onOpenBatchStudio,
   onOpenCompare,
   onOpenSecurity,
@@ -633,6 +635,15 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                   </button>
                 </div>
                 <div className="py-0.5">
+                  {onOpenDocumentConverter && (
+                    <button
+                      onClick={() => { onOpenDocumentConverter(); closeDropdowns(); }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 text-sky-300 font-semibold transition-colors"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Document Workspace &amp; Converter...</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => { onOpenBatchStudio(); closeDropdowns(); }}
                     className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 text-neutral-200 transition-colors"
@@ -869,6 +880,17 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </button>
 
           <div className="h-4 w-px bg-neutral-750 mx-1 flex-shrink-0" />
+
+          {onOpenDocumentConverter && (
+            <button
+              onClick={onOpenDocumentConverter}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded bg-sky-600 hover:bg-sky-500 text-white font-semibold transition-all shadow-sm flex-shrink-0"
+              title="Open All-in-One Document Workspace & File Converter (Merge, Split, Word, Excel, PPT, Image)"
+            >
+              <Layers className="w-3.5 h-3.5 text-white" />
+              <span>Workspace / Converter</span>
+            </button>
+          )}
 
           <button
             onClick={onOpenBatchStudio}
