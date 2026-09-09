@@ -44,52 +44,67 @@ import {
   Ungroup,
   ArrowUp,
   ArrowDown,
+  Keyboard,
+  FolderKanban,
 } from "lucide-react";
-import { ActiveToolType, ShapeType } from "../../engine/carddesigner/types";
+import { ActiveToolType, ShapeType, CardDesignerProject, CardSide, CardObjectType, CardObject } from "../../engine/carddesigner/types";
 import { BUILTIN_TEMPLATES } from "../../engine/carddesigner/templates";
+import { getAllPresets, CardPresetItem } from "../../engine/carddesigner/presetStorage";
 
-interface CardDesignerToolbarProps {
+export interface CardDesignerToolbarProps {
   activeTool: ActiveToolType;
   setActiveTool: (tool: ActiveToolType) => void;
-  onAddText: () => void;
-  onAddShape: (shape: ShapeType) => void;
-  onTriggerImageUpload: () => void;
-  onTriggerSignatureUpload: () => void;
-  onAddBarcode: () => void;
-  onAddQrCode: () => void;
-  onTriggerCrop: () => void;
+  onAddText?: () => void;
+  onAddShape?: (shape: ShapeType) => void;
+  onTriggerImageUpload?: () => void;
+  onTriggerSignatureUpload?: () => void;
+  onAddBarcode?: () => void;
+  onAddQrCode?: () => void;
+  onTriggerCrop?: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
   zoom: number;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onFitPage: () => void;
-  onActualSize: () => void;
-  showGrid: boolean;
-  onToggleGrid: () => void;
-  snapToGrid: boolean;
-  onToggleSnap: () => void;
-  showRulers: boolean;
-  onToggleRulers: () => void;
-  showSafeArea: boolean;
-  onToggleSafeArea: () => void;
-  selectedCount: number;
-  onGroupSelected: () => void;
-  onUngroupSelected: () => void;
-  onBringForward: () => void;
-  onSendBackward: () => void;
-  onMirrorHorizontal: () => void;
-  onMirrorVertical: () => void;
-  onAlign: (alignment: "left" | "center" | "right" | "top" | "middle" | "bottom" | "center-card") => void;
-  onSelectTemplate: (templateId: string) => void;
+  setZoom?: React.Dispatch<React.SetStateAction<number>>;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onFitPage?: () => void;
+  onActualSize?: () => void;
+  showGrid?: boolean;
+  onToggleGrid?: () => void;
+  snapToGrid?: boolean;
+  onToggleSnap?: () => void;
+  showRulers?: boolean;
+  onToggleRulers?: () => void;
+  showSafeArea?: boolean;
+  onToggleSafeArea?: () => void;
+  selectedCount?: number;
+  onGroupSelected?: () => void;
+  onUngroupSelected?: () => void;
+  onBringForward?: () => void;
+  onSendBackward?: () => void;
+  onMirrorHorizontal?: () => void;
+  onMirrorVertical?: () => void;
+  onAlign?: (alignment: "left" | "center" | "right" | "top" | "middle" | "bottom" | "center-card") => void;
+  onSelectTemplate?: (templateId: string) => void;
+  onSelectPresetItem?: (preset: CardPresetItem) => void;
   onOpenImportModal: () => void;
   onOpenPdfImport?: () => void;
-  onSaveProject: () => void;
-  onLoadProject: () => void;
-  onOpenPrintDialog: () => void;
-  onOpenExportModal: () => void;
+  onSaveProject?: () => void;
+  onLoadProject?: () => void;
+  onOpenPrintDialog?: () => void;
+  onOpenExportModal?: () => void;
+  onOpenShortcutsModal?: () => void;
+  onOpenPresetManager?: () => void;
+  project?: CardDesignerProject;
+  setProject?: React.Dispatch<React.SetStateAction<CardDesignerProject>>;
+  activeSide?: CardSide;
+  setActiveSide?: (side: CardSide) => void;
+  selectedIds?: string[];
+  setSelectedIds?: (ids: string[]) => void;
+  onCommitHistory?: () => void;
+  onAddObject?: (type: CardObjectType, defaults?: Partial<CardObject>) => void;
 }
 
 export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
@@ -107,19 +122,20 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
   onUndo,
   onRedo,
   zoom,
+  setZoom,
   onZoomIn,
   onZoomOut,
   onFitPage,
   onActualSize,
-  showGrid,
+  showGrid = true,
   onToggleGrid,
-  snapToGrid,
+  snapToGrid = true,
   onToggleSnap,
-  showRulers,
+  showRulers = true,
   onToggleRulers,
-  showSafeArea,
+  showSafeArea = true,
   onToggleSafeArea,
-  selectedCount,
+  selectedCount = 0,
   onGroupSelected,
   onUngroupSelected,
   onBringForward,
@@ -128,16 +144,198 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
   onMirrorVertical,
   onAlign,
   onSelectTemplate,
+  onSelectPresetItem,
   onOpenImportModal,
   onOpenPdfImport,
   onSaveProject,
   onLoadProject,
   onOpenPrintDialog,
   onOpenExportModal,
+  onOpenShortcutsModal,
+  onOpenPresetManager,
+  project,
+  setProject,
+  activeSide,
+  setActiveSide,
+  selectedIds = [],
+  setSelectedIds,
+  onCommitHistory,
+  onAddObject,
 }) => {
   const [shapeMenuOpen, setShapeMenuOpen] = useState(false);
   const [alignMenuOpen, setAlignMenuOpen] = useState(false);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+
+  const handleShapeClick = (shape: ShapeType) => {
+    setShapeMenuOpen(false);
+    if (typeof onAddShape === "function") {
+      onAddShape(shape);
+      return;
+    }
+    // Safe fallback if parent did not provide onAddShape
+    const shapeObj: CardObject = {
+      id: `shape-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: `${shape.charAt(0).toUpperCase() + shape.slice(1)} Shape`,
+      type: "shape",
+      targetSide: activeSide || "front",
+      x: 15,
+      y: 20,
+      width: shape === "line" ? 40 : 25,
+      height: shape === "line" ? 1 : 25,
+      rotation: 0,
+      opacity: 1,
+      zIndex: (project ? (activeSide === "front" ? project.front.objects : project.back.objects).length + 1 : 1),
+      visible: true,
+      locked: false,
+      aspectRatioLocked: false,
+      flipX: false,
+      flipY: false,
+      shapeType: shape,
+      fillColor: shape === "line" ? "transparent" : "#3b82f6",
+      strokeColor: "#1d4ed8",
+      strokeWidth: shape === "line" ? 0.8 : 0.5,
+      cornerRadius: shape === "rounded-rect" ? 3 : 0,
+    };
+    if (onAddObject) {
+      onAddObject("shape", shapeObj);
+    } else if (setProject && activeSide) {
+      setProject((prev) => ({
+        ...prev,
+        [activeSide]: {
+          ...prev[activeSide],
+          objects: [...prev[activeSide].objects, shapeObj],
+        },
+      }));
+      if (setSelectedIds) setSelectedIds([shapeObj.id]);
+      if (onCommitHistory) onCommitHistory();
+    }
+  };
+
+  const handleTextClick = () => {
+    if (typeof onAddText === "function") {
+      onAddText();
+      return;
+    }
+    const textObj: CardObject = {
+      id: `text-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: "Text Box",
+      type: "text",
+      targetSide: activeSide || "front",
+      x: 10,
+      y: 15,
+      width: 50,
+      height: 10,
+      rotation: 0,
+      opacity: 1,
+      zIndex: (project ? (activeSide === "front" ? project.front.objects : project.back.objects).length + 1 : 1),
+      visible: true,
+      locked: false,
+      aspectRatioLocked: false,
+      flipX: false,
+      flipY: false,
+      text: "Sample Heading",
+      fontSize: 12,
+      fontFamily: "Inter, sans-serif",
+      fontWeight: "600",
+      textAlign: "left",
+      textColor: "#1e293b",
+    };
+    if (onAddObject) {
+      onAddObject("text", textObj);
+    } else if (setProject && activeSide) {
+      setProject((prev) => ({
+        ...prev,
+        [activeSide]: {
+          ...prev[activeSide],
+          objects: [...prev[activeSide].objects, textObj],
+        },
+      }));
+      if (setSelectedIds) setSelectedIds([textObj.id]);
+      if (onCommitHistory) onCommitHistory();
+    }
+  };
+
+  const handleBarcodeClick = () => {
+    if (typeof onAddBarcode === "function") {
+      onAddBarcode();
+      return;
+    }
+    const barcodeObj: CardObject = {
+      id: `barcode-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: "Code 128 Barcode",
+      type: "barcode",
+      targetSide: activeSide || "front",
+      x: 12,
+      y: 75,
+      width: 50,
+      height: 14,
+      rotation: 0,
+      opacity: 1,
+      zIndex: (project ? (activeSide === "front" ? project.front.objects : project.back.objects).length + 1 : 1),
+      visible: true,
+      locked: false,
+      aspectRatioLocked: true,
+      flipX: false,
+      flipY: false,
+      barcodeType: "code128",
+      barcodeValue: "ID-" + Math.floor(100000 + Math.random() * 900000),
+      displayBarcodeText: true,
+    };
+    if (onAddObject) {
+      onAddObject("barcode", barcodeObj);
+    } else if (setProject && activeSide) {
+      setProject((prev) => ({
+        ...prev,
+        [activeSide]: {
+          ...prev[activeSide],
+          objects: [...prev[activeSide].objects, barcodeObj],
+        },
+      }));
+      if (setSelectedIds) setSelectedIds([barcodeObj.id]);
+      if (onCommitHistory) onCommitHistory();
+    }
+  };
+
+  const handleQrCodeClick = () => {
+    if (typeof onAddQrCode === "function") {
+      onAddQrCode();
+      return;
+    }
+    const qrObj: CardObject = {
+      id: `qrcode-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      name: "Authentication QR Code",
+      type: "qrcode",
+      targetSide: activeSide || "front",
+      x: 12,
+      y: 60,
+      width: 20,
+      height: 20,
+      rotation: 0,
+      opacity: 1,
+      zIndex: (project ? (activeSide === "front" ? project.front.objects : project.back.objects).length + 1 : 1),
+      visible: true,
+      locked: false,
+      aspectRatioLocked: true,
+      flipX: false,
+      flipY: false,
+      qrValue: "https://omniscan.id/verify/" + Date.now(),
+      qrForegroundColor: "#0f172a",
+      qrBackgroundColor: "#ffffff",
+    };
+    if (onAddObject) {
+      onAddObject("qrcode", qrObj);
+    } else if (setProject && activeSide) {
+      setProject((prev) => ({
+        ...prev,
+        [activeSide]: {
+          ...prev[activeSide],
+          objects: [...prev[activeSide].objects, qrObj],
+        },
+      }));
+      if (setSelectedIds) setSelectedIds([qrObj.id]);
+      if (onCommitHistory) onCommitHistory();
+    }
+  };
 
   return (
     <div className="h-12 bg-neutral-900 border-b border-neutral-800 px-3 flex items-center justify-between shrink-0 select-none text-xs">
@@ -152,7 +350,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
               ? "bg-sky-600 text-white shadow-sm"
               : "text-neutral-300 hover:text-white hover:bg-neutral-800"
           }`}
-          title="Pick / Select Tool (V)"
+          title="Pick & Select Tool (V)"
         >
           <MousePointer className="w-4 h-4" />
         </button>
@@ -176,7 +374,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
         {/* Text Tool */}
         <button
           type="button"
-          onClick={onAddText}
+          onClick={handleTextClick}
           className="px-2.5 py-1.5 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center space-x-1.5"
           title="Add Text Object (T)"
         >
@@ -224,10 +422,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
             >
               <button
                 type="button"
-                onClick={() => {
-                  onAddShape("rect");
-                  setShapeMenuOpen(false);
-                }}
+                onClick={() => handleShapeClick("rect")}
                 className="w-full px-3 py-2 text-left hover:bg-neutral-800 flex items-center space-x-2"
               >
                 <Square className="w-4 h-4 text-indigo-400" />
@@ -235,10 +430,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onAddShape("rounded-rect");
-                  setShapeMenuOpen(false);
-                }}
+                onClick={() => handleShapeClick("rounded-rect")}
                 className="w-full px-3 py-2 text-left hover:bg-neutral-800 flex items-center space-x-2"
               >
                 <Square className="w-4 h-4 text-indigo-400 rounded-sm" />
@@ -246,10 +438,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onAddShape("circle");
-                  setShapeMenuOpen(false);
-                }}
+                onClick={() => handleShapeClick("circle")}
                 className="w-full px-3 py-2 text-left hover:bg-neutral-800 flex items-center space-x-2"
               >
                 <Circle className="w-4 h-4 text-indigo-400" />
@@ -257,10 +446,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onAddShape("line");
-                  setShapeMenuOpen(false);
-                }}
+                onClick={() => handleShapeClick("line")}
                 className="w-full px-3 py-2 text-left hover:bg-neutral-800 flex items-center space-x-2"
               >
                 <Minus className="w-4 h-4 text-indigo-400" />
@@ -268,10 +454,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  onAddShape("star");
-                  setShapeMenuOpen(false);
-                }}
+                onClick={() => handleShapeClick("star")}
                 className="w-full px-3 py-2 text-left hover:bg-neutral-800 flex items-center space-x-2"
               >
                 <Star className="w-4 h-4 text-amber-400" />
@@ -284,7 +467,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
         {/* Barcode & QR Code */}
         <button
           type="button"
-          onClick={onAddBarcode}
+          onClick={handleBarcodeClick}
           className="px-2.5 py-1.5 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center space-x-1.5"
           title="Add 1D Barcode (Code128)"
         >
@@ -293,7 +476,7 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
         </button>
         <button
           type="button"
-          onClick={onAddQrCode}
+          onClick={handleQrCodeClick}
           className="px-2.5 py-1.5 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors flex items-center space-x-1.5"
           title="Add 2D QR Code"
         >
@@ -505,30 +688,74 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
           </button>
           {templateMenuOpen && (
             <div
-              className="absolute left-0 top-full mt-1 w-64 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-1.5 z-50 text-neutral-200"
+              className="absolute left-0 top-full mt-1 w-72 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-1.5 z-50 text-neutral-200 max-h-96 overflow-y-auto"
               onMouseLeave={() => setTemplateMenuOpen(false)}
             >
-              <div className="px-2 py-1 text-[11px] font-bold text-neutral-400 uppercase tracking-wider">
-                Preset Dual-Card Layouts
+              <div className="px-2 py-1 text-[11px] font-bold text-neutral-400 uppercase tracking-wider flex items-center justify-between">
+                <span>Preset Dual-Card Layouts</span>
+                {onOpenPresetManager && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTemplateMenuOpen(false);
+                      onOpenPresetManager();
+                    }}
+                    className="text-[10px] text-sky-400 hover:text-sky-300 font-semibold lowercase tracking-normal"
+                  >
+                    Manage
+                  </button>
+                )}
               </div>
-              {BUILTIN_TEMPLATES.map((tmpl) => (
+              {getAllPresets().map((preset) => (
                 <button
-                  key={tmpl.id}
+                  key={preset.id}
                   type="button"
                   onClick={() => {
-                    onSelectTemplate(tmpl.id);
+                    if (onSelectPresetItem) {
+                      onSelectPresetItem(preset);
+                    } else if (onSelectTemplate) {
+                      onSelectTemplate(preset.slotId || preset.id);
+                    }
                     setTemplateMenuOpen(false);
                   }}
-                  className="w-full text-left p-2 hover:bg-neutral-800 rounded-lg transition-colors group"
+                  className="w-full text-left p-2 hover:bg-neutral-800 rounded-lg transition-colors group block"
                 >
-                  <div className="text-xs font-semibold text-white group-hover:text-sky-400">
-                    {tmpl.name}
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-white group-hover:text-sky-400">
+                      {preset.name}
+                    </span>
+                    {preset.isReplacedSlot && (
+                      <span className="text-[9px] bg-sky-500/20 text-sky-300 border border-sky-500/40 px-1.5 py-0.5 rounded font-mono font-bold">
+                        Replaced
+                      </span>
+                    )}
+                    {preset.isCustom && !preset.isReplacedSlot && (
+                      <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-mono font-bold">
+                        Custom
+                      </span>
+                    )}
                   </div>
                   <div className="text-[10px] text-neutral-400 line-clamp-2 mt-0.5">
-                    {tmpl.description}
+                    {preset.description}
                   </div>
                 </button>
               ))}
+
+              {onOpenPresetManager && (
+                <div className="pt-1.5 mt-1 border-t border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTemplateMenuOpen(false);
+                      onOpenPresetManager();
+                    }}
+                    className="w-full text-center py-1.5 px-2 bg-neutral-800/90 hover:bg-neutral-800 text-sky-300 hover:text-white rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors"
+                  >
+                    <FolderKanban className="w-3.5 h-3.5" />
+                    <span>Manage / Replace Presets...</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -619,11 +846,45 @@ export const CardDesignerToolbar: React.FC<CardDesignerToolbarProps> = ({
             type="button"
             onClick={onFitPage}
             className="px-1.5 py-0.5 ml-1 text-[10px] font-semibold text-neutral-300 hover:text-white bg-neutral-800 rounded"
-            title="Fit A6 Page (0)"
+            title="Fit A6 Page (Shift+0)"
           >
             Fit
           </button>
+          <button
+            type="button"
+            onClick={onActualSize}
+            className="px-1.5 py-0.5 ml-1 text-[10px] font-semibold text-neutral-300 hover:text-white bg-neutral-800 rounded"
+            title="Reset Zoom to 100% (0)"
+          >
+            100%
+          </button>
         </div>
+
+        <div className="h-5 w-px bg-neutral-800 mx-1" />
+
+        {/* Preset & Template Manager */}
+        {onOpenPresetManager && (
+          <button
+            type="button"
+            onClick={onOpenPresetManager}
+            className="p-2 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+            title="Manage Presets & Replace Default Slots"
+          >
+            <FolderKanban className="w-4 h-4 text-amber-400" />
+          </button>
+        )}
+
+        {/* Keyboard Shortcuts Reference */}
+        {onOpenShortcutsModal && (
+          <button
+            type="button"
+            onClick={onOpenShortcutsModal}
+            className="p-2 rounded-lg text-neutral-300 hover:text-white hover:bg-neutral-800 transition-colors"
+            title="Keyboard Shortcuts Reference (?)"
+          >
+            <Keyboard className="w-4 h-4 text-sky-400" />
+          </button>
+        )}
 
         <div className="h-5 w-px bg-neutral-800 mx-1" />
 

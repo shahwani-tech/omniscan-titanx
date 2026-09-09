@@ -51,6 +51,8 @@ import {
   Settings,
   RefreshCw,
   FileSpreadsheet,
+  RotateCcw,
+  Upload,
 } from "lucide-react";
 import { generateBarcodeDataUrl, generateQrCodeDataUrl } from "../../engine/carddesigner/barcodeGenerator";
 
@@ -62,6 +64,8 @@ interface CardDesignerInspectorProps {
   selectedIds: string[];
   onCommitHistory: () => void;
   onOpenCropModal: (obj: CardObject) => void;
+  onRevertImageAdjustments?: (obj: CardObject) => void;
+  onReplaceImage?: (obj: CardObject) => void;
   onOpenBackgroundStudio?: (obj: CardObject) => void;
   onOpenCardBackgroundStudio?: (side: CardSide) => void;
 }
@@ -101,6 +105,8 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
   selectedIds,
   onCommitHistory,
   onOpenCropModal,
+  onRevertImageAdjustments,
+  onReplaceImage,
   onOpenBackgroundStudio,
   onOpenCardBackgroundStudio,
 }) => {
@@ -958,10 +964,11 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
                       <button
                         type="button"
                         onClick={() => onOpenCropModal(primaryObject)}
-                        className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold flex items-center space-x-1"
+                        className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold flex items-center space-x-1 shadow-sm"
+                        title="Crop, rotate, deskew, and frame image"
                       >
                         <Crop className="w-3 h-3" />
-                        <span>Crop</span>
+                        <span>Crop / Adjust</span>
                       </button>
                       {onOpenBackgroundStudio && (
                         <button
@@ -975,6 +982,33 @@ export const CardDesignerInspector: React.FC<CardDesignerInspectorProps> = ({
                         </button>
                       )}
                     </div>
+                  </div>
+
+                  {/* Replace Photo & Revert to Original Actions */}
+                  <div className="space-y-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      id="inspector-btn-replace-photo"
+                      onClick={() => (onReplaceImage ? onReplaceImage(primaryObject) : onOpenCropModal(primaryObject))}
+                      className="w-full py-1.5 bg-neutral-800 hover:bg-neutral-700 text-sky-300 hover:text-white border border-neutral-700 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors shadow-sm"
+                      title="Upload a new photo/image into this frame with crop & adjust studio"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Replace Photo / Upload New</span>
+                    </button>
+
+                    {(primaryObject.originalSrc || primaryObject.appliedCropAdjustments || primaryObject.cropRect) && (
+                      <button
+                        type="button"
+                        id="inspector-btn-revert-original"
+                        onClick={() => onRevertImageAdjustments?.(primaryObject)}
+                        className="w-full py-1.5 bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 hover:text-amber-200 border border-amber-800/50 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors shadow-sm"
+                        title="Remove applied crop, rotation, and deskew, restore original uploaded image and re-open crop studio"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Revert to Original (Reset Adjustments)</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Fit Mode */}

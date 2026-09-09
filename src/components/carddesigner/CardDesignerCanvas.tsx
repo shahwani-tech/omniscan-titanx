@@ -14,7 +14,7 @@
  */
 
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Upload, Minus, Plus, Maximize2 } from "lucide-react";
+import { Upload, Minus, Plus, Maximize2, Crop, RotateCcw, Copy, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import {
   CardDesignerProject,
   CardObject,
@@ -41,6 +41,13 @@ interface CardDesignerCanvasProps {
   onCommitHistory: () => void;
   onEditCrop: (obj: CardObject) => void;
   onDropFiles?: (files: File[]) => void;
+  onRevertImageAdjustments?: (obj: CardObject) => void;
+  onReplaceImage?: (obj: CardObject) => void;
+  onDuplicateSelected?: () => void;
+  onDeleteSelected?: () => void;
+  onGroupSelected?: () => void;
+  onUngroupSelected?: () => void;
+  onReorderSelected?: (dir: "up" | "down" | "top" | "bottom") => void;
 }
 
 // Convert mm to screen pixels at 100% zoom (assume 3.7795 px per mm for standard 96 DPI CSS screen display)
@@ -62,28 +69,110 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
   onCommitHistory,
   onEditCrop,
   onDropFiles,
+  onRevertImageAdjustments,
+  onReplaceImage,
+  onDuplicateSelected,
+  onDeleteSelected,
+  onGroupSelected,
+  onUngroupSelected,
+  onReorderSelected,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragOverFile, setIsDragOverFile] = useState(false);
 
-  // Wheel Zoom Listener
+  // Floating Right-Click Context Menu
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    targetObject: CardObject;
+  } | null>(null);
+
+  const handleObjectContextMenu = useCallback(
+    (e: React.MouseEvent, obj: CardObject) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!selectedIds.includes(obj.id)) {
+        setSelectedIds([obj.id]);
+      }
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        targetObject: obj,
+      });
+    },
+    [selectedIds, setSelectedIds]
+  );
+
+  useEffect(() => {
+    const handleCloseMenu = () => setContextMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    window.addEventListener("click", handleCloseMenu);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("click", handleCloseMenu);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  // Viewport-Center Anchored Wheel Zoom (always zooms around center of viewport regardless of cursor position)
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !setZoom) return;
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
+      e.stopPropagation();
+
       const delta = -e.deltaY;
-      const factor = delta > 0 ? 1.1 : 0.9;
-      setZoom((prev) => {
-        const next = Math.min(3.0, Math.max(0.25, Math.round(prev * factor * 100) / 100));
-        return next;
+      const factor = delta > 0 ? 1.12 : 1 / 1.12;
+
+      setZoom((prevZoom) => {
+        const nextZoom = Math.min(4.0, Math.max(0.2, Math.round(prevZoom * factor * 100) / 100));
+        if (nextZoom === prevZoom) return prevZoom;
+
+        const ratio = nextZoom / prevZoom;
+
+        // Viewport center is anchor: scale pan offset proportionally so centered content remains centered
+        setPanOffset((prevPan) => ({
+          x: Math.round(prevPan.x * ratio * 10) / 10,
+          y: Math.round(prevPan.y * ratio * 10) / 10,
+        }));
+
+        return nextZoom;
       });
     };
 
     el.addEventListener("wheel", handleWheel, { passive: false });
     return () => el.removeEventListener("wheel", handleWheel);
-  }, [setZoom]);
+  }, [setZoom, setPanOffset]);
+
+  // Spacebar pan mode listener
+  const [isSpaceDown, setIsSpaceDown] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.code === "Space" &&
+        !e.repeat &&
+        !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
+      ) {
+        setIsSpaceDown(true);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setIsSpaceDown(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
@@ -161,11 +250,13 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
   // Pan & Canvas Dragging
   // -------------------------------------------------------------
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
-    // Middle click or Pan tool or Space key held
-    if (e.button === 1 || activeTool === "pan" || e.shiftKey && e.button === 0) {
+    // Middle click or Pan tool or Space key held or Shift+Left Click without selection
+    if (e.button === 1 || activeTool === "pan" || isSpaceDown || (e.shiftKey && e.button === 0 && selectedIds.length === 0)) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      } catch {}
       return;
     }
 
@@ -459,6 +550,26 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
     }
   };
 
+  // Window pointer move and up listeners so drag/pan/resize never drop when mouse moves fast
+  useEffect(() => {
+    if (!isPanning && !isDraggingObject && !activeHandle && !isMarqueeSelecting) return;
+
+    const onWindowPointerMove = (e: PointerEvent) => {
+      handleCanvasPointerMove(e as unknown as React.PointerEvent);
+    };
+
+    const onWindowPointerUp = (e: PointerEvent) => {
+      handleCanvasPointerUp(e as unknown as React.PointerEvent);
+    };
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+    };
+  }, [isPanning, isDraggingObject, activeHandle, isMarqueeSelecting]);
+
   // -------------------------------------------------------------
   // Object Pointer Interaction
   // -------------------------------------------------------------
@@ -655,13 +766,16 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
 
           {/* Separation Fold Line between Front and Back cards */}
           <div
-            className="absolute left-0 right-0 border-b border-dashed border-neutral-300 pointer-events-none z-10"
+            className="absolute left-0 right-0 border-b-2 border-dashed border-amber-500/80 pointer-events-none z-20 flex items-center justify-between px-2"
             style={{
               top: `${(frontYPx + cardHPx + backYPx) / 2}px`,
             }}
           >
-            <span className="absolute right-2 -top-4 text-[9px] font-mono text-neutral-400 uppercase tracking-wider bg-white px-1">
-              CUT / FOLD GUIDE LINE
+            <span className="text-[9px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded shadow-xs -translate-y-1/2">
+              ✂ A6 FOLD / CUT LINE (74.0 mm)
+            </span>
+            <span className="text-[9px] font-mono font-bold text-neutral-500 bg-white/95 px-1.5 py-0.5 rounded border border-neutral-200 shadow-xs -translate-y-1/2">
+              UPPER: FRONT • LOWER: BACK
             </span>
           </div>
 
@@ -691,7 +805,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
             {/* Front Card Label Banner */}
             <div className="absolute top-1 left-2 z-20 pointer-events-none">
               <span className="text-[9px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded bg-sky-600/90 text-white shadow-sm">
-                FRONT CARD ({project.cardWidthMm} × {project.cardHeightMm} mm)
+                FRONT ZONE (UPPER) • {project.cardWidthMm} × {project.cardHeightMm} mm
               </span>
             </div>
 
@@ -715,6 +829,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
                 zoom={zoom}
                 onPointerDown={(e) => handleObjectPointerDown(e, obj)}
                 onDoubleClick={(e) => handleObjectDoubleClick(e, obj)}
+                onContextMenu={(e) => handleObjectContextMenu(e, obj)}
               />
             ))}
           </div>
@@ -745,7 +860,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
             {/* Back Card Label Banner */}
             <div className="absolute top-1 left-2 z-20 pointer-events-none">
               <span className="text-[9px] font-extrabold uppercase tracking-widest px-1.5 py-0.5 rounded bg-indigo-600/90 text-white shadow-sm">
-                BACK CARD ({project.cardWidthMm} × {project.cardHeightMm} mm)
+                BACK ZONE (LOWER) • {project.cardWidthMm} × {project.cardHeightMm} mm
               </span>
             </div>
 
@@ -769,6 +884,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
                 zoom={zoom}
                 onPointerDown={(e) => handleObjectPointerDown(e, obj)}
                 onDoubleClick={(e) => handleObjectDoubleClick(e, obj)}
+                onContextMenu={(e) => handleObjectContextMenu(e, obj)}
               />
             ))}
           </div>
@@ -858,7 +974,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
       <div className="absolute bottom-4 right-4 z-40 flex items-center bg-neutral-900/90 backdrop-blur-md border border-neutral-700/80 rounded-xl px-2 py-1 shadow-2xl space-x-1 text-xs text-white">
         <button
           type="button"
-          onClick={() => setZoom && setZoom((z) => Math.max(0.25, Math.round((z - 0.15) * 100) / 100))}
+          onClick={() => setZoom && setZoom((z) => Math.max(0.2, Math.round((z - 0.15) * 100) / 100))}
           className="p-1.5 hover:bg-neutral-800 rounded-lg text-neutral-300 hover:text-white transition-colors"
           title="Zoom Out (Ctrl -)"
         >
@@ -877,7 +993,7 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
         </button>
         <button
           type="button"
-          onClick={() => setZoom && setZoom((z) => Math.min(3.0, Math.round((z + 0.15) * 100) / 100))}
+          onClick={() => setZoom && setZoom((z) => Math.min(4.0, Math.round((z + 0.15) * 100) / 100))}
           className="p-1.5 hover:bg-neutral-800 rounded-lg text-neutral-300 hover:text-white transition-colors"
           title="Zoom In (Ctrl +)"
         >
@@ -891,8 +1007,8 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
               const rect = containerRef.current.getBoundingClientRect();
               const pageW = project.pageWidthMm * SCREEN_PX_PER_MM;
               const pageH = project.pageHeightMm * SCREEN_PX_PER_MM;
-              const fitRatio = Math.min((rect.width - 40) / pageW, (rect.height - 40) / pageH);
-              setZoom(Math.min(2.5, Math.max(0.3, Math.round(fitRatio * 90) / 100)));
+              const fitRatio = Math.min((rect.width - 48) / pageW, (rect.height - 48) / pageH);
+              setZoom(Math.min(3.0, Math.max(0.25, Math.round(fitRatio * 100) / 100)));
             }
             setPanOffset({ x: 0, y: 0 });
           }}
@@ -910,6 +1026,131 @@ export const CardDesignerCanvas: React.FC<CardDesignerCanvasProps> = ({
           <Maximize2 className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* Floating Right-Click Context Menu */}
+      {contextMenu && (
+        <div
+          style={{
+            position: "fixed",
+            left: Math.min(contextMenu.x, window.innerWidth - 250),
+            top: Math.min(contextMenu.y, window.innerHeight - 300),
+            zIndex: 9999,
+          }}
+          className="w-60 bg-neutral-900/95 border border-neutral-700/80 rounded-xl shadow-2xl py-1.5 text-xs text-neutral-200 backdrop-blur-md"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1 text-[10px] font-bold text-neutral-400 border-b border-neutral-800 truncate">
+            {contextMenu.targetObject.name}
+          </div>
+
+          {(contextMenu.targetObject.type === "image" || contextMenu.targetObject.type === "signature") && (
+            <>
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 text-left flex items-center space-x-2 hover:bg-sky-600 hover:text-white transition-colors"
+                onClick={() => {
+                  onEditCrop(contextMenu.targetObject);
+                  setContextMenu(null);
+                }}
+              >
+                <Crop className="w-3.5 h-3.5 text-sky-400" />
+                <span className="font-semibold">Crop & Adjust Image...</span>
+              </button>
+
+              {(contextMenu.targetObject.originalSrc || contextMenu.targetObject.appliedCropAdjustments || contextMenu.targetObject.cropRect) && (
+                <button
+                  type="button"
+                  className="w-full px-3 py-1.5 text-left flex items-center space-x-2 text-amber-300 hover:bg-amber-600 hover:text-white transition-colors"
+                  onClick={() => {
+                    onRevertImageAdjustments?.(contextMenu.targetObject);
+                    setContextMenu(null);
+                  }}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Revert to Original (Reset)</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 text-left flex items-center space-x-2 hover:bg-neutral-800 hover:text-white transition-colors"
+                onClick={() => {
+                  onReplaceImage?.(contextMenu.targetObject);
+                  setContextMenu(null);
+                }}
+              >
+                <Upload className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Replace Photo / Upload New...</span>
+              </button>
+              <div className="my-1 border-t border-neutral-800" />
+            </>
+          )}
+
+          {onDuplicateSelected && (
+            <button
+              type="button"
+              className="w-full px-3 py-1.5 text-left flex items-center justify-between hover:bg-neutral-800 hover:text-white transition-colors"
+              onClick={() => {
+                onDuplicateSelected();
+                setContextMenu(null);
+              }}
+            >
+              <div className="flex items-center space-x-2">
+                <Copy className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Duplicate</span>
+              </div>
+              <span className="text-[10px] text-neutral-500">Ctrl+D</span>
+            </button>
+          )}
+
+          {onReorderSelected && (
+            <>
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 text-left flex items-center space-x-2 hover:bg-neutral-800 hover:text-white transition-colors"
+                onClick={() => {
+                  onReorderSelected("top");
+                  setContextMenu(null);
+                }}
+              >
+                <ArrowUp className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Bring to Front</span>
+              </button>
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 text-left flex items-center space-x-2 hover:bg-neutral-800 hover:text-white transition-colors"
+                onClick={() => {
+                  onReorderSelected("bottom");
+                  setContextMenu(null);
+                }}
+              >
+                <ArrowDown className="w-3.5 h-3.5 text-neutral-400" />
+                <span>Send to Back</span>
+              </button>
+            </>
+          )}
+
+          {onDeleteSelected && (
+            <>
+              <div className="my-1 border-t border-neutral-800" />
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 text-left flex items-center justify-between text-red-400 hover:bg-red-600 hover:text-white transition-colors"
+                onClick={() => {
+                  onDeleteSelected();
+                  setContextMenu(null);
+                }}
+              >
+                <div className="flex items-center space-x-2">
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </div>
+                <span className="text-[10px] opacity-70">Del</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -927,6 +1168,7 @@ interface RenderObjectElementProps {
   zoom: number;
   onPointerDown: (e: React.PointerEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
@@ -939,6 +1181,7 @@ const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
   zoom,
   onPointerDown,
   onDoubleClick,
+  onContextMenu,
 }) => {
   if (!obj.visible) return null;
 
@@ -964,6 +1207,7 @@ const RenderObjectElement: React.FC<RenderObjectElementProps> = ({
     <div
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       style={{
         position: "absolute",
         left: `${xPx}px`,

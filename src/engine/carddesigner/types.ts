@@ -112,6 +112,16 @@ export interface CardObject {
   naturalWidth?: number;
   naturalHeight?: number;
   cropRect?: ImageCropRect;
+  appliedCropAdjustments?: {
+    cropBoxNorm?: { x: number; y: number; width: number; height: number };
+    cropBoxPixels?: { x: number; y: number; width: number; height: number };
+    zoom?: number;
+    imagePan?: { x: number; y: number };
+    rotation?: number;
+    deskewAngle?: number;
+    preset?: string;
+    aspectRatioLocked?: boolean;
+  };
   imageFilters?: ImageFilters;
   imagePan?: { x: number; y: number };
   imageZoom?: number;

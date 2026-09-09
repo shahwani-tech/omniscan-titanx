@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { printRouter } from "./server/printRoutes";
+import { adminRouter } from "./server/adminRoutes";
 
 dotenv.config();
 
@@ -37,6 +38,9 @@ async function startServer() {
 
   // Mount Native Desktop Print Routing & Spooler Bridge
   app.use("/api", printRouter);
+
+  // Mount Super Admin & Central Management Routing
+  app.use("/api", adminRouter);
 
   // API Health Check
   app.get("/api/health", (_req, res) => {

@@ -85,11 +85,11 @@ export function parseProjectJson(rawText: string): CardDesignerProject {
 
   const trueCardWidthMm = typeof proj.trueCardWidthMm === "number" && proj.trueCardWidthMm > 0
     ? proj.trueCardWidthMm
-    : 86.36; // Default standard ID-1/CR-80 width
+    : 85.6; // Standard CR-80 width (85.6 mm)
 
   const trueCardHeightMm = typeof proj.trueCardHeightMm === "number" && proj.trueCardHeightMm > 0
     ? proj.trueCardHeightMm
-    : 53.34; // Default standard ID-1/CR-80 height
+    : 54.0; // Standard CR-80 height (54.0 mm)
 
   const normalizedProject: CardDesignerProject = {
     id: proj.id || `card-proj-${Date.now()}`,
@@ -100,25 +100,25 @@ export function parseProjectJson(rawText: string): CardDesignerProject {
     orientation: proj.orientation || "portrait",
     pageWidthMm,
     pageHeightMm,
-    cardWidthMm: proj.cardWidthMm || (isPortrait ? 74 : 105),
-    cardHeightMm: proj.cardHeightMm || (isPortrait ? 105 : 74),
+    cardWidthMm: proj.cardWidthMm || (isPortrait ? 105 : 105),
+    cardHeightMm: proj.cardHeightMm || (isPortrait ? 74 : 74),
 
     // Exact card boundary specifications
     trueCardWidthMm,
     trueCardHeightMm,
     trueCardOrientation: proj.trueCardOrientation || (trueCardWidthMm >= trueCardHeightMm ? "landscape" : "portrait"),
-    cardPreset: proj.cardPreset || (Math.abs(trueCardWidthMm - 86.36) < 0.1 ? "id1_cr80" : "custom"),
+    cardPreset: proj.cardPreset || (Math.abs(trueCardWidthMm - 85.6) < 0.5 ? "id1_cr80" : "custom"),
     showCardBoundary: proj.showCardBoundary !== false,
     showBleedShading: proj.showBleedShading !== false,
     cardCornerRadiusMm: typeof proj.cardCornerRadiusMm === "number" ? proj.cardCornerRadiusMm : 3.18,
 
     frontPosMm: proj.frontPosMm || (isPortrait
-      ? { x: Math.max(0, (pageWidthMm - (proj.cardWidthMm || 74)) / 2), y: 5 }
-      : { x: 5, y: Math.max(0, (pageHeightMm - (proj.cardHeightMm || 74)) / 2) }),
+      ? { x: 0, y: 0 }
+      : { x: 5, y: Math.max(0, (pageHeightMm - 74) / 2) }),
 
     backPosMm: proj.backPosMm || (isPortrait
-      ? { x: Math.max(0, (pageWidthMm - (proj.cardWidthMm || 74)) / 2), y: 5 + (proj.cardHeightMm || 105) + 6 }
-      : { x: 5 + (proj.cardWidthMm || 105) + 8, y: Math.max(0, (pageHeightMm - (proj.cardHeightMm || 74)) / 2) }),
+      ? { x: 0, y: 74 }
+      : { x: 5 + 105 + 8, y: Math.max(0, (pageHeightMm - 74) / 2) }),
 
     safeAreaMarginMm: typeof proj.safeAreaMarginMm === "number" ? proj.safeAreaMarginMm : 3,
     bleedMarginMm: typeof proj.bleedMarginMm === "number" ? proj.bleedMarginMm : 2,

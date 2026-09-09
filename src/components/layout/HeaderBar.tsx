@@ -41,6 +41,7 @@ import { AppLanguage, AppTheme, ViewMode, ActiveTool } from "../../types";
 import { t } from "../../engine/i18n";
 
 interface HeaderBarProps {
+  applicationName?: string;
   documentName: string;
   theme: AppTheme;
   language: AppLanguage;
@@ -88,6 +89,7 @@ interface HeaderBarProps {
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
+  applicationName,
   documentName,
   theme,
   language,
@@ -226,8 +228,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             <div className="w-5 h-5 rounded bg-gradient-to-tr from-sky-600 to-indigo-500 flex items-center justify-center shadow-sm">
               <Scan className="w-3.5 h-3.5 text-white" />
             </div>
-            <span className="font-bold tracking-wider text-sky-400 font-serif">
-              OMNISCAN TITAN X
+            <span className="font-bold tracking-wider text-sky-400 font-serif uppercase">
+              {applicationName || "OMNISCAN TITAN X"}
             </span>
           </div>
 

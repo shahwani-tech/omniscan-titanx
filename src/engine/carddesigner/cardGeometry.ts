@@ -27,19 +27,30 @@ export function getTrueCardDimensions(project: CardDesignerProject): { widthMm: 
   let w = project.trueCardWidthMm || 85.6;
   let h = project.trueCardHeightMm || 54.0;
 
-  if (project.trueCardOrientation === "portrait") {
+  const zoneWidth = project.cardWidthMm || 105;
+  const zoneHeight = project.cardHeightMm || 74;
+
+  // For portrait orientation requests, check if it fits within the zone height
+  if (project.trueCardOrientation === "portrait" && zoneHeight >= Math.max(w, h)) {
     if (w > h) {
       const temp = w;
       w = h;
       h = temp;
     }
   } else {
-    // Landscape
+    // Landscape orientation: longer dimension along width, shorter along height
     if (h > w) {
       const temp = w;
       w = h;
       h = temp;
     }
+  }
+
+  // Safety constraint: ensure dimensions fit within the zone bounds without overflowing
+  if (h > zoneHeight && w <= zoneHeight && h <= zoneWidth) {
+    const temp = w;
+    w = h;
+    h = temp;
   }
 
   return { widthMm: w, heightMm: h };
