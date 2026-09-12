@@ -64,10 +64,11 @@ interface HeaderBarProps {
   onRunOcr: () => void;
   onAutoDeskew: () => void;
   onAutoCrop: () => void;
+  onAutoEnhance?: () => void;
+  onAutoEnhanceAll?: () => void;
   onOpenFilterStudio: () => void;
   onOpenPhotoPrintStudio: () => void;
   onOpenIdCardStudio?: () => void;
-  onOpenCardDesigner?: () => void;
   onOpenDocumentConverter?: () => void;
   onOpenBatchStudio: () => void;
   onOpenCompare: () => void;
@@ -112,10 +113,11 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onRunOcr,
   onAutoDeskew,
   onAutoCrop,
+  onAutoEnhance,
+  onAutoEnhanceAll,
   onOpenFilterStudio,
   onOpenPhotoPrintStudio,
   onOpenIdCardStudio,
-  onOpenCardDesigner,
   onOpenDocumentConverter,
   onOpenBatchStudio,
   onOpenCompare,
@@ -619,15 +621,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                       <span>ID Card / CNIC Print Studio...</span>
                     </button>
                   )}
-                  {onOpenCardDesigner && (
-                    <button
-                      onClick={() => { onOpenCardDesigner(); closeDropdowns(); }}
-                      className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 font-semibold text-cyan-300 transition-colors"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>ID &amp; Service Card Designer (Vector)...</span>
-                    </button>
-                  )}
                   <button
                     onClick={() => { onOpenFilterStudio(); closeDropdowns(); }}
                     className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 text-neutral-200 transition-colors"
@@ -635,6 +628,15 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
                     <Palette className="w-3.5 h-3.5 text-sky-400" />
                     <span>CamScanner Document Filters...</span>
                   </button>
+                  {onAutoEnhanceAll && (
+                    <button
+                      onClick={() => { onAutoEnhanceAll(); closeDropdowns(); }}
+                      className="w-full text-left px-3 py-1.5 hover:bg-sky-600 hover:text-white flex items-center space-x-2 text-sky-300 font-medium transition-colors"
+                    >
+                      <Wand2 className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Adaptive Auto-Enhance All Pages...</span>
+                    </button>
+                  )}
                 </div>
                 <div className="py-0.5">
                   {onOpenDocumentConverter && (
@@ -825,17 +827,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             </button>
           )}
 
-          {onOpenCardDesigner && (
-            <button
-              onClick={onOpenCardDesigner}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-sky-900/60 to-cyan-900/60 hover:from-sky-800/80 hover:to-cyan-800/80 text-cyan-200 font-medium border border-cyan-700/50 transition-all shadow-sm flex-shrink-0"
-              title="Open Professional ID & Service Card Designer (Dual-Card A6 Vector Studio)"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Card Designer</span>
-            </button>
-          )}
-
           {onOpenCropMode && (
             <button
               id="quick-action-crop-tool-btn"
@@ -853,6 +844,17 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           )}
 
           <div className="h-4 w-px bg-neutral-750 mx-1 flex-shrink-0" />
+
+          {onAutoEnhance && (
+            <button
+              onClick={onAutoEnhance}
+              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded bg-gradient-to-r from-sky-600/30 to-indigo-600/30 hover:from-sky-600/50 hover:to-indigo-600/50 text-sky-200 font-semibold border border-sky-500/40 transition-all shadow-sm flex-shrink-0"
+              title="Run End-Level Adaptive Document Processing (Defect Diagnosis, Skew, Lighting & Quality Verification)"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-sky-400" />
+              <span>Auto-Enhance</span>
+            </button>
+          )}
 
           <button
             onClick={onAutoDeskew}

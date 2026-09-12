@@ -441,16 +441,6 @@ export const MASTER_COMMAND_DEFINITIONS: CommandDefinition[] = [
     keywords: ["id card", "cnic", "badge", "front back", "print studio"],
   },
   {
-    id: "studio.cardDesigner",
-    label: "ID & Service Card Designer (Vector)",
-    description: "Launch professional CorelDRAW-inspired vector ID & service card designer",
-    category: "View",
-    defaultShortcut: "D",
-    scope: "global",
-    icon: "Sparkles",
-    keywords: ["card designer", "service card", "employee card", "vector", "coreldraw", "badge designer", "id"],
-  },
-  {
     id: "studio.a6HalfCard",
     label: "A6 Half-Card Layout Studio",
     description: "Launch 74×105mm A6 half-card layout studio",

@@ -62,8 +62,8 @@ import {
 } from "../../engine/a6HalfCardLayout";
 import { renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
 import { useShortcuts } from "../../commands/ShortcutContext";
-import { usePrint } from "../../context/PrintContext";
 import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
+import { OmniAdjustmentStudioPanel } from "../common/OmniAdjustmentStudioPanel";
 import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
 import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
@@ -96,8 +96,6 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   studioMode = "a6",
   onSwitchStudioMode,
 }) => {
-  const { openPrintDialog } = usePrint();
-
   // -------------------------------------------------------------
   // Configuration State
   // -------------------------------------------------------------
@@ -981,15 +979,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   // Export & Print Handlers
   // -------------------------------------------------------------
   const handleDirectPrint = () => {
-    openPrintDialog({
-      type: "a6-card",
-      title: "A6 Half-Card Print Job",
-      a6Config: config,
-      a6Images: { front: frontImage, back: backImage },
-      defaultPaperSize: "a6",
-      defaultOrientation: config.orientation,
-      hasCuttingGuides: config.showCuttingGuides,
-    });
+    window.print();
   };
 
   const handleExportPdf = async () => {
@@ -2233,182 +2223,63 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               </div>
             </div>
 
-            {/* Filter Pipeline Sliders & Inputs */}
+            {/* Filter Pipeline Sliders & Studio Panel */}
             <div className="space-y-2.5 border-t border-neutral-800 pt-3">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-neutral-200 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
-                  <Sun className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Tone &amp; Enhancements</span>
-                </span>
-                <button
-                  onClick={handleResetActiveSide}
-                  className="text-[10px] text-neutral-500 hover:text-indigo-400 font-mono cursor-pointer"
-                >
-                  Reset All
-                </button>
-              </div>
-
               {/* Quick Preset Buttons */}
-              <div className="grid grid-cols-3 gap-1">
-                {[
-                  { id: "original", label: "Original" },
-                  { id: "auto-tone", label: "Auto Tone" },
-                  { id: "crisp-bw", label: "Crisp B&W" },
-                  { id: "grayscale", label: "Grayscale" },
-                  { id: "high-contrast", label: "Contrast" },
-                ].map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleApplyPreset(p.id)}
-                    className="py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-medium border border-neutral-700 cursor-pointer"
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Brightness */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-neutral-400">Brightness</span>
-                  <button
-                    onClick={() => updateActiveAdjustment({ brightness: 0 })}
-                    className="text-[10px] text-neutral-500 hover:text-indigo-400 font-mono cursor-pointer"
-                  >
-                    reset (0)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="-100"
-                    max="100"
-                    step="1"
-                    value={currentAdjustment.brightness}
-                    onChange={(e) =>
-                      updateActiveAdjustment({ brightness: parseInt(e.target.value, 10) })
-                    }
-                    className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
-                  />
-                  <A6HalfCardNumericInput
-                    id={`a6-brightness-${activeSideTab}`}
-                    value={currentAdjustment.brightness}
-                    min={-100}
-                    max={100}
-                    step={1}
-                    precision={0}
-                    onChange={(val) => updateActiveAdjustment({ brightness: val })}
-                    ariaLabel="Brightness numeric adjustment"
-                  />
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Quick Filter Presets</span>
+                <div className="grid grid-cols-3 gap-1">
+                  {[
+                    { id: "original", label: "Original" },
+                    { id: "auto-tone", label: "Auto Tone" },
+                    { id: "crisp-bw", label: "Crisp B&W" },
+                    { id: "grayscale", label: "Grayscale" },
+                    { id: "high-contrast", label: "Contrast" },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleApplyPreset(p.id)}
+                      className="py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-medium border border-neutral-700 cursor-pointer"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Contrast */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-neutral-400">Contrast</span>
-                  <button
-                    onClick={() => updateActiveAdjustment({ contrast: 0 })}
-                    className="text-[10px] text-neutral-500 hover:text-indigo-400 font-mono cursor-pointer"
-                  >
-                    reset (0)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="-100"
-                    max="100"
-                    step="1"
-                    value={currentAdjustment.contrast}
-                    onChange={(e) =>
-                      updateActiveAdjustment({ contrast: parseInt(e.target.value, 10) })
-                    }
-                    className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
-                  />
-                  <A6HalfCardNumericInput
-                    id={`a6-contrast-${activeSideTab}`}
-                    value={currentAdjustment.contrast}
-                    min={-100}
-                    max={100}
-                    step={1}
-                    precision={0}
-                    onChange={(val) => updateActiveAdjustment({ contrast: val })}
-                    ariaLabel="Contrast numeric adjustment"
-                  />
-                </div>
-              </div>
-
-              {/* Gamma Curve */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-neutral-400">Gamma Curve</span>
-                  <button
-                    onClick={() => updateActiveAdjustment({ gamma: 1.0 })}
-                    className="text-[10px] text-neutral-500 hover:text-indigo-400 font-mono cursor-pointer"
-                  >
-                    reset (1.0)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="3.0"
-                    step="0.05"
-                    value={currentAdjustment.gamma}
-                    onChange={(e) =>
-                      updateActiveAdjustment({ gamma: parseFloat(e.target.value) })
-                    }
-                    className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
-                  />
-                  <A6HalfCardNumericInput
-                    id={`a6-gamma-${activeSideTab}`}
-                    value={currentAdjustment.gamma}
-                    min={0.2}
-                    max={3.0}
-                    step={0.05}
-                    precision={2}
-                    onChange={(val) => updateActiveAdjustment({ gamma: val })}
-                    ariaLabel="Gamma curve numeric adjustment"
-                  />
-                </div>
-              </div>
-
-              {/* Unsharp Mask (Sharpness) */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-neutral-400">Unsharp Mask</span>
-                  <button
-                    onClick={() => updateActiveAdjustment({ sharpness: 0 })}
-                    className="text-[10px] text-neutral-500 hover:text-indigo-400 font-mono cursor-pointer"
-                  >
-                    reset (0)
-                  </button>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={currentAdjustment.sharpness}
-                    onChange={(e) =>
-                      updateActiveAdjustment({ sharpness: parseInt(e.target.value, 10) })
-                    }
-                    className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
-                  />
-                  <A6HalfCardNumericInput
-                    id={`a6-sharpness-${activeSideTab}`}
-                    value={currentAdjustment.sharpness}
-                    min={0}
-                    max={100}
-                    step={1}
-                    precision={0}
-                    onChange={(val) => updateActiveAdjustment({ sharpness: val })}
-                    ariaLabel="Unsharp mask numeric adjustment"
-                  />
-                </div>
+              {/* OmniAdjustmentStudioPanel */}
+              <div className="rounded-xl bg-neutral-950 border border-neutral-800/90 overflow-hidden shadow-md">
+                <OmniAdjustmentStudioPanel
+                  filters={{
+                    brightness: currentAdjustment.brightness,
+                    contrast: currentAdjustment.contrast,
+                    gamma: currentAdjustment.gamma,
+                    sharpness: currentAdjustment.sharpness,
+                  }}
+                  onChange={(updates) => {
+                    updateActiveAdjustment(updates);
+                  }}
+                  onReset={handleResetActiveSide}
+                  title="Tone & Fine Adjustments"
+                  showAutoEnhance={false}
+                  showResetAll={true}
+                  showHistogram={true}
+                  showPresets={false}
+                  sections={{
+                    tone: true,
+                    color: false,
+                    detail: true,
+                    optics: false,
+                    alignment: false,
+                  }}
+                  ranges={{
+                    brightness: { min: -100, max: 100, step: 1 },
+                    contrast: { min: -100, max: 100, step: 1 },
+                    gamma: { min: 0.2, max: 3.0, step: 0.05 },
+                    sharpness: { min: 0, max: 100, step: 1 },
+                  }}
+                  idPrefix={`a6-adj-${activeSideTab}`}
+                />
               </div>
 
               {/* Grayscale Toggle */}

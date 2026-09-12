@@ -3,8 +3,6 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import { printRouter } from "./server/printRoutes";
-import { adminRouter } from "./server/adminRoutes";
 
 dotenv.config();
 
@@ -35,12 +33,6 @@ async function startServer() {
   // JSON Body Parser with high limit for document image chunks
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-  // Mount Native Desktop Print Routing & Spooler Bridge
-  app.use("/api", printRouter);
-
-  // Mount Super Admin & Central Management Routing
-  app.use("/api", adminRouter);
 
   // API Health Check
   app.get("/api/health", (_req, res) => {

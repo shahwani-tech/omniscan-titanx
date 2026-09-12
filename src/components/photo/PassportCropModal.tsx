@@ -6,6 +6,7 @@
 import React, { useState, useRef } from "react";
 import { PassportStandardSpec } from "../../types";
 import { X, Check, ZoomIn, ZoomOut, RotateCw, User } from "lucide-react";
+import { OmniAdjustmentSlider } from "../common/OmniAdjustmentSlider";
 
 interface PassportCropModalProps {
   isOpen: boolean;
@@ -163,41 +164,42 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
         </div>
 
         {/* Controls Bar */}
-        <div className="p-4 bg-neutral-850 border-t border-neutral-800 flex items-center justify-between text-xs">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <ZoomOut className="w-4 h-4 text-neutral-400" />
-              <input
-                type="range"
-                min="0.5"
-                max="3.0"
-                step="0.05"
-                value={zoom}
-                onChange={(e) => setZoom(parseFloat(e.target.value))}
-                className="w-28 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
-              />
-              <ZoomIn className="w-4 h-4 text-neutral-400" />
-            </div>
-
-            <button
-              onClick={() => setRotation((r) => (r + 90) % 360)}
-              className="flex items-center space-x-1 px-2.5 py-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-              <span>Rotate 90°</span>
-            </button>
+        <div className="p-4 bg-neutral-850 border-t border-neutral-800 flex items-center justify-between text-xs gap-4">
+          <div className="flex-1 max-w-xs">
+            <OmniAdjustmentSlider
+              id="passport-crop-zoom"
+              label="Crop Zoom"
+              icon={<ZoomIn className="w-3.5 h-3.5 text-sky-400" />}
+              value={zoom}
+              min={0.5}
+              max={3.0}
+              step={0.05}
+              precision={2}
+              defaultValue={1.0}
+              unit="×"
+              bipolar={false}
+              onChange={(val) => setZoom(val)}
+            />
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setRotation((r) => (r + 90) % 360)}
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 transition-colors font-medium cursor-pointer"
+            >
+              <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+              <span>Rotate 90°</span>
+            </button>
+
             <button
               onClick={onClose}
-              className="px-3 py-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800"
+              className="px-3 py-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               onClick={handleApply}
-              className="flex items-center space-x-1 px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold shadow-lg transition-colors"
+              className="flex items-center space-x-1.5 px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold shadow-lg transition-colors cursor-pointer"
             >
               <Check className="w-4 h-4" />
               <span>Apply Biometric Crop</span>

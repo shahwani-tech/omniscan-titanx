@@ -40,6 +40,11 @@ import {
   ContentClassificationResult,
   getFallbackClassification,
 } from "./engine/autoClassifier";
+import {
+  enhanceOmniPageAdaptive,
+  diagnoseDocumentDefects,
+  buildAdaptivePlan,
+} from "./engine/autoProcessor";
 import { HeaderBar } from "./components/layout/HeaderBar";
 import { PageNavigator } from "./components/layout/PageNavigator";
 import { InspectorPanel } from "./components/layout/InspectorPanel";
@@ -54,14 +59,11 @@ import { DiagnosticsModal } from "./components/diagnostics/DiagnosticsModal";
 import { CamScannerFilterModal } from "./components/filters/CamScannerFilterModal";
 import { PhotoPrintStudioModal } from "./components/photo/PhotoPrintStudioModal";
 import { IdCardPrintStudioModal } from "./components/idcard/IdCardPrintStudioModal";
-import { CardDesignStudioModal } from "./components/carddesigner/CardDesignStudioModal";
 import { DocumentWorkspaceModal } from "./components/converter/DocumentWorkspaceModal";
 import { PasswordModal } from "./components/modals/PasswordModal";
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
 import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
 import { KeyboardShortcutsModal } from "./components/command/KeyboardShortcutsModal";
-import { PrintProvider, usePrint } from "./context/PrintContext";
-import { PrintDialog } from "./components/print/PrintDialog";
 import { executeFilterPipeline } from "./engine/filters";
 import { isRTL } from "./engine/i18n";
 import { analyzeFile, ACCEPT_ALL_SUPPORTED } from "./services/upload/FileTypeRegistry";
@@ -89,8 +91,6 @@ import {
 } from "lucide-react";
 
 export function AppContent() {
-  const { openPrintDialog } = usePrint();
-
   // Document State
   const [document, setDocument] = useState<OmniDocument>(() => {
     const initialPages = createInitialSampleDocument();
@@ -149,7 +149,6 @@ export function AppContent() {
   const [isFilterStudioModalOpen, setIsFilterStudioModalOpen] = useState<boolean>(false);
   const [isPhotoPrintStudioModalOpen, setIsPhotoPrintStudioModalOpen] = useState<boolean>(false);
   const [isIdCardStudioModalOpen, setIsIdCardStudioModalOpen] = useState<boolean>(false);
-  const [isCardDesignerModalOpen, setIsCardDesignerModalOpen] = useState<boolean>(false);
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState<boolean>(false);
   const [idCardStudioInitialMode, setIdCardStudioInitialMode] = useState<"idcard" | "a6">("idcard");
   const [isSplitPdfModalOpen, setIsSplitPdfModalOpen] = useState<boolean>(false);
@@ -607,55 +606,141 @@ export function AppContent() {
   const handleReDetectActivePageContent = useCallback(async () => {
     if (!activePage) return;
     setIsProcessing(true);
-    setProcessingMessage("Running CamScanner optical content detection...");
+    setProcessingMessage("Running adaptive document analysis & defect diagnosis...");
 
     try {
-      const src = activePage.originalDataUrl || activePage.processedDataUrl;
-      const classification = await classifyImageContent(src);
+      const enhancedPage = await enhanceOmniPageAdaptive(activePage);
 
       setDocument((prev) => {
         const newPages = [...prev.pages];
         const idx = newPages.findIndex((p) => p.id === activePage.id);
         if (idx === -1) return prev;
-
-        const mergedFilters: ImageFilterPipeline = {
-          ...classification.recommendedFilters,
-          rotation: newPages[idx].filters.rotation,
-          deskewAngle: newPages[idx].filters.deskewAngle,
-          cropBox: newPages[idx].filters.cropBox,
-          perspectivePoints: newPages[idx].filters.perspectivePoints,
-        };
-
-        newPages[idx] = {
-          ...newPages[idx],
-          filters: mergedFilters,
-          detectedContent: classification,
-          filterSource: "auto-detected",
-          isModified: true,
-          lastModifiedAt: new Date().toISOString(),
-        };
-        return { ...prev, pages: newPages };
+        newPages[idx] = enhancedPage;
+        return { ...prev, pages: newPages, updatedAt: new Date().toISOString() };
       });
 
-      latestFiltersRef.current = {
-        ...classification.recommendedFilters,
-        rotation: activePage.filters.rotation,
-        deskewAngle: activePage.filters.deskewAngle,
-        cropBox: activePage.filters.cropBox,
-        perspectivePoints: activePage.filters.perspectivePoints,
-      };
+      latestFiltersRef.current = { ...enhancedPage.filters };
+      setIsDirty(true);
 
-      await runFilterRender(true);
-
-      setToastMessage(`Auto-detected: ${classification.label} (${classification.recommendedPreset.toUpperCase()})`);
-      setTimeout(() => setToastMessage(null), 3000);
+      const qualityDelta = enhancedPage.adaptiveAnalysis?.qualityDelta ?? 0;
+      const typeLabel = enhancedPage.detectedContent?.label || "Document";
+      const corrections =
+        enhancedPage.adaptiveAnalysis?.plan.appliedCorrections.join("; ") || "Tone & contrast enhanced";
+      setToastMessage(
+        `Auto-Optimized (${typeLabel} +${qualityDelta} pts): ${corrections}`
+      );
+      setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
-      console.error("Auto classification error:", err);
+      console.error("Adaptive auto-detect error:", err);
+      // Fallback to legacy classification if needed
+      try {
+        const src = activePage.originalDataUrl || activePage.processedDataUrl;
+        const classification = await classifyImageContent(src);
+        setDocument((prev) => {
+          const newPages = [...prev.pages];
+          const idx = newPages.findIndex((p) => p.id === activePage.id);
+          if (idx === -1) return prev;
+          newPages[idx] = {
+            ...newPages[idx],
+            filters: { ...classification.recommendedFilters, rotation: newPages[idx].filters.rotation },
+            detectedContent: classification,
+            filterSource: "auto-detected",
+            isModified: true,
+          };
+          return { ...prev, pages: newPages };
+        });
+        await runFilterRender(true);
+      } catch (fallbackErr) {
+        console.error("Fallback classification failed:", fallbackErr);
+      }
     } finally {
       setIsProcessing(false);
       setProcessingMessage("");
     }
   }, [activePage, runFilterRender]);
+
+  // End-Level Adaptive Document Optimization (Single Page)
+  const handleAutoEnhanceActivePage = useCallback(
+    async (pageIdx = activePageIndex) => {
+      const page = document.pages[pageIdx];
+      if (!page) return;
+
+      recordHistorySnapshot(document);
+      setIsProcessing(true);
+      setProcessingMessage("Running adaptive document diagnosis & optimization...");
+
+      try {
+        const enhancedPage = await enhanceOmniPageAdaptive(page);
+        setDocument((prev) => {
+          const newPages = [...prev.pages];
+          newPages[pageIdx] = enhancedPage;
+          return { ...prev, pages: newPages, updatedAt: new Date().toISOString() };
+        });
+
+        if (pageIdx === activePageIndex) {
+          latestFiltersRef.current = { ...enhancedPage.filters };
+        }
+
+        setIsDirty(true);
+
+        const qualityDelta = enhancedPage.adaptiveAnalysis?.qualityDelta ?? 0;
+        const typeLabel = enhancedPage.detectedContent?.label || "Document";
+        const corrections =
+          enhancedPage.adaptiveAnalysis?.plan.appliedCorrections.join("; ") ||
+          "Tone, whitening & contrast enhanced";
+        setToastMessage(
+          `Auto-Optimized (${typeLabel} +${qualityDelta} pts): ${corrections}`
+        );
+        setTimeout(() => setToastMessage(null), 4000);
+      } catch (err) {
+        console.error("Adaptive enhancement error:", err);
+      } finally {
+        setIsProcessing(false);
+        setProcessingMessage("");
+      }
+    },
+    [document, activePageIndex, recordHistorySnapshot]
+  );
+
+  // End-Level Adaptive Document Optimization (All Pages)
+  const handleAutoEnhanceAllPages = useCallback(async () => {
+    if (document.pages.length === 0) return;
+
+    recordHistorySnapshot(document);
+    setIsProcessing(true);
+    setProcessingMessage(`Optimizing all ${document.pages.length} pages adaptively...`);
+
+    try {
+      const updatedPages = [...document.pages];
+      for (let i = 0; i < updatedPages.length; i++) {
+        setProcessingMessage(`Optimizing page ${i + 1} of ${updatedPages.length}...`);
+        try {
+          updatedPages[i] = await enhanceOmniPageAdaptive(updatedPages[i]);
+        } catch (e) {
+          console.warn(`Skipped auto-enhance on page ${i + 1}:`, e);
+        }
+      }
+
+      setDocument((prev) => ({
+        ...prev,
+        pages: updatedPages,
+        updatedAt: new Date().toISOString(),
+      }));
+
+      if (updatedPages[activePageIndex]) {
+        latestFiltersRef.current = { ...updatedPages[activePageIndex].filters };
+      }
+
+      setIsDirty(true);
+      setToastMessage(`Successfully optimized all ${document.pages.length} pages adaptively.`);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err) {
+      console.error("Batch adaptive optimization error:", err);
+    } finally {
+      setIsProcessing(false);
+      setProcessingMessage("");
+    }
+  }, [document, activePageIndex, recordHistorySnapshot]);
 
   // Apply current page's filter and tone adjustments to all loaded pages
   const handleApplyFiltersToAllPages = useCallback(async () => {
@@ -1554,23 +1639,40 @@ export function AppContent() {
     }
   };
 
-  // Print Document (Unified Desktop Print Center)
+  // Print Document (Native Print)
   const handlePrintDocument = useCallback(() => {
     if (document.pages.length === 0) {
       alert("No pages to print in current document.");
       return;
     }
+    window.print();
+  }, [document]);
 
-    openPrintDialog({
-      type: "document",
-      title: document.name || "OmniScan Document Print",
-      document: document,
-      activePageIndex: activePageIndex,
-      selectedPageIds: selectedPageIds,
-      defaultPaperSize: "a4",
-      defaultOrientation: "portrait",
-    });
-  }, [document, activePageIndex, selectedPageIds, openPrintDialog]);
+  // Print File from Workspace (Native Print)
+  const handlePrintFile = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.src = url;
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch {
+        window.print();
+      }
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        iframe.remove();
+      }, 60000);
+    };
+    document.body.appendChild(iframe);
+  }, []);
 
   // Auto-Remove Blank Pages
   const handleRemoveBlankPages = useCallback(async () => {
@@ -1766,7 +1868,6 @@ export function AppContent() {
         setIdCardStudioInitialMode("idcard");
         setIsIdCardStudioModalOpen(true);
       }),
-      registerAction("studio.cardDesigner", () => setIsCardDesignerModalOpen(true)),
       registerAction("studio.a6HalfCard", () => {
         setIdCardStudioInitialMode("a6");
         setIsIdCardStudioModalOpen(true);
@@ -1894,13 +1995,6 @@ export function AppContent() {
       action: () => setIsWorkspaceModalOpen(true),
     },
     {
-      id: "cmd-card-designer",
-      title: "ID & Service Card Designer (Vector Studio)",
-      category: "Design",
-      icon: <Sparkles className="w-4 h-4 text-cyan-400" />,
-      action: () => setIsCardDesignerModalOpen(true),
-    },
-    {
       id: "cmd-a6-halfcard-print",
       title: "A6 Half-Card Layout Studio (74×105mm)",
       category: "Print",
@@ -2023,6 +2117,8 @@ export function AppContent() {
         onRunOcr={() => handleRunOcr("eng")}
         onAutoDeskew={() => handleAutoDeskew()}
         onAutoCrop={() => handleAutoCrop()}
+        onAutoEnhance={() => handleAutoEnhanceActivePage()}
+        onAutoEnhanceAll={handleAutoEnhanceAllPages}
         onOpenCropMode={() => setActiveTool("crop")}
         onOpenFilterStudio={() => setIsFilterStudioModalOpen(true)}
         onOpenPhotoPrintStudio={() => setIsPhotoPrintStudioModalOpen(true)}
@@ -2030,7 +2126,6 @@ export function AppContent() {
           setIdCardStudioInitialMode("idcard");
           setIsIdCardStudioModalOpen(true);
         }}
-        onOpenCardDesigner={() => setIsCardDesignerModalOpen(true)}
         onOpenDocumentConverter={() => setIsWorkspaceModalOpen(true)}
         onOpenBatchStudio={() => setIsBatchModalOpen(true)}
         onOpenCompare={() => setIsCompareModalOpen(true)}
@@ -2103,6 +2198,8 @@ export function AppContent() {
           onResetFilters={handleResetFilters}
           onAutoDeskew={() => handleAutoDeskew()}
           onAutoCrop={() => handleAutoCrop()}
+          onAutoEnhance={() => handleAutoEnhanceActivePage()}
+          onAutoEnhanceAll={handleAutoEnhanceAllPages}
           onOpenCropMode={() => setActiveTool("crop")}
           onOpenFilterStudio={() => setIsFilterStudioModalOpen(true)}
           onOpenPhotoPrintStudio={() => setIsPhotoPrintStudioModalOpen(true)}
@@ -2228,14 +2325,6 @@ export function AppContent() {
         />
       )}
 
-      {/* Professional ID & Service Card Designer Studio Modal (Dual-Card A6 Vector Editor) */}
-      {isCardDesignerModalOpen && (
-        <CardDesignStudioModal
-          isOpen={isCardDesignerModalOpen}
-          onClose={() => setIsCardDesignerModalOpen(false)}
-        />
-      )}
-
       {/* Split PDF Studio Modal */}
       <SplitPdfModal
         isOpen={isSplitPdfModalOpen}
@@ -2265,59 +2354,7 @@ export function AppContent() {
             setIdCardStudioInitialMode("idcard");
             setIsIdCardStudioModalOpen(true);
           }}
-          onOpenInCardDesigner={() => {
-            setIsWorkspaceModalOpen(false);
-            setIsCardDesignerModalOpen(true);
-          }}
-          onOpenPrintDialog={async (file) => {
-            if (file.name.toLowerCase().endsWith(".pdf")) {
-              try {
-                const imported = await importPDFFile(file);
-                openPrintDialog({
-                  type: "document",
-                  title: file.name,
-                  document: {
-                    id: "print-" + Date.now(),
-                    name: file.name,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString(),
-                    pages: imported.pages,
-                    activePageIndex: 0,
-                    selectedPageIds: [],
-                    tags: [],
-                    isDirty: false,
-                    metadata: {
-                      title: file.name,
-                      author: "User",
-                      subject: "",
-                      keywords: "",
-                      creator: "OmniScan Titan X",
-                      producer: "OmniScan Titan X",
-                      creationDate: new Date().toISOString(),
-                      modificationDate: new Date().toISOString(),
-                      pdfAStandard: "Standard PDF (1.7)",
-                    },
-                  },
-                  defaultPaperSize: "a4",
-                  defaultOrientation: "portrait",
-                });
-              } catch {
-                openPrintDialog({
-                  type: "document",
-                  title: file.name,
-                  document: document,
-                  defaultPaperSize: "a4",
-                  defaultOrientation: "portrait",
-                });
-              }
-            } else {
-              openPrintDialog({
-                type: "images",
-                title: file.name,
-                images: [{ url: URL.createObjectURL(file) }],
-              });
-            }
-          }}
+          onPrintDocument={handlePrintFile}
         />
       )}
 
@@ -2333,8 +2370,6 @@ export function AppContent() {
           }
         }}
       />
-      {/* Centralized Desktop Print Center Dialog */}
-      <PrintDialog />
 
       {/* Global Toast Notification */}
       {toastMessage && (
@@ -2350,9 +2385,7 @@ export function AppContent() {
 export function App() {
   return (
     <ShortcutProvider>
-      <PrintProvider>
-        <AppContent />
-      </PrintProvider>
+      <AppContent />
     </ShortcutProvider>
   );
 }

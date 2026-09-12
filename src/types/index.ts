@@ -249,6 +249,70 @@ export interface FilterStackOperation {
 }
 
 // -------------------------------------------------------------
+// Adaptive Document Processing Engine Types
+// -------------------------------------------------------------
+export interface DocumentLightingDiagnostics {
+  isUnderexposed: boolean;
+  isOverexposed: boolean;
+  hasUnevenShadows: boolean;
+  shadowSeverity: "none" | "mild" | "moderate" | "severe";
+  backgroundLuminance: number; // 0-255
+  darkInkLuminance: number; // 0-255
+  contrastSpread: number; // 0-255
+  histogramMean: number;
+}
+
+export interface DocumentColorDiagnostics {
+  hasColorInformation: boolean;
+  hasCriticalStampsOrSignatures: boolean;
+  hasSkinTones: boolean;
+  skinToneRatio: number;
+  averageSaturation: number;
+  chromaticVariance: number;
+}
+
+export interface DocumentGeometryDiagnostics {
+  skewAngle: number;
+  skewConfidence: number;
+  isSkewSignificant: boolean;
+  suggestedRotation: number;
+  hasBorderOrBackground: boolean;
+  suggestedCropBox?: { x: number; y: number; width: number; height: number };
+}
+
+export interface DocumentDefectReport {
+  documentType: "text-document" | "receipt" | "id-card" | "photo-portrait" | "mixed-content" | "blank-page";
+  label: string;
+  confidence: number;
+  lighting: DocumentLightingDiagnostics;
+  color: DocumentColorDiagnostics;
+  geometry: DocumentGeometryDiagnostics;
+  diagnosedDefects: string[];
+  qualityScorePre: number; // 0 to 100
+}
+
+export interface AutoProcessingPlan {
+  documentType: string;
+  recommendedPreset: CamScannerPresetId;
+  appliedCorrections: string[];
+  shouldDeskew: boolean;
+  targetDeskewAngle: number;
+  shouldCrop: boolean;
+  targetCropBox?: { x: number; y: number; width: number; height: number };
+  targetFilters: ImageFilterPipeline;
+}
+
+export interface AdaptiveDocumentAnalysis {
+  report: DocumentDefectReport;
+  plan: AutoProcessingPlan;
+  qualityScorePost: number;
+  qualityDelta: number;
+  verificationPassed: boolean;
+  verificationNotes: string;
+  analyzedAt: string;
+}
+
+// -------------------------------------------------------------
 // 4x6" Photo Print Studio & Passport Layout Engine Types
 // -------------------------------------------------------------
 export type PaperUnit = "in" | "mm" | "cm" | "px";
@@ -456,6 +520,7 @@ export interface OmniPage {
     };
   };
   filterSource?: "auto-detected" | "user-override";
+  adaptiveAnalysis?: AdaptiveDocumentAnalysis;
   ocr?: OCRResult;
   annotations: OmniAnnotation[];
   redactions: OmniRedaction[];

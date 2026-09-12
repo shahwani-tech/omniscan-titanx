@@ -18,7 +18,6 @@ import {
   FileText,
   Image as ImageIcon,
   Table,
-  Presentation,
   Share2,
   ExternalLink,
   Sparkles,
@@ -40,8 +39,7 @@ interface UniversalFilePreviewProps {
   onOpenInImageEditor?: (dataUrl: string) => void;
   onOpenInPassportStudio?: (file: File) => void;
   onOpenInIdCardStudio?: (file: File) => void;
-  onOpenInCardDesigner?: () => void;
-  onOpenPrintDialog?: (file: File) => void;
+  onPrintDocument?: (file: File) => void;
 }
 
 export const UniversalFilePreview: React.FC<UniversalFilePreviewProps> = ({
@@ -53,8 +51,7 @@ export const UniversalFilePreview: React.FC<UniversalFilePreviewProps> = ({
   onOpenInImageEditor,
   onOpenInPassportStudio,
   onOpenInIdCardStudio,
-  onOpenInCardDesigner,
-  onOpenPrintDialog,
+  onPrintDocument,
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -399,24 +396,13 @@ export const UniversalFilePreview: React.FC<UniversalFilePreviewProps> = ({
                 <span>ID Card / A6</span>
               </button>
             )}
-
-            {/* Send to Card Designer */}
-            {onOpenInCardDesigner && (
-              <button
-                onClick={onOpenInCardDesigner}
-                className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-medium flex items-center space-x-1.5 transition-colors border border-neutral-700/60"
-              >
-                <Presentation className="w-3.5 h-3.5 text-purple-400" />
-                <span>Card Designer</span>
-              </button>
-            )}
           </div>
 
           <div className="flex items-center space-x-2">
-            {/* Print via Centralized Print Dialog */}
-            {onOpenPrintDialog && (
+            {/* Print Document */}
+            {onPrintDocument && (
               <button
-                onClick={() => onOpenPrintDialog(file.rawFile)}
+                onClick={() => onPrintDocument(file.rawFile)}
                 className="px-3.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-medium flex items-center space-x-1.5 transition-colors border border-neutral-700"
               >
                 <Printer className="w-3.5 h-3.5 text-neutral-300" />

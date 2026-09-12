@@ -57,6 +57,8 @@ interface InspectorPanelProps {
   onResetFilters: () => void;
   onAutoDeskew: () => void;
   onAutoCrop: () => void;
+  onAutoEnhance?: () => void;
+  onAutoEnhanceAll?: () => void;
   onOpenCropMode?: () => void;
   onOpenFilterStudio?: () => void;
   onOpenPhotoPrintStudio?: () => void;
@@ -81,6 +83,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onResetFilters,
   onAutoDeskew,
   onAutoCrop,
+  onAutoEnhance,
+  onAutoEnhanceAll,
   onOpenCropMode,
   onOpenFilterStudio,
   onOpenPhotoPrintStudio,
@@ -101,6 +105,58 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [compressionPreset, setCompressionPreset] = useState<
     "maximum" | "high" | "balanced" | "small" | "extreme"
   >("balanced");
+
+  // Resizable panel width state persisted in localStorage
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 340;
+    try {
+      const saved = localStorage.getItem("omniscan_inspector_width");
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 280 && parsed <= 520) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return 340;
+  });
+
+  const isResizingRef = useRef(false);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(panelWidth);
+
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isResizingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = panelWidth;
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (!isResizingRef.current) return;
+      const delta = startXRef.current - moveEvent.clientX;
+      const newWidth = Math.max(280, Math.min(520, startWidthRef.current + delta));
+      setPanelWidth(newWidth);
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false;
+        try {
+          localStorage.setItem("omniscan_inspector_width", String(panelWidth));
+        } catch {}
+      }
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
 
   if (isCollapsed) {
     return (
@@ -182,7 +238,19 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   };
 
   return (
-    <aside className="w-84 bg-neutral-900 border-l border-neutral-800 flex flex-col h-full shrink-0 select-none z-20">
+    <aside
+      style={{ width: `${panelWidth}px` }}
+      className="relative bg-neutral-900 border-l border-neutral-800 flex flex-col h-full shrink-0 select-none z-20 transition-[width] duration-75"
+    >
+      {/* Resizer Handle on Left Edge */}
+      <div
+        onPointerDown={handleResizePointerDown}
+        className="absolute top-0 bottom-0 -left-1.5 w-3 cursor-col-resize z-30 group flex items-center justify-center"
+        title="Drag to resize inspector panel"
+      >
+        <div className="w-0.5 h-8 bg-neutral-700/60 group-hover:bg-sky-500 rounded-full transition-colors group-active:bg-sky-400" />
+      </div>
+
       {/* Tab Navigation Header */}
       <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-850 px-2 py-1">
         <div className="flex items-center space-x-1 overflow-x-auto text-xs">
@@ -253,6 +321,67 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         {/* ================= TAB 1: COMPUTER VISION LAB ================= */}
         {activeTab === "cv" && (
           <div className="space-y-4">
+            {/* Adaptive Document Engine Card */}
+            <div className="p-3 rounded-xl bg-gradient-to-br from-indigo-950/60 via-neutral-900 to-sky-950/60 border border-sky-600/40 space-y-2.5 shadow-md">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-1.5">
+                  <Wand2 className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="text-[11px] font-bold text-white">Adaptive Document Engine</span>
+                </div>
+                {activePage?.adaptiveAnalysis && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950 border border-emerald-700 text-emerald-400">
+                    Quality {activePage.adaptiveAnalysis.qualityScorePost}/100
+                  </span>
+                )}
+              </div>
+
+              {activePage?.adaptiveAnalysis ? (
+                <div className="space-y-1.5 bg-black/40 p-2 rounded-lg border border-neutral-800 text-[10px]">
+                  <div className="flex items-center justify-between text-neutral-300">
+                    <span className="font-semibold text-sky-300">{activePage.adaptiveAnalysis.report.label}</span>
+                    <span className="text-emerald-400 font-mono">+{activePage.adaptiveAnalysis.qualityDelta} pts</span>
+                  </div>
+                  {activePage.adaptiveAnalysis.report.diagnosedDefects.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {activePage.adaptiveAnalysis.report.diagnosedDefects.map((defect, i) => (
+                        <span key={i} className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300 text-[9px] border border-neutral-700">
+                          {defect}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[10px] text-neutral-400 leading-tight">
+                  Autonomous defect diagnosis: deskews angle, whitens paper, lifts shadows, and verifies text legibility.
+                </p>
+              )}
+
+              <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                {onAutoEnhance && (
+                  <button
+                    onClick={onAutoEnhance}
+                    disabled={isProcessing}
+                    className="flex items-center justify-center space-x-1.5 py-1.5 rounded-lg bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold text-[11px] transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                  >
+                    <Wand2 className="w-3.5 h-3.5" />
+                    <span>Auto-Optimize</span>
+                  </button>
+                )}
+                {onAutoEnhanceAll && document.pages.length > 1 && (
+                  <button
+                    onClick={onAutoEnhanceAll}
+                    disabled={isProcessing}
+                    className="flex items-center justify-center space-x-1.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 font-medium text-[11px] border border-neutral-700 transition-all active:scale-95 disabled:opacity-50"
+                    title={`Batch optimize all ${document.pages.length} pages`}
+                  >
+                    <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>All Pages ({document.pages.length})</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* CamScanner Filter Studio Quick Launcher */}
             <div className="p-3 rounded-xl bg-gradient-to-br from-sky-950/60 via-neutral-900 to-indigo-950/60 border border-sky-800/40 space-y-2.5 shadow-md">
               <div className="flex items-center justify-between">

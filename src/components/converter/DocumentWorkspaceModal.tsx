@@ -58,8 +58,7 @@ interface DocumentWorkspaceModalProps {
   onOpenInImageEditor?: (dataUrl: string) => void;
   onOpenInPassportStudio?: (file: File) => void;
   onOpenInIdCardStudio?: (file: File) => void;
-  onOpenInCardDesigner?: () => void;
-  onOpenPrintDialog?: (file: File) => void;
+  onPrintDocument?: (file: File) => void;
 }
 
 const TOOL_DEFINITIONS: {
@@ -170,8 +169,7 @@ export const DocumentWorkspaceModal: React.FC<DocumentWorkspaceModalProps> = ({
   onOpenInImageEditor,
   onOpenInPassportStudio,
   onOpenInIdCardStudio,
-  onOpenInCardDesigner,
-  onOpenPrintDialog,
+  onPrintDocument,
 }) => {
   const [activeTool, setActiveTool] = useState<ConversionTool>("merge-pdf");
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -505,8 +503,8 @@ export const DocumentWorkspaceModal: React.FC<DocumentWorkspaceModalProps> = ({
                             </button>
                           )}
 
-                          {/* Print Dialog */}
-                          {onOpenPrintDialog && outItem.format === "pdf" && (
+                          {/* Print */}
+                          {onPrintDocument && outItem.format === "pdf" && (
                             <button
                               onClick={() => {
                                 const fileObj = new File(
@@ -514,7 +512,7 @@ export const DocumentWorkspaceModal: React.FC<DocumentWorkspaceModalProps> = ({
                                   outItem.fileName,
                                   { type: outItem.mimeType }
                                 );
-                                onOpenPrintDialog(fileObj);
+                                onPrintDocument(fileObj);
                               }}
                               className="p-1.5 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
                               title="Print Converted Document"
@@ -863,8 +861,7 @@ export const DocumentWorkspaceModal: React.FC<DocumentWorkspaceModalProps> = ({
           onOpenInImageEditor={onOpenInImageEditor}
           onOpenInPassportStudio={onOpenInPassportStudio}
           onOpenInIdCardStudio={onOpenInIdCardStudio}
-          onOpenInCardDesigner={onOpenInCardDesigner}
-          onOpenPrintDialog={onOpenPrintDialog}
+          onPrintDocument={onPrintDocument}
         />
       )}
 

@@ -101,7 +101,7 @@ import {
   Zap,
 } from "lucide-react";
 import { PhotoFilterNumericInput } from "./PhotoFilterNumericInput";
-import { usePrint } from "../../context/PrintContext";
+import { OmniAdjustmentStudioPanel } from "../common/OmniAdjustmentStudioPanel";
 
 interface PhotoPrintStudioModalProps {
   pages: OmniPage[];
@@ -122,8 +122,6 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   onInsertIntoDocument,
   onOpenScanModal,
 }) => {
-  const { openPrintDialog } = usePrint();
-
   // Active Studio Mode: 'crop' | 'filters' | 'sheet'
   const [studioStep, setStudioStep] = useState<"crop" | "filters" | "sheet">("crop");
 
@@ -934,16 +932,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handlePrintSheet = () => {
-    const photoUrl = processedPhotoDataUrl || rawSourceImage;
-    openPrintDialog({
-      type: "photo-sheet",
-      title: `Photo Sheet (${sheetConfig.paperSizeId.toUpperCase()}) - ${currentPassportSpec.name}`,
-      photoSheetConfig: sheetConfig,
-      photoSheetImages: { "photo-1": photoUrl },
-      defaultPaperSize: sheetConfig.paperSizeId,
-      defaultOrientation: sheetConfig.orientation,
-      hasCuttingGuides: sheetConfig.cuttingGuides.type !== "none",
-    });
+    window.print();
   };
 
   const handleInsertIntoDocument = () => {
@@ -1780,218 +1769,44 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                 </div>
 
                 {/* Tone & Fine Adjustment Controls */}
-                <div className="space-y-3 bg-neutral-950 p-3 rounded-lg border border-neutral-800">
-                  <div className="flex items-center justify-between border-b border-neutral-800/80 pb-2">
-                    <span className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider flex items-center space-x-1.5">
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Adjustments &amp; Fine Deskew</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleResetFilters}
-                      className="text-[10px] text-neutral-400 hover:text-sky-400 font-mono transition-colors flex items-center space-x-1 px-1.5 py-0.5 rounded bg-neutral-900 border border-neutral-800 hover:border-neutral-700"
-                      title="Reset all adjustments to default"
-                    >
-                      <RotateCcw className="w-2.5 h-2.5" />
-                      <span>Reset All</span>
-                    </button>
-                  </div>
-
-                  {/* Brightness */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] select-none">
-                      <span className="text-neutral-300 flex items-center space-x-1.5">
-                        <Sun className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Brightness</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setBrightness(0)}
-                        className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                        title="Reset Brightness to 0"
-                      >
-                        reset (0)
-                      </button>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="range"
-                        min="-40"
-                        max="40"
-                        step="1"
-                        value={brightness}
-                        onChange={(e) => setBrightness(Number(e.target.value))}
-                        className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
-                      />
-                      <PhotoFilterNumericInput
-                        id="passport-input-brightness"
-                        value={brightness}
-                        min={-40}
-                        max={40}
-                        step={1}
-                        precision={0}
-                        onChange={(val) => setBrightness(val)}
-                        ariaLabel="Brightness value"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Contrast */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] select-none">
-                      <span className="text-neutral-300 flex items-center space-x-1.5">
-                        <Contrast className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Contrast</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setContrast(0)}
-                        className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                        title="Reset Contrast to 0"
-                      >
-                        reset (0)
-                      </button>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="range"
-                        min="-30"
-                        max="50"
-                        step="1"
-                        value={contrast}
-                        onChange={(e) => setContrast(Number(e.target.value))}
-                        className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
-                      />
-                      <PhotoFilterNumericInput
-                        id="passport-input-contrast"
-                        value={contrast}
-                        min={-30}
-                        max={50}
-                        step={1}
-                        precision={0}
-                        onChange={(val) => setContrast(val)}
-                        ariaLabel="Contrast value"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Gamma Curve */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] select-none">
-                      <span className="text-neutral-300 flex items-center space-x-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                        <span>Gamma Curve</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setGamma(1.0)}
-                        className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                        title="Reset Gamma to 1.00"
-                      >
-                        reset (1.00)
-                      </button>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="range"
-                        min="0.2"
-                        max="3.0"
-                        step="0.05"
-                        value={gamma}
-                        onChange={(e) => setGamma(parseFloat(e.target.value))}
-                        className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
-                      />
-                      <PhotoFilterNumericInput
-                        id="passport-input-gamma"
-                        value={gamma}
-                        min={0.2}
-                        max={3.0}
-                        step={0.05}
-                        precision={2}
-                        onChange={(val) => setGamma(val)}
-                        ariaLabel="Gamma Curve value"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Unsharp Mask (Sharpness) */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] select-none">
-                      <span className="text-neutral-300 flex items-center space-x-1.5">
-                        <Zap className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Unsharp Mask</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setSharpness(0)}
-                        className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                        title="Reset Unsharp Mask to 0"
-                      >
-                        reset (0)
-                      </button>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        step="1"
-                        value={sharpness}
-                        onChange={(e) => setSharpness(Number(e.target.value))}
-                        className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
-                      />
-                      <PhotoFilterNumericInput
-                        id="passport-input-sharpness"
-                        value={sharpness}
-                        min={0}
-                        max={50}
-                        step={1}
-                        precision={0}
-                        onChange={(val) => setSharpness(val)}
-                        ariaLabel="Unsharp Mask sharpness value"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Fine Deskew Angle */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] select-none">
-                      <span className="text-neutral-300 flex items-center space-x-1.5">
-                        <Compass className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Fine Deskew</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setDeskewAngle(0)}
-                        className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
-                        title="Reset Deskew to 0.0°"
-                      >
-                        reset (0.0°)
-                      </button>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="range"
-                        min="-15"
-                        max="15"
-                        step="0.1"
-                        value={deskewAngle}
-                        onChange={(e) => setDeskewAngle(Number(parseFloat(e.target.value).toFixed(1)))}
-                        className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
-                      />
-                      <PhotoFilterNumericInput
-                        id="passport-input-deskew"
-                        value={deskewAngle}
-                        min={-15}
-                        max={15}
-                        step={0.1}
-                        precision={1}
-                        unit="°"
-                        onChange={(val) => setDeskewAngle(val)}
-                        ariaLabel="Fine Deskew angle in degrees"
-                      />
-                    </div>
-                  </div>
+                <div className="rounded-xl bg-neutral-950 border border-neutral-800/90 overflow-hidden shadow-md">
+                  <OmniAdjustmentStudioPanel
+                    filters={{
+                      brightness,
+                      contrast,
+                      gamma,
+                      sharpness,
+                      deskewAngle,
+                    }}
+                    onChange={(updates) => {
+                      if (updates.brightness !== undefined) setBrightness(updates.brightness);
+                      if (updates.contrast !== undefined) setContrast(updates.contrast);
+                      if (updates.gamma !== undefined) setGamma(updates.gamma);
+                      if (updates.sharpness !== undefined) setSharpness(updates.sharpness);
+                      if (updates.deskewAngle !== undefined) setDeskewAngle(updates.deskewAngle);
+                    }}
+                    onReset={handleResetFilters}
+                    title="Retouch & Fine Adjustments"
+                    showAutoEnhance={false}
+                    showResetAll={true}
+                    showHistogram={true}
+                    showPresets={false}
+                    sections={{
+                      tone: true,
+                      color: false,
+                      detail: true,
+                      optics: false,
+                      alignment: true,
+                    }}
+                    ranges={{
+                      brightness: { min: -40, max: 40, step: 1 },
+                      contrast: { min: -30, max: 50, step: 1 },
+                      gamma: { min: 0.2, max: 3.0, step: 0.05 },
+                      sharpness: { min: 0, max: 50, step: 1 },
+                      deskewAngle: { min: -15, max: 15, step: 0.1 },
+                    }}
+                    idPrefix="passport-adj"
+                  />
                 </div>
 
                 {/* Single Photo Download */}

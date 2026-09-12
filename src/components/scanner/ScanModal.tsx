@@ -23,6 +23,7 @@ import { ScannerProfile, OmniPage } from "../../types";
 import { SCANNER_PROFILES, simulateScannerFeed } from "../../engine/scanner";
 import { generateSampleInvoicePage, generateSampleContractPage } from "../../data/sampleDocuments";
 import { DEFAULT_FILTERS } from "../../engine/vision";
+import { enhanceOmniPageAdaptive } from "../../engine/autoProcessor";
 
 interface ScanModalProps {
   isOpen: boolean;
@@ -87,7 +88,7 @@ export const ScanModal: React.FC<ScanModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleCaptureCamera = () => {
+  const handleCaptureCamera = async () => {
     if (!videoRef.current) return;
     const canvas = document.createElement("canvas");
     canvas.width = videoRef.current.videoWidth || 1280;
@@ -123,7 +124,15 @@ export const ScanModal: React.FC<ScanModalProps> = ({
       lastModifiedAt: new Date().toISOString(),
     };
 
-    setScannedPreviewPages((prev) => [...prev, newPage]);
+    try {
+      const enhanced = await enhanceOmniPageAdaptive(newPage, {
+        skipDeskew: !autoDeskew,
+        skipCrop: !autoCrop,
+      });
+      setScannedPreviewPages((prev) => [...prev, enhanced]);
+    } catch {
+      setScannedPreviewPages((prev) => [...prev, newPage]);
+    }
   };
 
   const handleExecuteScan = async () => {
@@ -145,9 +154,25 @@ export const ScanModal: React.FC<ScanModalProps> = ({
 
     try {
       const generated = await simulateScannerFeed(selectedProfile, targetCount);
+      const enhancedList: OmniPage[] = [];
+      for (const p of generated) {
+        if (autoDeskew || autoCrop) {
+          try {
+            const opt = await enhanceOmniPageAdaptive(p, {
+              skipDeskew: !autoDeskew,
+              skipCrop: !autoCrop,
+            });
+            enhancedList.push(opt);
+          } catch {
+            enhancedList.push(p);
+          }
+        } else {
+          enhancedList.push(p);
+        }
+      }
       clearInterval(interval);
       setProgress(100);
-      setScannedPreviewPages((prev) => [...prev, ...generated]);
+      setScannedPreviewPages((prev) => [...prev, ...enhancedList]);
     } catch (err) {
       console.error("Scan error:", err);
     } finally {
