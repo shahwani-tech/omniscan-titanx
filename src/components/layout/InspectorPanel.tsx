@@ -106,58 +106,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     "maximum" | "high" | "balanced" | "small" | "extreme"
   >("balanced");
 
-  // Resizable panel width state persisted in localStorage
-  const [panelWidth, setPanelWidth] = useState<number>(() => {
-    if (typeof window === "undefined") return 340;
-    try {
-      const saved = localStorage.getItem("omniscan_inspector_width");
-      if (saved) {
-        const parsed = parseInt(saved, 10);
-        if (!isNaN(parsed) && parsed >= 280 && parsed <= 520) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return 340;
-  });
-
-  const isResizingRef = useRef(false);
-  const startXRef = useRef(0);
-  const startWidthRef = useRef(panelWidth);
-
-  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    isResizingRef.current = true;
-    startXRef.current = e.clientX;
-    startWidthRef.current = panelWidth;
-
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {}
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      if (!isResizingRef.current) return;
-      const delta = startXRef.current - moveEvent.clientX;
-      const newWidth = Math.max(280, Math.min(520, startWidthRef.current + delta));
-      setPanelWidth(newWidth);
-    };
-
-    const onPointerUp = (upEvent: PointerEvent) => {
-      if (isResizingRef.current) {
-        isResizingRef.current = false;
-        try {
-          localStorage.setItem("omniscan_inspector_width", String(panelWidth));
-        } catch {}
-      }
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    };
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-  };
-
   if (isCollapsed) {
     return (
       <aside className="w-10 bg-neutral-900 border-l border-neutral-800 flex flex-col items-center py-2 shrink-0 z-20">
@@ -238,19 +186,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   };
 
   return (
-    <aside
-      style={{ width: `${panelWidth}px` }}
-      className="relative bg-neutral-900 border-l border-neutral-800 flex flex-col h-full shrink-0 select-none z-20 transition-[width] duration-75"
-    >
-      {/* Resizer Handle on Left Edge */}
-      <div
-        onPointerDown={handleResizePointerDown}
-        className="absolute top-0 bottom-0 -left-1.5 w-3 cursor-col-resize z-30 group flex items-center justify-center"
-        title="Drag to resize inspector panel"
-      >
-        <div className="w-0.5 h-8 bg-neutral-700/60 group-hover:bg-sky-500 rounded-full transition-colors group-active:bg-sky-400" />
-      </div>
-
+    <aside className="w-84 bg-neutral-900 border-l border-neutral-800 flex flex-col h-full shrink-0 select-none z-20">
       {/* Tab Navigation Header */}
       <div className="flex items-center justify-between border-b border-neutral-800 bg-neutral-850 px-2 py-1">
         <div className="flex items-center space-x-1 overflow-x-auto text-xs">

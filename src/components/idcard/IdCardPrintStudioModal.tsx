@@ -66,7 +66,6 @@ import { DEFAULT_FILTERS } from "../../engine/vision";
 import { ImageFilterPipeline, OmniPage } from "../../types";
 import { IdCardCropModal, IdCardCropState } from "./IdCardCropModal";
 import { IdCardFilterNumericInput } from "./IdCardFilterNumericInput";
-import { OmniAdjustmentStudioPanel } from "../common/OmniAdjustmentStudioPanel";
 import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
 import { BackgroundStudioState } from "../../engine/background/types";
 import { classifyImageContent, ContentClassificationResult } from "../../engine/autoClassifier";
@@ -1813,37 +1812,218 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
               </div>
             </div>
 
-            {/* Live Adjustment Sliders Panel */}
-            <div className="rounded-xl bg-neutral-950 border border-neutral-800/90 overflow-hidden shadow-md mt-2">
-              <OmniAdjustmentStudioPanel
-                filters={currentFilters}
-                onChange={(updates, isCommit) => {
-                  Object.entries(updates).forEach(([key, val]) => {
-                    handleFilterParamChange(key as keyof ImageFilterPipeline, val, !isCommit);
-                  });
-                }}
-                onReset={handleResetFilters}
-                title="Card Tone & Adjustments"
-                showAutoEnhance={false}
-                showResetAll={true}
-                showHistogram={true}
-                showPresets={false}
-                sections={{
-                  tone: true,
-                  color: false,
-                  detail: true,
-                  optics: false,
-                  alignment: true,
-                }}
-                ranges={{
-                  brightness: { min: -100, max: 100, step: 1 },
-                  contrast: { min: -100, max: 100, step: 1 },
-                  gamma: { min: 0.2, max: 3.0, step: 0.05 },
-                  sharpness: { min: 0, max: 100, step: 1 },
-                  deskewAngle: { min: -15, max: 15, step: 0.1 },
-                }}
-                idPrefix="idcard-adj"
-              />
+            {/* Live Adjustment Sliders */}
+            <div className="space-y-2.5 pt-1">
+              {/* Brightness */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] h-4 select-none">
+                  <span className="text-neutral-400 flex items-center space-x-1">
+                    <Sun className="w-3 h-3 text-amber-400" />
+                    <span>Brightness</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterParamChange("brightness", 0, false)}
+                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
+                    title="Reset Brightness to 0"
+                  >
+                    reset (0)
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="range"
+                    min="-100"
+                    max="100"
+                    step="1"
+                    value={currentFilters.brightness}
+                    onPointerDown={markSliderInteraction}
+                    onPointerUp={endSliderInteraction}
+                    onPointerCancel={endSliderInteraction}
+                    onChange={(e) => handleFilterParamChange("brightness", parseInt(e.target.value, 10))}
+                    className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
+                  />
+                  <IdCardFilterNumericInput
+                    id="filter-input-brightness"
+                    value={currentFilters.brightness}
+                    min={-100}
+                    max={100}
+                    step={1}
+                    precision={0}
+                    onChange={(val, isCommit) => handleFilterParamChange("brightness", val, !isCommit)}
+                    ariaLabel="Brightness numeric input"
+                  />
+                </div>
+              </div>
+
+              {/* Contrast */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] h-4 select-none">
+                  <span className="text-neutral-400 flex items-center space-x-1">
+                    <Contrast className="w-3 h-3 text-sky-400" />
+                    <span>Contrast</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterParamChange("contrast", 0, false)}
+                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
+                    title="Reset Contrast to 0"
+                  >
+                    reset (0)
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="range"
+                    min="-100"
+                    max="100"
+                    step="1"
+                    value={currentFilters.contrast}
+                    onPointerDown={markSliderInteraction}
+                    onPointerUp={endSliderInteraction}
+                    onPointerCancel={endSliderInteraction}
+                    onChange={(e) => handleFilterParamChange("contrast", parseInt(e.target.value, 10))}
+                    className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
+                  />
+                  <IdCardFilterNumericInput
+                    id="filter-input-contrast"
+                    value={currentFilters.contrast}
+                    min={-100}
+                    max={100}
+                    step={1}
+                    precision={0}
+                    onChange={(val, isCommit) => handleFilterParamChange("contrast", val, !isCommit)}
+                    ariaLabel="Contrast numeric input"
+                  />
+                </div>
+              </div>
+
+              {/* Gamma Curve */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] h-4 select-none">
+                  <span className="text-neutral-400 flex items-center space-x-1">
+                    <Sparkles className="w-3 h-3 text-purple-400" />
+                    <span>Gamma Curve</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterParamChange("gamma", 1.0, false)}
+                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
+                    title="Reset Gamma to 1.00"
+                  >
+                    reset (1.00)
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="3.0"
+                    step="0.05"
+                    value={currentFilters.gamma}
+                    onPointerDown={markSliderInteraction}
+                    onPointerUp={endSliderInteraction}
+                    onPointerCancel={endSliderInteraction}
+                    onChange={(e) => handleFilterParamChange("gamma", parseFloat(e.target.value))}
+                    className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
+                  />
+                  <IdCardFilterNumericInput
+                    id="filter-input-gamma"
+                    value={currentFilters.gamma}
+                    min={0.2}
+                    max={3.0}
+                    step={0.05}
+                    precision={2}
+                    onChange={(val, isCommit) => handleFilterParamChange("gamma", val, !isCommit)}
+                    ariaLabel="Gamma Curve numeric input"
+                  />
+                </div>
+              </div>
+
+              {/* Unsharp Mask (Sharpness) */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] h-4 select-none">
+                  <span className="text-neutral-400 flex items-center space-x-1">
+                    <Zap className="w-3 h-3 text-sky-400" />
+                    <span>Unsharp Mask</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterParamChange("sharpness", 0, false)}
+                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
+                    title="Reset Unsharp Mask to 0"
+                  >
+                    reset (0)
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={currentFilters.sharpness}
+                    onPointerDown={markSliderInteraction}
+                    onPointerUp={endSliderInteraction}
+                    onPointerCancel={endSliderInteraction}
+                    onChange={(e) => handleFilterParamChange("sharpness", parseInt(e.target.value, 10))}
+                    className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
+                  />
+                  <IdCardFilterNumericInput
+                    id="filter-input-sharpness"
+                    value={currentFilters.sharpness}
+                    min={0}
+                    max={100}
+                    step={1}
+                    precision={0}
+                    onChange={(val, isCommit) => handleFilterParamChange("sharpness", val, !isCommit)}
+                    ariaLabel="Unsharp Mask numeric input"
+                  />
+                </div>
+              </div>
+
+              {/* Fine Deskew Angle */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] h-4 select-none">
+                  <span className="text-neutral-400 flex items-center space-x-1">
+                    <Compass className="w-3 h-3 text-emerald-400" />
+                    <span>Fine Deskew</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFilterParamChange("deskewAngle", 0, false)}
+                    className="text-[9px] text-neutral-500 hover:text-sky-400 font-mono transition-colors cursor-pointer"
+                    title="Reset Deskew to 0.0°"
+                  >
+                    reset (0.0°)
+                  </button>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="range"
+                    min="-15"
+                    max="15"
+                    step="0.1"
+                    value={currentFilters.deskewAngle}
+                    onPointerDown={markSliderInteraction}
+                    onPointerUp={endSliderInteraction}
+                    onPointerCancel={endSliderInteraction}
+                    onChange={(e) => handleFilterParamChange("deskewAngle", parseFloat(e.target.value))}
+                    className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
+                  />
+                  <IdCardFilterNumericInput
+                    id="filter-input-deskew"
+                    value={currentFilters.deskewAngle}
+                    min={-15}
+                    max={15}
+                    step={0.1}
+                    precision={1}
+                    unit="°"
+                    onChange={(val, isCommit) => handleFilterParamChange("deskewAngle", val, !isCommit)}
+                    ariaLabel="Fine Deskew numeric input in degrees"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
