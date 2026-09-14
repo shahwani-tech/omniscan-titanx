@@ -201,7 +201,7 @@ Return JSON:
         return res.status(400).json({ error: "Missing image data payload" });
       }
 
-      // Check if remote AI background removal service is configured in environment
+      // Check if remote AI background removal service is configured in server environment (OPTIONAL)
       const envEndpoint = process.env.BG_REMOVAL_ENDPOINT?.trim();
       const envApiKey = (
         process.env.BG_REMOVAL_API_KEY ||
@@ -210,11 +210,12 @@ Return JSON:
       ).trim();
       const hasEnvConfig = Boolean(envEndpoint || envApiKey);
 
-      // Check if an explicit, non-default endpoint was provided
+      // Check if an explicit, non-default custom endpoint was provided by client
       const isCustomClientEndpoint = Boolean(
         endpointUrl &&
-        endpointUrl !== "http://localhost:5000/api/background/remove" &&
-        endpointUrl !== "http://localhost:5000"
+        typeof endpointUrl === "string" &&
+        endpointUrl.trim().length > 0 &&
+        !endpointUrl.includes("localhost:5000")
       );
 
       // If neither server environment variables nor an explicit custom endpoint is provided,
@@ -293,6 +294,7 @@ Return JSON:
     try {
       const { endpointUrl } = req.body;
 
+      // Check if remote AI background removal service is configured in server environment (OPTIONAL)
       const envEndpoint = process.env.BG_REMOVAL_ENDPOINT?.trim();
       const envApiKey = (
         process.env.BG_REMOVAL_API_KEY ||
@@ -303,11 +305,12 @@ Return JSON:
 
       const isCustomClientEndpoint = Boolean(
         endpointUrl &&
-        endpointUrl !== "http://localhost:5000/api/background/remove" &&
-        endpointUrl !== "http://localhost:5000"
+        typeof endpointUrl === "string" &&
+        endpointUrl.trim().length > 0 &&
+        !endpointUrl.includes("localhost:5000")
       );
 
-      // Return a clean unconfigured status if service environment variables are not set
+      // Return a clean unconfigured status if service environment variables are not set (OPTIONAL feature)
       if (!hasEnvConfig && !isCustomClientEndpoint) {
         return res.status(200).json({
           ok: false,

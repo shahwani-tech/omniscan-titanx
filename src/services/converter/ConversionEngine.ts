@@ -325,8 +325,9 @@ export class ConversionEngine {
         };
         await page.render(renderContext).promise;
 
-        const dataUrl = canvas.toDataURL(mimeType, config.imageQuality || 0.92);
-        const blob = await (await fetch(dataUrl)).blob();
+        const blob = await new Promise<Blob>((res) => {
+          canvas.toBlob((b) => res(b || new Blob([])), mimeType, config.imageQuality || 0.92);
+        });
         const url = URL.createObjectURL(blob);
 
         const pageName = FileNamingManager.generateOutputName({

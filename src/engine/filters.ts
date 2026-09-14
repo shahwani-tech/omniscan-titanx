@@ -472,159 +472,16 @@ export async function executeFilterPipeline(
     }
   }
 
-  // Step 3: Pixel Operations
+  // Step 3: Pixel Operations (Offloaded to Web Worker Pool with automatic main-thread fallback)
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imgData.data;
-  const len = data.length;
-  const w = canvas.width;
-  const h = canvas.height;
-
-  // Factor calculations
-  const bFactor = (filters.brightness / 100) * 135;
-  const cFactor = (filters.contrast + 100) / 100;
-  const gammaExp = 1 / Math.max(0.1, filters.gamma || 1.0);
-  const satFactor = ((filters.saturation || 0) + 100) / 100;
-  const shadowStr = (filters.shadowStrength || 70) / 100;
-  const bgWhitenThresh = filters.backgroundWhiten ? (filters.backgroundWhitenThreshold || 215) : 255;
-  const isMagicColor = filters.colorMode === "magic-color" || filters.preset === "magic-color";
-  const isEco = filters.colorMode === "eco" || filters.preset === "eco";
-
-  // Pre-calculate luminance min/max for Auto White Balance if enabled
-  let minLum = 255;
-  let maxLum = 0;
-  if (filters.autoWhiteBalance || isMagicColor) {
-    for (let i = 0; i < len; i += 16) {
-      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      if (lum < minLum) minLum = lum;
-      if (lum > maxLum) maxLum = lum;
-    }
-  }
-  const lumRange = Math.max(1, maxLum - minLum);
-
-  // Main pixel loop
-  for (let i = 0; i < len; i += 4) {
-    let r = data[i];
-    let g = data[i + 1];
-    let b = data[i + 2];
-
-    // 1. Auto White Balance / Histogram stretch
-    if (filters.autoWhiteBalance && lumRange > 20) {
-      r = ((r - minLum) / lumRange) * 255;
-      g = ((g - minLum) / lumRange) * 255;
-      b = ((b - minLum) / lumRange) * 255;
-    }
-
-    // 2. Brightness & Contrast
-    if (filters.brightness !== 0 || filters.contrast !== 0) {
-      r = (r - 128) * cFactor + 128 + bFactor;
-      g = (g - 128) * cFactor + 128 + bFactor;
-      b = (b - 128) * cFactor + 128 + bFactor;
-    }
-
-    // 3. Gamma Curve
-    if (filters.gamma !== 1.0) {
-      r = 255 * Math.pow(Math.max(0, r) / 255, gammaExp);
-      g = 255 * Math.pow(Math.max(0, g) / 255, gammaExp);
-      b = 255 * Math.pow(Math.max(0, b) / 255, gammaExp);
-    }
-
-    // 4. Shadow Removal (boost grayish uneven page gradients)
-    if (filters.shadowRemoval) {
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (lum > 140 && lum < 245) {
-        const boost = ((lum - 140) / 105) * shadowStr;
-        r = r + (255 - r) * boost * 0.85;
-        g = g + (255 - g) * boost * 0.85;
-        b = b + (255 - b) * boost * 0.85;
-      }
-    }
-
-    // 5. Background Whitening (bleach near-white paper grain)
-    if (filters.backgroundWhiten) {
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (lum >= bgWhitenThresh) {
-        r = 255;
-        g = 255;
-        b = 255;
-      }
-    }
-
-    // 6. CamScanner Magic Color Algorithm
-    if (isMagicColor) {
-      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-      if (lum > 180) {
-        // Bleach paper to clean brilliant white
-        const lift = (lum - 180) / 75;
-        r = Math.min(255, r + (255 - r) * lift);
-        g = Math.min(255, g + (255 - g) * lift);
-        b = Math.min(255, b + (255 - b) * lift);
-      } else if (lum < 110) {
-        // Darken text for high definition
-        r = Math.max(0, r * 0.72);
-        g = Math.max(0, g * 0.72);
-        b = Math.max(0, b * 0.72);
-      }
-      // Saturate colors (stamps, signatures, diagrams)
-      const avg = (r + g + b) / 3;
-      r = avg + (r - avg) * 1.45;
-      g = avg + (g - avg) * 1.45;
-      b = avg + (b - avg) * 1.45;
-    }
-
-    // 7. Saturation adjustment
-    if (filters.saturation !== 0 && !isMagicColor) {
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      r = gray + (r - gray) * satFactor;
-      g = gray + (g - gray) * satFactor;
-      b = gray + (b - gray) * satFactor;
-    }
-
-    // 8. Color Mode Conversions
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    if (filters.colorMode === "grayscale") {
-      r = lum;
-      g = lum;
-      b = lum;
-    } else if (filters.colorMode === "monochrome" || filters.colorMode === "otsu") {
-      const threshold = filters.binarizationThreshold || 135;
-      const val = lum >= threshold ? 255 : 0;
-      r = val;
-      g = val;
-      b = val;
-    } else if (isEco) {
-      const threshold = filters.binarizationThreshold || 155;
-      const val = lum >= threshold ? 255 : 0;
-      r = val;
-      g = val;
-      b = val;
-    } else if (filters.colorMode === "sauvola") {
-      const val = lum >= Math.max(90, (filters.binarizationThreshold || 128) - 15) ? 255 : 0;
-      r = val;
-      g = val;
-      b = val;
-    }
-
-    // 9. Invert Colors
-    if (filters.invert) {
-      r = 255 - r;
-      g = 255 - g;
-      b = 255 - b;
-    }
-
-    data[i] = Math.max(0, Math.min(255, r));
-    data[i + 1] = Math.max(0, Math.min(255, g));
-    data[i + 2] = Math.max(0, Math.min(255, b));
-  }
-
-  // Step 4: Spatial Filters (Sharpening / Unsharp Mask)
-  if (filters.sharpness > 0 && !isFast) {
-    applyFastSharpen(imgData, (filters.sharpness || 30) / 100);
-  }
-
-  // Step 5: Margin Cleanup & Punch Holes
-  if (filters.punchHoleCleanup) {
-    cleanMarginArtifacts(imgData);
-  }
+  const processedBuffer = await runPixelFiltersAsync(
+    imgData.data,
+    canvas.width,
+    canvas.height,
+    filters,
+    isFast
+  );
+  imgData.data.set(processedBuffer);
 
   ctx.putImageData(imgData, 0, 0);
 
@@ -637,6 +494,8 @@ export async function executeFilterPipeline(
     height: canvas.height,
   };
 }
+
+export const applyImageFilterPipeline = executeFilterPipeline;
 
 /**
  * Fast 3x3 Laplacian Sharpen Filter

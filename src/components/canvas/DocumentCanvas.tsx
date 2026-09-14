@@ -58,6 +58,7 @@ import {
 } from "../../engine/cropEngine";
 import { OmniDocument } from "../../types";
 import { prioritizePdfThumbnailPages } from "../../engine/pdf";
+import { pageBlobStore } from "../../services/storage/PageBlobStore";
 
 interface DocumentCanvasProps {
   pages: OmniPage[];
@@ -454,6 +455,13 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const [drawStart, setDrawStart] = useState<Point | null>(null);
   const [drawCurrent, setDrawCurrent] = useState<Point | null>(null);
   const [freehandPoints, setFreehandPoints] = useState<Point[]>([]);
+  const [pendingTextAnnotation, setPendingTextAnnotation] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [annotationNoteText, setAnnotationNoteText] = useState("Note");
 
   // OCR bounding box hover
   const [hoveredOcrWord, setHoveredOcrWord] = useState<any | null>(null);
@@ -579,8 +587,46 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   }, [isResizingToolbar, toolbarOrientation]);
 
   const activePage = pages[activePageIndex] || null;
+  const [resolvedActivePageUrl, setResolvedActivePageUrl] = useState<string>("");
+  const [resolvedOriginalUrl, setResolvedOriginalUrl] = useState<string>("");
+
+  useEffect(() => {
+    let isMounted = true;
+    let createdUrl: string | null = null;
+    let createdOrigUrl: string | null = null;
+
+    if (activePage) {
+      // Immediate fallback to thumbnail for fast rendering
+      setResolvedActivePageUrl(activePage.thumbnailDataUrl || activePage.processedDataUrl || "");
+
+      pageBlobStore.resolvePageUrl(activePage, "processed").then((url) => {
+        if (isMounted && url) {
+          createdUrl = url.startsWith("blob:") ? url : null;
+          setResolvedActivePageUrl(url);
+        }
+      });
+
+      pageBlobStore.resolvePageUrl(activePage, "original").then((url) => {
+        if (isMounted && url) {
+          createdOrigUrl = url.startsWith("blob:") ? url : null;
+          setResolvedOriginalUrl(url);
+        }
+      });
+    } else {
+      setResolvedActivePageUrl("");
+      setResolvedOriginalUrl("");
+    }
+
+    return () => {
+      isMounted = false;
+      if (createdUrl) pageBlobStore.revokeBlobUrl(createdUrl);
+      if (createdOrigUrl) pageBlobStore.revokeBlobUrl(createdOrigUrl);
+    };
+  }, [activePage?.id, activePage?.processedBlobId, activePage?.originalBlobId, activePage?.processedDataUrl]);
+
   const displayedPageUrl =
     (activePage && activePagePreviewUrl) ||
+    resolvedActivePageUrl ||
     activePage?.processedDataUrl ||
     activePage?.thumbnailDataUrl;
 
@@ -755,21 +801,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             createdAt: new Date().toISOString(),
           });
         } else if (activeTool === "text-annotation") {
-          const text = prompt("Enter text for annotation note:") || "Note";
-          onAddAnnotation(activePageIndex, {
-            id: `ann-${Date.now()}`,
-            type: "text",
-            x,
-            y,
-            width: w,
-            height: h,
-            text,
-            strokeColor: "#10B981",
-            strokeWidth: 1,
-            opacity: 1.0,
-            fontSize: 14,
-            createdAt: new Date().toISOString(),
-          });
+          setPendingTextAnnotation({ x, y, width: w, height: h });
+          setAnnotationNoteText("Note");
         } else if (activeTool === "stamp") {
           onAddAnnotation(activePageIndex, {
             id: `ann-${Date.now()}`,
@@ -1165,7 +1198,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   className="absolute inset-y-0 left-0 overflow-hidden border-r-2 border-amber-400 shadow-2xl"
                 >
                   <img
-                    src={activePage.originalDataUrl}
+                    src={resolvedOriginalUrl || activePage.originalDataUrl || activePage.thumbnailDataUrl}
                     alt="Original Document"
                     className="max-h-[82vh] w-auto max-w-none pointer-events-none object-contain"
                     style={{
@@ -1612,6 +1645,76 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           <span className="absolute bottom-2 px-1.5 py-0.5 rounded bg-black/80 font-mono text-[9px] text-sky-300 font-bold">
             8X LOUPE
           </span>
+        </div>
+      )}
+
+      {/* Non-blocking Text Annotation Note Dialog */}
+      {pendingTextAnnotation && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm bg-neutral-900 border border-neutral-800 rounded-xl p-5 shadow-2xl space-y-3">
+            <h4 className="text-sm font-semibold text-neutral-200">Add Text Annotation Note</h4>
+            <input
+              type="text"
+              autoFocus
+              value={annotationNoteText}
+              onChange={(e) => setAnnotationNoteText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  onAddAnnotation(activePageIndex, {
+                    id: `ann-${Date.now()}`,
+                    type: "text",
+                    x: pendingTextAnnotation.x,
+                    y: pendingTextAnnotation.y,
+                    width: pendingTextAnnotation.width,
+                    height: pendingTextAnnotation.height,
+                    text: annotationNoteText.trim() || "Note",
+                    strokeColor: "#10B981",
+                    strokeWidth: 1,
+                    opacity: 1.0,
+                    fontSize: 14,
+                    createdAt: new Date().toISOString(),
+                  });
+                  setPendingTextAnnotation(null);
+                } else if (e.key === "Escape") {
+                  setPendingTextAnnotation(null);
+                }
+              }}
+              placeholder="Enter note text..."
+              className="w-full px-3 py-2 text-sm bg-neutral-950 border border-neutral-700 rounded-lg text-neutral-100 focus:outline-none focus:border-emerald-500"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingTextAnnotation(null)}
+                className="px-3 py-1.5 text-xs text-neutral-400 hover:text-neutral-200 bg-neutral-800 rounded-md"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onAddAnnotation(activePageIndex, {
+                    id: `ann-${Date.now()}`,
+                    type: "text",
+                    x: pendingTextAnnotation.x,
+                    y: pendingTextAnnotation.y,
+                    width: pendingTextAnnotation.width,
+                    height: pendingTextAnnotation.height,
+                    text: annotationNoteText.trim() || "Note",
+                    strokeColor: "#10B981",
+                    strokeWidth: 1,
+                    opacity: 1.0,
+                    fontSize: 14,
+                    createdAt: new Date().toISOString(),
+                  });
+                  setPendingTextAnnotation(null);
+                }}
+                className="px-3 py-1.5 text-xs text-white bg-emerald-600 hover:bg-emerald-500 rounded-md font-medium shadow"
+              >
+                Add Note
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>

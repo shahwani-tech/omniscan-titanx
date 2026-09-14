@@ -163,6 +163,10 @@ export function AppContent() {
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState<boolean>(false);
   const [idCardStudioInitialMode, setIdCardStudioInitialMode] = useState<"idcard" | "a6">("idcard");
   const [isSplitPdfModalOpen, setIsSplitPdfModalOpen] = useState<boolean>(false);
+  const [blankRemovalConfirm, setBlankRemovalConfirm] = useState<{
+    isOpen: boolean;
+    blankIndices: number[];
+  } | null>(null);
   const [passwordModalState, setPasswordModalState] = useState<{
     isOpen: boolean;
     file: File | null;
@@ -1702,25 +1706,7 @@ export function AppContent() {
         return;
       }
 
-      const confirmRemove = window.confirm(
-        `Detected ${blankIndices.length} blank page(s) (Page number(s): ${blankIndices
-          .map((i) => i + 1)
-          .join(", ")}).\n\nDo you want to remove these blank pages from the document?`
-      );
-
-      if (confirmRemove) {
-        recordHistorySnapshot(document);
-        setDocument((prev) => {
-          const remaining = prev.pages.filter((_, idx) => !blankIndices.includes(idx));
-          return {
-            ...prev,
-            pages: remaining.map((p, idx) => ({ ...p, pageNumber: idx + 1 })),
-            updatedAt: new Date().toISOString(),
-          };
-        });
-        setActivePageIndex(0);
-        setIsDirty(true);
-      }
+      setBlankRemovalConfirm({ isOpen: true, blankIndices });
     } catch (err) {
       console.error("Blank page removal error:", err);
     } finally {
@@ -2400,6 +2386,56 @@ export function AppContent() {
           }
         }}
       />
+
+      {/* Non-blocking Blank Page Removal Confirmation Modal */}
+      {blankRemovalConfirm?.isOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-xl p-6 shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold text-neutral-100 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-amber-400" />
+              Remove Blank Pages
+            </h3>
+            <p className="text-sm text-neutral-300">
+              Detected <span className="font-semibold text-white">{blankRemovalConfirm.blankIndices.length}</span> blank page(s)
+              {" "}(Page {blankRemovalConfirm.blankIndices.map((i) => i + 1).join(", ")}).
+            </p>
+            <p className="text-xs text-neutral-400">
+              Do you want to permanently remove these blank pages from the document?
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setBlankRemovalConfirm(null)}
+                className="px-4 py-2 rounded-lg text-sm bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const toRemove = blankRemovalConfirm.blankIndices;
+                  setBlankRemovalConfirm(null);
+                  recordHistorySnapshot(document);
+                  setDocument((prev) => {
+                    const remaining = prev.pages.filter((_, idx) => !toRemove.includes(idx));
+                    return {
+                      ...prev,
+                      pages: remaining.map((p, idx) => ({ ...p, pageNumber: idx + 1 })),
+                      updatedAt: new Date().toISOString(),
+                    };
+                  });
+                  setActivePageIndex(0);
+                  setIsDirty(true);
+                  toast.success(`Removed ${toRemove.length} blank page(s).`);
+                }}
+                className="px-4 py-2 rounded-lg text-sm bg-rose-600 text-white font-medium hover:bg-rose-500 shadow-lg shadow-rose-600/20"
+              >
+                Remove Pages
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Global Toast Notifications Stack */}
       <ToastContainer />

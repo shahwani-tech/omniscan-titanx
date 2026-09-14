@@ -493,8 +493,10 @@ export interface PerformanceSettings {
 export interface OmniPage {
   id: string;
   pageNumber: number;
-  originalDataUrl: string; // Lossless untouched source
-  processedDataUrl: string; // Output after filter pipeline & renders
+  originalDataUrl?: string; // Optional: legacy or transient in-flight string
+  processedDataUrl?: string; // Optional: legacy or transient in-flight string
+  originalBlobId?: string; // IndexedDB Blob storage reference
+  processedBlobId?: string; // IndexedDB Blob storage reference
   thumbnailDataUrl: string; // Low-res fast preview
   width: number; // pixel width
   height: number; // pixel height

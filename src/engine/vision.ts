@@ -4,6 +4,10 @@
  */
 
 import { ImageFilterPipeline, Point } from "../types";
+import {
+  calculateDeskewAsync,
+  analyzeBlanknessAsync,
+} from "../workers/filterWorkerPool";
 
 export const DEFAULT_FILTERS: ImageFilterPipeline = {
   rotation: 0,
@@ -64,7 +68,8 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
 
 /**
  * Compute auto deskew angle using Radon projection profiles
- * Returns angle in degrees between -45 and 45 deg
+ * Offloaded to Web Worker Pool with automatic main-thread fallback
+ * Returns angle in degrees between -15 and 15 deg
  */
 export async function calculateDeskewAngle(dataUrl: string): Promise<number> {
   const img = await loadImage(dataUrl);
@@ -82,74 +87,47 @@ export async function calculateDeskewAngle(dataUrl: string): Promise<number> {
 
   ctx.drawImage(img, 0, 0, w, h);
   const imgData = ctx.getImageData(0, 0, w, h);
-  const data = imgData.data;
 
-  // Convert to binary edge/gradient map
-  const gray = new Float32Array(w * h);
-  for (let i = 0; i < data.length; i += 4) {
-    gray[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-  }
-
-  // Calculate horizontal projection profile variance for angles from -15 to 15 deg in 0.5 deg steps
-  let bestAngle = 0;
-  let maxVariance = -1;
-
-  for (let angle = -15; angle <= 15; angle += 0.5) {
-    const rad = (angle * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-
-    const profile = new Float32Array(h);
-    const counts = new Uint32Array(h);
-
-    // Sample lines
-    for (let y = 10; y < h - 10; y += 2) {
-      for (let x = 10; x < w - 10; x += 4) {
-        // Rotated sample position
-        const rx = Math.floor(x * cos - y * sin);
-        const ry = Math.floor(x * sin + y * cos);
-
-        if (ry >= 0 && ry < h && rx >= 0 && rx < w) {
-          const pixel = gray[y * w + x];
-          // Gradient check
-          if (y > 0) {
-            const diff = Math.abs(pixel - gray[(y - 1) * w + x]);
-            if (diff > 25) {
-              profile[ry] += diff;
-              counts[ry]++;
-            }
-          }
-        }
-      }
-    }
-
-    // Variance of the projection profile
-    let sum = 0;
-    let sumSq = 0;
-    let validRows = 0;
-    for (let y = 0; y < h; y++) {
-      if (counts[y] > 0) {
-        const val = profile[y];
-        sum += val;
-        sumSq += val * val;
-        validRows++;
-      }
-    }
-
-    if (validRows > 0) {
-      const mean = sum / validRows;
-      const variance = sumSq / validRows - mean * mean;
-      if (variance > maxVariance) {
-        maxVariance = variance;
-        bestAngle = angle;
-      }
-    }
-  }
-
-  return -bestAngle;
+  return calculateDeskewAsync(imgData.data, w, h);
 }
 
 export const calculateRadonDeskewAngle = calculateDeskewAngle;
+export const estimatePageSkewAngle = calculateDeskewAngle;
+
+/**
+ * Adaptive defect and quality analysis running in parallel Web Workers
+ */
+export async function applyAdaptiveDefectAnalysis(dataUrl: string): Promise<{
+  skewAngle: number;
+  isBlank: boolean;
+  score: number;
+}> {
+  const img = await loadImage(dataUrl);
+  const maxDim = 600;
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.floor(img.width * scale);
+  const h = Math.floor(img.height * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return { skewAngle: 0, isBlank: false, score: 0 };
+
+  ctx.drawImage(img, 0, 0, w, h);
+  const imgData = ctx.getImageData(0, 0, w, h);
+
+  const [skewAngle, blankResult] = await Promise.all([
+    calculateDeskewAsync(imgData.data, w, h),
+    analyzeBlanknessAsync(imgData.data, w, h),
+  ]);
+
+  return {
+    skewAngle,
+    isBlank: blankResult.isBlank,
+    score: blankResult.score,
+  };
+}
 
 /**
  * Intelligent Page Contour / Boundary Detection

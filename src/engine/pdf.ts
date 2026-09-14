@@ -26,6 +26,8 @@ import {
   OCRResult,
 } from "../types";
 import { DEFAULT_FILTERS, analyzePageBlankness } from "./vision";
+import { performPageOCR } from "./ocr";
+import { pageBlobStore } from "../services/storage/PageBlobStore";
 
 // Configure PDF.js worker locally for 100% offline execution
 export function ensurePdfWorker(): void {
@@ -47,6 +49,7 @@ export interface PDFExportOptions {
   standard: "PDF/A-1b" | "PDF/A-2b" | "PDF/A-3b" | "Standard PDF (1.7)";
   compressionPreset: "maximum" | "high" | "balanced" | "small" | "extreme";
   embedSearchableText: boolean;
+  autoOcrIfMissing?: boolean;
   flattenAnnotations: boolean;
   flattenRedactions: boolean;
   pagesToExport?: number[]; // 1-indexed
@@ -870,23 +873,42 @@ export function embedSearchableTextLayer(
             const rawText = word.text?.trim();
             if (!rawText) continue;
 
-            // Sanitize text for standard font
+            // Sanitize text for standard font (printable ASCII + Latin-1 supplement)
             const clean = rawText.replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
             if (!clean) continue;
 
-            const ocrX = word.bbox.x0;
-            const ocrY = word.bbox.y0;
+            const ocrX0 = word.bbox.x0;
+            const ocrY0 = word.bbox.y0;
+            const ocrW = Math.max(1, word.bbox.x1 - word.bbox.x0);
             const ocrH = Math.max(1, word.bbox.y1 - word.bbox.y0);
 
             // PDF coordinates: origin is bottom-left, flip Y
-            const pdfX = (ocrX / imageWidthPx) * pageWidthPt;
-            const pdfY = pageHeightPt - ((ocrY + ocrH) / imageHeightPx) * pageHeightPt;
-            const pdfFontSize = Math.max(4, Math.min(72, (ocrH / imageHeightPx) * pageHeightPt * 0.95));
+            const pdfX = (ocrX0 / imageWidthPx) * pageWidthPt;
+            const targetBoxW = (ocrW / imageWidthPx) * pageWidthPt;
+            const targetBoxH = (ocrH / imageHeightPx) * pageHeightPt;
+
+            // Align baseline at ~85% from the top of the bounding box
+            const pdfY = pageHeightPt - ((ocrY0 + ocrH * 0.85) / imageHeightPx) * pageHeightPt;
+
+            // Size font so that drawn invisible word width closely matches targetBoxW
+            let pdfFontSize = targetBoxH * 0.95;
+            try {
+              const testWidth = font.widthOfTextAtSize(clean, 10);
+              if (testWidth > 0 && targetBoxW > 0) {
+                const widthMatchedSize = (targetBoxW / testWidth) * 10;
+                // Clamp font size to reasonable bounds around box height
+                pdfFontSize = Math.max(targetBoxH * 0.35, Math.min(targetBoxH * 1.25, widthMatchedSize));
+              }
+            } catch {
+              pdfFontSize = targetBoxH * 0.95;
+            }
+
+            pdfFontSize = Math.max(3, Math.min(96, pdfFontSize));
 
             try {
               page.drawText(clean, {
-                x: pdfX,
-                y: pdfY,
+                x: Math.max(0, Math.min(pageWidthPt, pdfX)),
+                y: Math.max(0, Math.min(pageHeightPt, pdfY)),
                 size: pdfFontSize,
                 font,
               });
@@ -902,18 +924,33 @@ export function embedSearchableTextLayer(
           const clean = rawText.replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
           if (!clean) continue;
 
-          const ocrX = line.bbox.x0;
-          const ocrY = line.bbox.y0;
+          const ocrX0 = line.bbox.x0;
+          const ocrY0 = line.bbox.y0;
+          const ocrW = Math.max(1, line.bbox.x1 - line.bbox.x0);
           const ocrH = Math.max(1, line.bbox.y1 - line.bbox.y0);
 
-          const pdfX = (ocrX / imageWidthPx) * pageWidthPt;
-          const pdfY = pageHeightPt - ((ocrY + ocrH) / imageHeightPx) * pageHeightPt;
-          const pdfFontSize = Math.max(4, Math.min(72, (ocrH / imageHeightPx) * pageHeightPt * 0.90));
+          const pdfX = (ocrX0 / imageWidthPx) * pageWidthPt;
+          const targetBoxW = (ocrW / imageWidthPx) * pageWidthPt;
+          const targetBoxH = (ocrH / imageHeightPx) * pageHeightPt;
+          const pdfY = pageHeightPt - ((ocrY0 + ocrH * 0.85) / imageHeightPx) * pageHeightPt;
+
+          let pdfFontSize = targetBoxH * 0.9;
+          try {
+            const testWidth = font.widthOfTextAtSize(clean, 10);
+            if (testWidth > 0 && targetBoxW > 0) {
+              const widthMatchedSize = (targetBoxW / testWidth) * 10;
+              pdfFontSize = Math.max(targetBoxH * 0.35, Math.min(targetBoxH * 1.2, widthMatchedSize));
+            }
+          } catch {
+            pdfFontSize = targetBoxH * 0.9;
+          }
+
+          pdfFontSize = Math.max(3, Math.min(96, pdfFontSize));
 
           try {
             page.drawText(clean, {
-              x: pdfX,
-              y: pdfY,
+              x: Math.max(0, Math.min(pageWidthPt, pdfX)),
+              y: Math.max(0, Math.min(pageHeightPt, pdfY)),
               size: pdfFontSize,
               font,
             });
@@ -968,13 +1005,19 @@ export async function exportToPDF(
       `Encoding page ${i + 1} of ${totalPages} (${options.standard})...`
     );
 
-    // Ensure on-demand full resolution render if page was deferred during import
-    let finalImageDataUrl = omniPage.processedDataUrl;
+    // Ensure on-demand full resolution render or load from BlobStore
+    let finalImageDataUrl = omniPage.processedDataUrl || "";
     if (omniPage.isPendingRender && omniPage.pdfDocId) {
       const rendered = await renderPdfPageOnDemand(omniPage.pdfDocId, omniPage.pageNumber);
       if (rendered) {
         finalImageDataUrl = rendered.dataUrl;
       }
+    } else if (!finalImageDataUrl && omniPage.processedBlobId) {
+      finalImageDataUrl = await pageBlobStore.loadPageDataUrl(omniPage, "processed");
+    }
+
+    if (!finalImageDataUrl) {
+      finalImageDataUrl = await pageBlobStore.resolvePageUrl(omniPage, "processed");
     }
 
     // Flatten secure redactions destructively
@@ -985,12 +1028,19 @@ export async function exportToPDF(
       );
     }
 
-    // Convert data URL to buffer
-    const imgDataClean = finalImageDataUrl.replace(/^data:image\/\w+;base64,/, "");
-    const imageBytes = Uint8Array.from(atob(imgDataClean), (c) => c.charCodeAt(0));
+    // Convert data URL or blob to buffer
+    let imageBytes: Uint8Array;
+    if (finalImageDataUrl.startsWith("blob:")) {
+      const res = await fetch(finalImageDataUrl);
+      const buf = await res.arrayBuffer();
+      imageBytes = new Uint8Array(buf);
+    } else {
+      const imgDataClean = finalImageDataUrl.replace(/^data:image\/\w+;base64,/, "");
+      imageBytes = Uint8Array.from(atob(imgDataClean), (c) => c.charCodeAt(0));
+    }
 
     let embeddedImage;
-    if (finalImageDataUrl.startsWith("data:image/png")) {
+    if (finalImageDataUrl.startsWith("data:image/png") || finalImageDataUrl.includes("image/png")) {
       embeddedImage = await pdfDoc.embedPng(imageBytes);
     } else {
       embeddedImage = await pdfDoc.embedJpg(imageBytes);
@@ -1011,17 +1061,36 @@ export async function exportToPDF(
       height: ptHeight,
     });
 
-    // Embed Searchable Invisible Text Layer if OCR is present
-    if (options.embedSearchableText && omniPage.ocr?.blocks && omniPage.ocr.blocks.length > 0) {
-      embedSearchableTextLayer(
-        page,
-        omniPage.ocr,
-        ptWidth,
-        ptHeight,
-        omniPage.width,
-        omniPage.height,
-        font
-      );
+    // Embed Searchable Invisible Text Layer if requested
+    if (options.embedSearchableText) {
+      let pageOcr = omniPage.ocr;
+      if (
+        (!pageOcr || !pageOcr.blocks || pageOcr.blocks.length === 0) &&
+        options.autoOcrIfMissing
+      ) {
+        options.onProgress?.(
+          ((i + 0.3) / totalPages) * 0.9,
+          `Generating searchable OCR layer for page ${i + 1}...`
+        );
+        try {
+          pageOcr = await performPageOCR(finalImageDataUrl);
+          omniPage.ocr = pageOcr;
+        } catch (ocrErr) {
+          console.warn("Auto-OCR during PDF export failed for page", i + 1, ocrErr);
+        }
+      }
+
+      if (pageOcr?.blocks && pageOcr.blocks.length > 0) {
+        embedSearchableTextLayer(
+          page,
+          pageOcr,
+          ptWidth,
+          ptHeight,
+          omniPage.width,
+          omniPage.height,
+          font
+        );
+      }
     }
 
     // Embed Vector Annotations if requested
@@ -1048,6 +1117,7 @@ export async function exportDocumentToPDF(
     pdfAStandard: string;
     compressionPreset: "maximum" | "high" | "balanced" | "small" | "extreme";
     embedSearchableTextLayer: boolean;
+    autoOcrIfMissing: boolean;
     destructiveRedaction: boolean;
     pagesToExport?: number[];
     onProgress?: (progress: number, message: string) => void;
@@ -1058,6 +1128,7 @@ export async function exportDocumentToPDF(
     standard: std,
     compressionPreset: options?.compressionPreset || "balanced",
     embedSearchableText: options?.embedSearchableTextLayer ?? true,
+    autoOcrIfMissing: options?.autoOcrIfMissing ?? false,
     flattenAnnotations: true,
     flattenRedactions: options?.destructiveRedaction ?? true,
     pagesToExport: options?.pagesToExport,
