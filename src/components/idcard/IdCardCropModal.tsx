@@ -28,6 +28,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { IdCardUnit, convertIdCardUnit } from "../../engine/idCardLayout";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 export interface NormalizedCropRect {
   x: number; // 0 to 1
@@ -700,6 +701,43 @@ export const IdCardCropModal: React.FC<IdCardCropModalProps> = ({
   const nativeCropH = Math.round((cropBox.height / displayedH) * rotH);
   const displayW = convertIdCardUnit(nativeCropW, "px", unit);
   const displayH = convertIdCardUnit(nativeCropH, "px", unit);
+
+  // Centralized Scoped Shortcuts for ID Card Crop Modal
+  useToolShortcuts({
+    scope: "crop",
+    isOpen,
+    priority: 250,
+    onEscape: onClose,
+    onEnter: handleApply,
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+    onZoomIn: handleZoomIn,
+    onZoomOut: handleZoomOut,
+    onResetZoom: handleResetZoom,
+    onRotateCw: () => handleRotate(90),
+    onRotateCcw: () => handleRotate(-90),
+    onNudge: (dir, multiplier) => {
+      const step = 6 * multiplier;
+      let dx = 0;
+      let dy = 0;
+      if (dir === "up") dy = -step;
+      if (dir === "down") dy = step;
+      if (dir === "left") dx = -step;
+      if (dir === "right") dx = step;
+      setCropBox((prev) => ({
+        ...prev,
+        x: Math.max(0, Math.min(stageDimensions.width - prev.width, prev.x + dx)),
+        y: Math.max(0, Math.min(stageDimensions.height - prev.height, prev.y + dy)),
+      }));
+    },
+    actions: {
+      "crop.reset": handleResetZoom,
+      "crop.fitImage": handleFitImage,
+      "crop.fitArea": handleFitCropArea,
+      "crop.rotateCw": () => handleRotate(90),
+      "crop.rotateCcw": () => handleRotate(-90),
+    },
+  });
 
   if (!isOpen) return null;
 

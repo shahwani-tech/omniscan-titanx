@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { OmniPage, AppLanguage } from "../../types";
 import { ACCEPT_ALL_SUPPORTED } from "../../services/upload/FileTypeRegistry";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface BatchStudioModalProps {
   isOpen: boolean;
@@ -70,8 +71,6 @@ export const BatchStudioModal: React.FC<BatchStudioModalProps> = ({
   const [isAddingFiles, setIsAddingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
-
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0 || !onAddFiles) return;
     setIsAddingFiles(true);
@@ -114,6 +113,22 @@ export const BatchStudioModal: React.FC<BatchStudioModalProps> = ({
       setIsRunning(false);
     }
   };
+
+  // Centralized Scoped Shortcuts for Batch Studio Modal
+  useToolShortcuts({
+    scope: "batch",
+    isOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: () => {
+      if (!isRunning) handleStart();
+    },
+    actions: {
+      "batch.start": handleStart,
+    },
+  });
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 select-none">

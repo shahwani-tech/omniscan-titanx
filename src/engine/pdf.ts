@@ -4,10 +4,27 @@
  * Virtualized/Lazy Loading for 1000+ Pages, Secure Redaction & Compression
  */
 
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import {
+  PDFDocument,
+  PDFPage,
+  PDFFont,
+  rgb,
+  StandardFonts,
+  pushGraphicsState,
+  popGraphicsState,
+  setTextRenderingMode,
+  TextRenderingMode,
+} from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { DocumentMetadata, OmniDocument, OmniPage, OmniRedaction, OmniAnnotation } from "../types";
+import {
+  DocumentMetadata,
+  OmniDocument,
+  OmniPage,
+  OmniRedaction,
+  OmniAnnotation,
+  OCRResult,
+} from "../types";
 import { DEFAULT_FILTERS, analyzePageBlankness } from "./vision";
 
 // Configure PDF.js worker locally for 100% offline execution
@@ -48,6 +65,64 @@ export interface PDFImportError extends Error {
 }
 
 /**
+ * Generic High-Performance Bounded LRU Cache for memory-safe document handling
+ */
+export class BoundedLRUCache<K, V> {
+  private capacity: number;
+  private cache = new Map<K, V>();
+  private onEvict?: (key: K, value: V) => void;
+
+  constructor(capacity: number, onEvict?: (key: K, value: V) => void) {
+    this.capacity = capacity;
+    this.onEvict = onEvict;
+  }
+
+  get(key: K): V | undefined {
+    if (!this.cache.has(key)) return undefined;
+    const val = this.cache.get(key)!;
+    this.cache.delete(key);
+    this.cache.set(key, val);
+    return val;
+  }
+
+  set(key: K, value: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.capacity) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        const oldestVal = this.cache.get(oldestKey);
+        this.cache.delete(oldestKey);
+        if (oldestVal && this.onEvict) {
+          this.onEvict(oldestKey, oldestVal);
+        }
+      }
+    }
+    this.cache.set(key, value);
+  }
+
+  has(key: K): boolean {
+    return this.cache.has(key);
+  }
+
+  delete(key: K): boolean {
+    return this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  keys(): IterableIterator<K> {
+    return this.cache.keys();
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+}
+
+/**
  * Cache for loaded PDF document proxies to support fast on-demand lazy rendering
  */
 interface CachedPdfEntry {
@@ -60,9 +135,9 @@ interface CachedPdfEntry {
 const pdfProxyCache = new Map<string, CachedPdfEntry>();
 
 /**
- * Cache for rendered full-resolution pages: key `${pdfDocId}-page-${pageNum}`
+ * Bounded LRU Cache for rendered full-resolution pages (strictly bounded to 25 pages to prevent OOM on 10,000-page PDFs)
  */
-const renderedPageCache = new Map<
+const renderedPageCache = new BoundedLRUCache<
   string,
   {
     dataUrl: string;
@@ -72,12 +147,12 @@ const renderedPageCache = new Map<
     isBlank: boolean;
     blankScore: number;
   }
->();
+>(25);
 
 /**
- * Cache for rendered lightweight thumbnails: key `${pdfDocId}-thumb-${pageNum}`
+ * Bounded LRU Cache for lightweight thumbnails (max 500 items)
  */
-const thumbnailCache = new Map<
+const thumbnailCache = new BoundedLRUCache<
   string,
   {
     thumbnailUrl: string;
@@ -86,7 +161,7 @@ const thumbnailCache = new Map<
     isBlank: boolean;
     blankScore: number;
   }
->();
+>(500);
 
 /**
  * Active in-flight render promises to deduplicate simultaneous requests
@@ -450,31 +525,35 @@ export async function importPDFFile(
     try {
       // Use zero-copy blob object URL for instant parsing without copying entire buffer to JS memory
       objectUrl = URL.createObjectURL(file);
-      loadingTask = pdfjsLib.getDocument({
+      loadingTask = (pdfjsLib.getDocument as any)({
         url: objectUrl,
         password: options?.password || "",
         useSystemFonts: true,
+        isEvalSupported: false, // Security hardening against untrusted embedded scripts
       });
     } catch {
       // Fallback to ArrayBuffer if blob URL is restricted
       const buffer = await file.arrayBuffer();
-      loadingTask = pdfjsLib.getDocument({
+      loadingTask = (pdfjsLib.getDocument as any)({
         data: new Uint8Array(buffer),
         password: options?.password || "",
         useSystemFonts: true,
+        isEvalSupported: false,
       });
     }
   } else if (file instanceof Uint8Array) {
-    loadingTask = pdfjsLib.getDocument({
+    loadingTask = (pdfjsLib.getDocument as any)({
       data: file,
       password: options?.password || "",
       useSystemFonts: true,
+      isEvalSupported: false,
     });
   } else {
-    loadingTask = pdfjsLib.getDocument({
+    loadingTask = (pdfjsLib.getDocument as any)({
       data: new Uint8Array(file),
       password: options?.password || "",
       useSystemFonts: true,
+      isEvalSupported: false,
     });
   }
 
@@ -761,6 +840,96 @@ export function estimatePDFSize(
 }
 
 /**
+ * Embed an invisible, search-indexable text layer onto a PDF page
+ * Uses PDF standard Text Rendering Mode 3 (Neither fill nor stroke text)
+ * Allows full Ctrl+F searching, text selection, and clipboard copy/paste in Acrobat, Chrome, and Preview
+ * while keeping the visual raster layer pristine.
+ */
+export function embedSearchableTextLayer(
+  page: PDFPage,
+  ocr: OCRResult | undefined,
+  pageWidthPt: number,
+  pageHeightPt: number,
+  imageWidthPx: number,
+  imageHeightPx: number,
+  font: PDFFont
+): void {
+  if (!ocr || !ocr.blocks || ocr.blocks.length === 0) return;
+  if (!imageWidthPx || !imageHeightPx || imageWidthPx <= 0 || imageHeightPx <= 0) return;
+
+  // Set PDF Text Rendering Mode 3 (Invisible) inside an isolated graphics state
+  page.pushOperators(pushGraphicsState(), setTextRenderingMode(TextRenderingMode.Invisible));
+
+  try {
+    for (const block of ocr.blocks) {
+      if (!block.lines) continue;
+      for (const line of block.lines) {
+        // Prefer word-level coordinates for highest spatial fidelity in text selection and search
+        if (line.words && line.words.length > 0) {
+          for (const word of line.words) {
+            const rawText = word.text?.trim();
+            if (!rawText) continue;
+
+            // Sanitize text for standard font
+            const clean = rawText.replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
+            if (!clean) continue;
+
+            const ocrX = word.bbox.x0;
+            const ocrY = word.bbox.y0;
+            const ocrH = Math.max(1, word.bbox.y1 - word.bbox.y0);
+
+            // PDF coordinates: origin is bottom-left, flip Y
+            const pdfX = (ocrX / imageWidthPx) * pageWidthPt;
+            const pdfY = pageHeightPt - ((ocrY + ocrH) / imageHeightPx) * pageHeightPt;
+            const pdfFontSize = Math.max(4, Math.min(72, (ocrH / imageHeightPx) * pageHeightPt * 0.95));
+
+            try {
+              page.drawText(clean, {
+                x: pdfX,
+                y: pdfY,
+                size: pdfFontSize,
+                font,
+              });
+            } catch {
+              // Non-fatal fallback for character encoding mismatch
+            }
+          }
+        } else {
+          // Line-level fallback
+          const rawText = line.text?.trim();
+          if (!rawText) continue;
+
+          const clean = rawText.replace(/[^\x20-\x7E\xA0-\xFF]/g, " ").trim();
+          if (!clean) continue;
+
+          const ocrX = line.bbox.x0;
+          const ocrY = line.bbox.y0;
+          const ocrH = Math.max(1, line.bbox.y1 - line.bbox.y0);
+
+          const pdfX = (ocrX / imageWidthPx) * pageWidthPt;
+          const pdfY = pageHeightPt - ((ocrY + ocrH) / imageHeightPx) * pageHeightPt;
+          const pdfFontSize = Math.max(4, Math.min(72, (ocrH / imageHeightPx) * pageHeightPt * 0.90));
+
+          try {
+            page.drawText(clean, {
+              x: pdfX,
+              y: pdfY,
+              size: pdfFontSize,
+              font,
+            });
+          } catch {
+            // Non-fatal fallback for character encoding mismatch
+          }
+        }
+      }
+    }
+  } finally {
+    // Pop graphics state back to restore normal rendering mode
+    page.pushOperators(popGraphicsState());
+  }
+}
+
+/**
  * Export complete document to PDF / PDF/A with embedded XMP metadata and annotations
  */
 export async function exportToPDF(
@@ -843,36 +1012,16 @@ export async function exportToPDF(
     });
 
     // Embed Searchable Invisible Text Layer if OCR is present
-    if (options.embedSearchableText && omniPage.ocr?.blocks) {
-      for (const block of omniPage.ocr.blocks) {
-        for (const line of block.lines) {
-          if (!line.text.trim()) continue;
-
-          // Convert pixel bbox to PDF coordinates (PDF origin is bottom-left)
-          const normX = line.bbox.x0 / omniPage.width;
-          const normY = line.bbox.y0 / omniPage.height;
-          const normW = (line.bbox.x1 - line.bbox.x0) / omniPage.width;
-          const normH = (line.bbox.y1 - line.bbox.y0) / omniPage.height;
-
-          const pdfX = normX * ptWidth;
-          const pdfY = ptHeight - (normY + normH) * ptHeight;
-          const pdfFontSize = Math.max(6, normH * ptHeight * 0.85);
-
-          try {
-            // Draw text with invisible opacity (0.0001) for clipboard & search index
-            page.drawText(line.text, {
-              x: pdfX,
-              y: pdfY,
-              size: pdfFontSize,
-              font: font,
-              color: rgb(0, 0, 0),
-              opacity: 0.0001,
-            });
-          } catch (e) {
-            // Non-fatal text encoding issue
-          }
-        }
-      }
+    if (options.embedSearchableText && omniPage.ocr?.blocks && omniPage.ocr.blocks.length > 0) {
+      embedSearchableTextLayer(
+        page,
+        omniPage.ocr,
+        ptWidth,
+        ptHeight,
+        omniPage.width,
+        omniPage.height,
+        font
+      );
     }
 
     // Embed Vector Annotations if requested

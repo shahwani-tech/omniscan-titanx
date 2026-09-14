@@ -22,10 +22,82 @@ const ACTIVE_PROVIDER_STORAGE_KEY = "omniscan_bg_active_provider_id";
 export const DEFAULT_GITHUB_CONFIG: BackgroundRemovalProviderConfig = {
   endpointUrl: "http://localhost:5000/api/background/remove",
   timeoutMs: 30000,
-  apiKey: "",
-  authHeader: "",
   modelName: "birefnet-general",
 };
+
+/**
+ * Security: Scans and removes any legacy plaintext API keys or auth headers
+ * from localStorage to protect user credentials. Runs on startup.
+ */
+export function migrateLegacyLocalStorageSecrets(): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+
+  try {
+    // 1. Sanitize GitHub provider config in localStorage
+    const rawGithub = localStorage.getItem(GITHUB_PROVIDER_STORAGE_KEY);
+    if (rawGithub) {
+      const parsed = JSON.parse(rawGithub);
+      if (parsed && typeof parsed === "object") {
+        let changed = false;
+        if ("apiKey" in parsed) {
+          delete parsed.apiKey;
+          changed = true;
+        }
+        if ("authHeader" in parsed) {
+          delete parsed.authHeader;
+          changed = true;
+        }
+        if (changed) {
+          localStorage.setItem(GITHUB_PROVIDER_STORAGE_KEY, JSON.stringify(parsed));
+        }
+      }
+    }
+
+    // 2. Audit all other keys in localStorage for legacy tokens or keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      // Skip known benign non-secret keys
+      if (
+        key.startsWith("omniscan_cropbar") ||
+        key.startsWith("omniscan_keyboard_shortcuts") ||
+        key.startsWith("omniscan_recent_colors") ||
+        key.startsWith("omniscan_custom_presets") ||
+        key.startsWith("omniscan_project_recovery")
+      ) {
+        continue;
+      }
+      try {
+        const val = localStorage.getItem(key);
+        if (val && (val.startsWith("{") || val.startsWith("["))) {
+          const obj = JSON.parse(val);
+          if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+            let modified = false;
+            if ("apiKey" in obj) {
+              delete obj.apiKey;
+              modified = true;
+            }
+            if ("authHeader" in obj) {
+              delete obj.authHeader;
+              modified = true;
+            }
+            if ("secretKey" in obj) {
+              delete obj.secretKey;
+              modified = true;
+            }
+            if (modified) {
+              localStorage.setItem(key, JSON.stringify(obj));
+            }
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+  } catch (err) {
+    console.warn("Storage secret sanitization notice:", err);
+  }
+}
 
 /**
  * 1. Local Browser-Based Provider
@@ -39,9 +111,10 @@ export class LocalBackgroundRemovalProvider implements BackgroundRemovalProvider
   readonly isConfigured = true;
   readonly isLocal = true;
 
-  async checkHealth(): Promise<{ ok: boolean; latencyMs?: number; message?: string }> {
+  async checkHealth(): Promise<{ ok: boolean; configured?: boolean; latencyMs?: number; message?: string }> {
     return {
       ok: true,
+      configured: true,
       latencyMs: 1,
       message: "Browser WebAssembly/Canvas processing ready (Zero Network Latency).",
     };
@@ -89,7 +162,23 @@ export class GitHubBackgroundRemovalProvider implements BackgroundRemovalProvide
   private loadSavedConfig(): Partial<BackgroundRemovalProviderConfig> {
     try {
       const raw = localStorage.getItem(GITHUB_PROVIDER_STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        // Security: Remove any legacy plaintext secrets if found
+        let hadSecrets = false;
+        if ("apiKey" in parsed) {
+          delete parsed.apiKey;
+          hadSecrets = true;
+        }
+        if ("authHeader" in parsed) {
+          delete parsed.authHeader;
+          hadSecrets = true;
+        }
+        if (hadSecrets) {
+          localStorage.setItem(GITHUB_PROVIDER_STORAGE_KEY, JSON.stringify(parsed));
+        }
+        return parsed;
+      }
     } catch {
       // ignore
     }
@@ -98,13 +187,21 @@ export class GitHubBackgroundRemovalProvider implements BackgroundRemovalProvide
 
   private saveConfig(): void {
     try {
-      localStorage.setItem(GITHUB_PROVIDER_STORAGE_KEY, JSON.stringify(this.config));
+      // Security: Only persist non-sensitive configuration to client-side localStorage.
+      // API keys, tokens, and authorization headers MUST NEVER be stored in localStorage.
+      const safeConfig: Partial<BackgroundRemovalProviderConfig> = {
+        endpointUrl: this.config.endpointUrl,
+        timeoutMs: this.config.timeoutMs,
+        modelName: this.config.modelName,
+        additionalParams: this.config.additionalParams,
+      };
+      localStorage.setItem(GITHUB_PROVIDER_STORAGE_KEY, JSON.stringify(safeConfig));
     } catch {
       // ignore
     }
   }
 
-  async checkHealth(): Promise<{ ok: boolean; latencyMs?: number; message?: string }> {
+  async checkHealth(): Promise<{ ok: boolean; configured?: boolean; latencyMs?: number; message?: string }> {
     if (!this.isConfigured) {
       return {
         ok: false,
@@ -114,55 +211,49 @@ export class GitHubBackgroundRemovalProvider implements BackgroundRemovalProvide
 
     const t0 = performance.now();
     try {
-      // Check health endpoint (try /health or HEAD/GET on base endpoint)
-      let healthUrl = this.config.endpointUrl;
-      try {
-        const urlObj = new URL(this.config.endpointUrl);
-        urlObj.pathname = urlObj.pathname.replace(/\/remove\/?$/, "/health");
-        healthUrl = urlObj.toString();
-      } catch {
-        // fallback
-      }
-
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4000);
+      const timer = setTimeout(() => controller.abort(), 6000);
 
-      const headers: Record<string, string> = {
-        Accept: "application/json, text/plain",
-      };
-      if (this.config.apiKey) {
-        headers["Authorization"] = this.config.authHeader
-          ? `${this.config.authHeader} ${this.config.apiKey}`
-          : `Bearer ${this.config.apiKey}`;
-      }
-
-      const response = await fetch(healthUrl, {
-        method: "GET",
-        headers,
+      // Route health check securely through local server proxy (/api/background/health)
+      // to keep credentials strictly server-side and bypass client-side CORS limitations
+      const response = await fetch("/api/background/health", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          endpointUrl: this.config.endpointUrl,
+        }),
         signal: controller.signal,
-      }).catch(async () => {
-        // If /health fails, try OPTIONS or HEAD on primary endpoint
-        return await fetch(this.config.endpointUrl, {
-          method: "OPTIONS",
-          headers,
-          signal: controller.signal,
-        });
       });
 
       clearTimeout(timer);
       const latencyMs = Math.round(performance.now() - t0);
 
       if (response.ok) {
+        const data = await response.json();
         return {
-          ok: true,
-          latencyMs,
-          message: `Backend connected successfully (${latencyMs}ms response time).`,
+          ok: data.ok !== false,
+          configured: data.configured !== false,
+          latencyMs: data.latencyMs || latencyMs,
+          message:
+            data.message ||
+            `Backend connected successfully (${latencyMs}ms response time).`,
         };
       } else {
+        const errData = await response.json().catch(() => ({}));
+        const isUnconfigured =
+          response.status === 503 || errData?.code === "SERVICE_NOT_CONFIGURED";
         return {
           ok: false,
+          configured: !isUnconfigured,
           latencyMs,
-          message: `Backend responded with HTTP ${response.status}: ${response.statusText}`,
+          message:
+            errData.message ||
+            (isUnconfigured
+              ? "AI background removal isn't set up yet — this feature will be available once configured."
+              : `Backend proxy returned HTTP ${response.status}`),
         };
       }
     } catch (err: any) {
@@ -172,8 +263,8 @@ export class GitHubBackgroundRemovalProvider implements BackgroundRemovalProvide
         latencyMs,
         message:
           err.name === "AbortError"
-            ? "Connection timed out (no response within 4 seconds)."
-            : `Could not connect to ${this.config.endpointUrl}. Ensure the GitHub repository server is running.`,
+            ? "Connection timed out (no response within 6 seconds)."
+            : `Could not connect to background proxy. (${err.message || "Network Error"})`,
       };
     }
   }
@@ -214,26 +305,22 @@ export class GitHubBackgroundRemovalProvider implements BackgroundRemovalProvide
       },
       model: this.config.modelName,
       params: this.config.additionalParams || {},
+      endpointUrl: this.config.endpointUrl,
     };
 
     const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), this.config.timeoutMs || 30000);
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-    if (this.config.apiKey) {
-      headers["Authorization"] = this.config.authHeader
-        ? `${this.config.authHeader} ${this.config.apiKey}`
-        : `Bearer ${this.config.apiKey}`;
-    }
+    const timeoutTimer = setTimeout(() => controller.abort(), this.config.timeoutMs || 45000);
 
     let response: Response;
     try {
-      response = await fetch(this.config.endpointUrl, {
+      // Route background removal request securely through local Express server proxy (/api/background/remove)
+      // to keep credentials (API keys / auth headers) strictly on the server side.
+      response = await fetch("/api/background/remove", {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify(payload),
         signal: input.signal || controller.signal,
       });
@@ -241,21 +328,27 @@ export class GitHubBackgroundRemovalProvider implements BackgroundRemovalProvide
       clearTimeout(timeoutTimer);
       if (netErr.name === "AbortError") {
         throw new Error(
-          `Background removal request timed out after ${(this.config.timeoutMs || 30000) / 1000}s.`
+          `Background removal request timed out after ${(this.config.timeoutMs || 45000) / 1000}s.`
         );
       }
       throw new Error(
-        `Failed to reach background removal backend at ${this.config.endpointUrl}. Is the service running? (${netErr.message || "Network Error"})`
+        `Failed to reach background removal backend proxy at /api/background/remove. (${netErr.message || "Network Error"})`
       );
     } finally {
       clearTimeout(timeoutTimer);
     }
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      throw new Error(
-        `Backend returned HTTP error ${response.status}: ${errText || response.statusText}`
-      );
+      const errJson = await response.json().catch(() => null);
+      const isUnconfigured =
+        response.status === 503 || errJson?.code === "SERVICE_NOT_CONFIGURED";
+      const errMessage = isUnconfigured
+        ? (errJson?.message || "AI background removal isn't set up yet — this feature will be available once configured.")
+        : (errJson?.error || errJson?.message || `Background removal service error (${response.status}): ${response.statusText}`);
+      const err = new Error(errMessage);
+      (err as any).isUnconfigured = isUnconfigured;
+      (err as any).status = response.status;
+      throw err;
     }
 
     // Expected JSON response:
@@ -355,7 +448,13 @@ class BackgroundRemovalServiceManager {
     try {
       return await provider.removeBackground(input);
     } catch (err: any) {
-      // If github provider failed and local fallback is viable
+      // If the error was explicitly that the remote AI service is unconfigured,
+      // bubble it up so the UI displays the clear unconfigured notification and fallback options
+      if (err.isUnconfigured) {
+        throw err;
+      }
+
+      // If github provider failed with a network error and local fallback is viable
       if (provider.id !== "local" && !input.signal?.aborted) {
         console.warn(`Provider "${provider.name}" failed (${err.message}). Falling back to Local Biometric AI...`);
         const local = this.providers.get("local")!;

@@ -81,7 +81,7 @@ export interface BackgroundRemovalProvider {
   readonly description: string;
   readonly isConfigured: boolean;
   readonly isLocal: boolean;
-  checkHealth?: () => Promise<{ ok: boolean; latencyMs?: number; message?: string }>;
+  checkHealth?: () => Promise<{ ok: boolean; configured?: boolean; latencyMs?: number; message?: string }>;
   removeBackground: (input: BackgroundRemovalInput) => Promise<BackgroundRemovalResult>;
 }
 
@@ -110,6 +110,7 @@ export interface BackgroundStudioState {
     providerId: string;
     confidenceScore: number;
     errorMessage?: string;
+    isUnconfigured?: boolean;
     maskUrl?: string;
     edgeUrl?: string;
     transparentUrl?: string;

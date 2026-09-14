@@ -56,11 +56,16 @@ import { DocumentCompareModal } from "./components/compare/DocumentCompareModal"
 import { SecurityModal } from "./components/security/SecurityModal";
 import { CommandPalette } from "./components/command/CommandPalette";
 import { DiagnosticsModal } from "./components/diagnostics/DiagnosticsModal";
+import { StressTestModal } from "./components/diagnostics/StressTestModal";
+import { ErrorBoundary } from "./components/common/ErrorBoundary";
+import { ToastContainer } from "./components/common/ToastContainer";
+import { toast } from "./services/toast/toastService";
 import { CamScannerFilterModal } from "./components/filters/CamScannerFilterModal";
 import { PhotoPrintStudioModal } from "./components/photo/PhotoPrintStudioModal";
 import { IdCardPrintStudioModal } from "./components/idcard/IdCardPrintStudioModal";
 import { DocumentWorkspaceModal } from "./components/converter/DocumentWorkspaceModal";
 import { PasswordModal } from "./components/modals/PasswordModal";
+import { migrateLegacyLocalStorageSecrets } from "./engine/background/BackgroundRemovalService";
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
 import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
 import { KeyboardShortcutsModal } from "./components/command/KeyboardShortcutsModal";
@@ -88,6 +93,7 @@ import {
   Printer,
   Palette,
   CreditCard,
+  Zap,
 } from "lucide-react";
 
 export function AppContent() {
@@ -109,6 +115,10 @@ export function AppContent() {
         author: "Titan Autonomous Document Intelligence",
         subject: "Accounts Payable & Enterprise NDA",
         keywords: "invoice, contract, msa, titan, defense",
+        creator: "OmniScan Pro Ultra",
+        producer: "Titan X Professional PDF Kernel",
+        creationDate: new Date().toISOString(),
+        modificationDate: new Date().toISOString(),
         pdfAStandard: "PDF/A-2b",
       },
     };
@@ -146,13 +156,13 @@ export function AppContent() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isKeyboardShortcutsModalOpen, setIsKeyboardShortcutsModalOpen] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
+  const [isStressTestModalOpen, setIsStressTestModalOpen] = useState<boolean>(false);
   const [isFilterStudioModalOpen, setIsFilterStudioModalOpen] = useState<boolean>(false);
   const [isPhotoPrintStudioModalOpen, setIsPhotoPrintStudioModalOpen] = useState<boolean>(false);
   const [isIdCardStudioModalOpen, setIsIdCardStudioModalOpen] = useState<boolean>(false);
   const [isWorkspaceModalOpen, setIsWorkspaceModalOpen] = useState<boolean>(false);
   const [idCardStudioInitialMode, setIdCardStudioInitialMode] = useState<"idcard" | "a6">("idcard");
   const [isSplitPdfModalOpen, setIsSplitPdfModalOpen] = useState<boolean>(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [passwordModalState, setPasswordModalState] = useState<{
     isOpen: boolean;
     file: File | null;
@@ -176,6 +186,11 @@ export function AppContent() {
       window.document.documentElement.classList.remove("dark");
     }
   }, [theme]);
+
+  // One-time security migration: remove any legacy plaintext API keys from localStorage
+  useEffect(() => {
+    migrateLegacyLocalStorageSecrets();
+  }, []);
 
   // Set RTL direction if language is Urdu or Arabic
   useEffect(() => {
@@ -626,10 +641,9 @@ export function AppContent() {
       const typeLabel = enhancedPage.detectedContent?.label || "Document";
       const corrections =
         enhancedPage.adaptiveAnalysis?.plan.appliedCorrections.join("; ") || "Tone & contrast enhanced";
-      setToastMessage(
+      toast.success(
         `Auto-Optimized (${typeLabel} +${qualityDelta} pts): ${corrections}`
       );
-      setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
       console.error("Adaptive auto-detect error:", err);
       // Fallback to legacy classification if needed
@@ -688,10 +702,9 @@ export function AppContent() {
         const corrections =
           enhancedPage.adaptiveAnalysis?.plan.appliedCorrections.join("; ") ||
           "Tone, whitening & contrast enhanced";
-        setToastMessage(
+        toast.success(
           `Auto-Optimized (${typeLabel} +${qualityDelta} pts): ${corrections}`
         );
-        setTimeout(() => setToastMessage(null), 4000);
       } catch (err) {
         console.error("Adaptive enhancement error:", err);
       } finally {
@@ -732,8 +745,7 @@ export function AppContent() {
       }
 
       setIsDirty(true);
-      setToastMessage(`Successfully optimized all ${document.pages.length} pages adaptively.`);
-      setTimeout(() => setToastMessage(null), 3500);
+      toast.success(`Successfully optimized all ${document.pages.length} pages adaptively.`);
     } catch (err) {
       console.error("Batch adaptive optimization error:", err);
     } finally {
@@ -817,8 +829,7 @@ export function AppContent() {
       setProcessingMessage("");
     }
 
-    setToastMessage(`Successfully applied adjustments to all ${pageCount} pages.`);
-    setTimeout(() => setToastMessage(null), 3500);
+    toast.success(`Successfully applied adjustments to all ${pageCount} pages.`);
   }, [activePage, document, recordHistorySnapshot]);
 
   // -------------------------------------------------------------
@@ -1092,26 +1103,22 @@ export function AppContent() {
   // -------------------------------------------------------------
   const handleSelectPage = useCallback(
     (index: number, multiSelect = false) => {
-      setDocument((currentDoc) => {
-        if (index < 0 || index >= currentDoc.pages.length) return currentDoc;
-        const targetPage = currentDoc.pages[index];
-        if (!targetPage) return currentDoc;
+      if (index < 0 || index >= document.pages.length) return;
+      const targetPage = document.pages[index];
+      if (!targetPage) return;
 
-        setActivePageIndex(index);
+      setActivePageIndex(index);
 
-        setSelectedPageIds((prev) => {
-          if (!multiSelect) {
-            return [targetPage.id];
-          }
-          return prev.includes(targetPage.id)
-            ? prev.filter((id) => id !== targetPage.id)
-            : [...prev, targetPage.id];
-        });
-
-        return currentDoc;
+      setSelectedPageIds((prev) => {
+        if (!multiSelect) {
+          return [targetPage.id];
+        }
+        return prev.includes(targetPage.id)
+          ? prev.filter((id) => id !== targetPage.id)
+          : [...prev, targetPage.id];
       });
     },
-    []
+    [document.pages]
   );
 
   const handleRotateActivePage = useCallback(
@@ -1442,7 +1449,7 @@ export function AppContent() {
           error: password ? "Incorrect password. Please try again." : undefined,
         });
       } else {
-        alert(`Could not open PDF file "${file.name}":\n${err?.message || String(err)}`);
+        toast.error(`Could not open PDF file "${file.name}":\n${err?.message || String(err)}`);
       }
     } finally {
       setIsProcessing(false);
@@ -1642,7 +1649,7 @@ export function AppContent() {
   // Print Document (Native Print)
   const handlePrintDocument = useCallback(() => {
     if (document.pages.length === 0) {
-      alert("No pages to print in current document.");
+      toast.warning("No pages to print in current document.");
       return;
     }
     window.print();
@@ -1651,7 +1658,7 @@ export function AppContent() {
   // Print File from Workspace (Native Print)
   const handlePrintFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
-    const iframe = document.createElement("iframe");
+    const iframe = window.document.createElement("iframe");
     iframe.style.position = "fixed";
     iframe.style.right = "0";
     iframe.style.bottom = "0";
@@ -1671,7 +1678,7 @@ export function AppContent() {
         iframe.remove();
       }, 60000);
     };
-    document.body.appendChild(iframe);
+    window.document.body.appendChild(iframe);
   }, []);
 
   // Auto-Remove Blank Pages
@@ -1691,7 +1698,7 @@ export function AppContent() {
       }
 
       if (blankIndices.length === 0) {
-        alert("No blank pages were detected in this document.");
+        toast.info("No blank pages were detected in this document.");
         return;
       }
 
@@ -1755,7 +1762,7 @@ export function AppContent() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("PDF Export error:", err);
-      alert("Failed to export PDF: " + String(err));
+      toast.error("Failed to export PDF: " + String(err));
     } finally {
       setIsProcessing(false);
       setProcessingMessage("");
@@ -1797,7 +1804,7 @@ export function AppContent() {
       setIsDirty(false);
     } catch (err) {
       console.error(err);
-      alert("Invalid .titanproj archive");
+      toast.error("Invalid .titanproj archive");
     } finally {
       setIsProcessing(false);
       setProcessingMessage("");
@@ -1857,7 +1864,7 @@ export function AppContent() {
       registerAction("page.rotateCcw", () => handleRotateActivePage(-90)),
       registerAction("page.duplicate", () => handleDuplicatePage(activePageIndex)),
       registerAction("tool.select", () => setActiveTool("select")),
-      registerAction("tool.hand", () => setActiveTool("hand")),
+      registerAction("tool.hand", () => setActiveTool("pan")),
       registerAction("tool.crop", () => setActiveTool("crop")),
       registerAction("tool.filters", () => setIsFilterStudioModalOpen(true)),
       registerAction("tool.deskew", () => handleAutoDeskew()),
@@ -1876,6 +1883,7 @@ export function AppContent() {
       registerAction("studio.compare", () => setIsCompareModalOpen(true)),
       registerAction("studio.converter", () => setIsWorkspaceModalOpen(true)),
       registerAction("studio.split", () => setIsSplitPdfModalOpen(true)),
+      registerAction("diagnostics.stressTest", () => setIsStressTestModalOpen(true)),
       registerAction("app.help", () => setIsKeyboardShortcutsModalOpen(true)),
     ];
 
@@ -2033,6 +2041,13 @@ export function AppContent() {
       action: () => setIsDiagnosticsOpen(true),
     },
     {
+      id: "cmd-stress-test",
+      title: "Run Extreme Scale Stress Test (10,000 files/pages)",
+      category: "Diagnostics",
+      icon: <Zap className="w-4 h-4 text-amber-400" />,
+      action: () => setIsStressTestModalOpen(true),
+    },
+    {
       id: "cmd-rotate-cw",
       title: "Rotate Page 90° Clockwise",
       category: "Page",
@@ -2131,6 +2146,7 @@ export function AppContent() {
         onOpenCompare={() => setIsCompareModalOpen(true)}
         onOpenSecurity={() => setIsSecurityModalOpen(true)}
         onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
+        onOpenStressTest={() => setIsStressTestModalOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onOpenKeyboardShortcuts={() => setIsKeyboardShortcutsModalOpen(true)}
         onAnalyzeIntelligence={() => handleAnalyzeIntelligence()}
@@ -2268,7 +2284,6 @@ export function AppContent() {
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
-        commands={commandItems}
       />
 
       <KeyboardShortcutsModal
@@ -2280,6 +2295,21 @@ export function AppContent() {
         isOpen={isDiagnosticsOpen}
         document={document}
         onClose={() => setIsDiagnosticsOpen(false)}
+      />
+
+      <StressTestModal
+        isOpen={isStressTestModalOpen}
+        onClose={() => setIsStressTestModalOpen(false)}
+        onLoadSyntheticDocument={(syntheticPages) => {
+          setDocument((prev) => ({
+            ...prev,
+            pages: syntheticPages,
+            activePageIndex: 0,
+          }));
+          setActivePageIndex(0);
+          setIsStressTestModalOpen(false);
+          toast.success(`Mounted ${syntheticPages.length.toLocaleString()} pages into Virtualized Document Canvas`);
+        }}
       />
 
       {/* CamScanner Advanced Filter Studio Modal */}
@@ -2371,22 +2401,19 @@ export function AppContent() {
         }}
       />
 
-      {/* Global Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-12 right-6 z-50 flex items-center space-x-2 px-4 py-2.5 rounded-lg bg-neutral-900/95 border border-sky-500/60 text-white shadow-2xl text-xs font-medium backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
+      {/* Global Toast Notifications Stack */}
+      <ToastContainer />
     </div>
   );
 }
 
 export function App() {
   return (
-    <ShortcutProvider>
-      <AppContent />
-    </ShortcutProvider>
+    <ErrorBoundary>
+      <ShortcutProvider>
+        <AppContent />
+      </ShortcutProvider>
+    </ErrorBoundary>
   );
 }
 

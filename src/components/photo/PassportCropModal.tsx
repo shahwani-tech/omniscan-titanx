@@ -6,6 +6,7 @@
 import React, { useState, useRef } from "react";
 import { PassportStandardSpec } from "../../types";
 import { X, Check, ZoomIn, ZoomOut, RotateCw, User } from "lucide-react";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface PassportCropModalProps {
   isOpen: boolean;
@@ -90,6 +91,39 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
     const cropped = canvas.toDataURL("image/jpeg", 0.95);
     onApplyCrop(cropped);
   };
+
+  useToolShortcuts({
+    scope: "crop",
+    isOpen,
+    priority: 250,
+    onEscape: onClose,
+    onEnter: handleApply,
+    onZoomIn: () => setZoom((z) => Math.min(3.0, Number((z + 0.1).toFixed(2)))),
+    onZoomOut: () => setZoom((z) => Math.max(0.4, Number((z - 0.1).toFixed(2)))),
+    onResetZoom: () => {
+      setZoom(1.0);
+      setPanX(0);
+      setPanY(0);
+      setRotation(0);
+    },
+    onRotateCw: () => setRotation((r) => (r + 90) % 360),
+    onNudge: (dir, multiplier) => {
+      const step = 8 * multiplier;
+      if (dir === "up") setPanY((p) => p - step);
+      if (dir === "down") setPanY((p) => p + step);
+      if (dir === "left") setPanX((p) => p - step);
+      if (dir === "right") setPanX((p) => p + step);
+    },
+    actions: {
+      "crop.reset": () => {
+        setZoom(1.0);
+        setPanX(0);
+        setPanY(0);
+        setRotation(0);
+      },
+      "crop.apply": handleApply,
+    },
+  });
 
   if (!isOpen) return null;
 

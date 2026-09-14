@@ -4,6 +4,7 @@
 
 import React, { useState } from "react";
 import { Lock, KeyRound, Eye, EyeOff, AlertTriangle, X } from "lucide-react";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface PasswordModalProps {
   isOpen: boolean;
@@ -23,6 +24,13 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useToolShortcuts({
+    scope: "password",
+    isOpen,
+    priority: 300,
+    onEscape: onClose,
+  });
 
   if (!isOpen) return null;
 

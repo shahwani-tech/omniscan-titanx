@@ -17,6 +17,7 @@ import {
   Download,
 } from "lucide-react";
 import { OmniDocument, OmniPage } from "../../types";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface SecurityModalProps {
   isOpen: boolean;
@@ -38,8 +39,6 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
   const [allowCopying, setAllowCopying] = useState(false);
   const [destructiveFlatten, setDestructiveFlatten] = useState(true);
   const [isSanitizing, setIsSanitizing] = useState(false);
-
-  if (!isOpen) return null;
 
   // Calculate total redactions across all pages
   const totalRedactions = document.pages.reduce(
@@ -65,6 +64,23 @@ export const SecurityModal: React.FC<SecurityModalProps> = ({
       setIsSanitizing(false);
     }
   };
+
+  // Centralized Scoped Shortcuts for Security Modal
+  useToolShortcuts({
+    scope: "security",
+    isOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: () => {
+      if (!isSanitizing) handleExecute();
+    },
+    actions: {
+      "security.execute": handleExecute,
+      "security.close": onClose,
+    },
+  });
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 select-none">

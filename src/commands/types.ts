@@ -27,6 +27,19 @@ export type CommandScope =
   | "photo-studio"
   | "idcard-studio"
   | "a6-studio"
+  | "background-studio"
+  | "scanner"
+  | "filters"
+  | "workspace"
+  | "batch"
+  | "compare"
+  | "security"
+  | "diagnostics"
+  | "stress-test"
+  | "split"
+  | "split-pdf"
+  | "password"
+  | "bg-studio"
   | "modal";
 
 export interface CommandDefinition {

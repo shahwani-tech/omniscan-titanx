@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 
-export interface PdfFilterNumericInputProps {
+export interface UniversalNumericInputProps {
   id: string;
   value: number;
   min: number;
@@ -9,7 +9,7 @@ export interface PdfFilterNumericInputProps {
   precision?: number;
   unit?: string;
   onChange: (val: number, isCommit: boolean) => void;
-  ariaLabel: string;
+  ariaLabel?: string;
   className?: string;
   disabled?: boolean;
 }
@@ -23,7 +23,13 @@ function clamp(val: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, val));
 }
 
-export const PdfFilterNumericInput: React.FC<PdfFilterNumericInputProps> = ({
+/**
+ * UniversalNumericInput - Consolidated high-performance numeric input
+ * Supports click-to-type, mouse-wheel scrubbing with debounce,
+ * keyboard stepping (Arrow, Shift+Arrow, Alt+Arrow, PageUp/Down, Home/End),
+ * min/max clamping, and unit suffix display.
+ */
+export const UniversalNumericInput: React.FC<UniversalNumericInputProps> = ({
   id,
   value,
   min,
@@ -33,7 +39,7 @@ export const PdfFilterNumericInput: React.FC<PdfFilterNumericInputProps> = ({
   unit,
   onChange,
   ariaLabel,
-  className = "w-13",
+  className = "w-14",
   disabled = false,
 }) => {
   const [text, setText] = useState<string>(() => formatDisplayValue(value, precision));
@@ -206,7 +212,9 @@ export const PdfFilterNumericInput: React.FC<PdfFilterNumericInputProps> = ({
     const current = isNaN(parseFloat(text)) ? value : parseFloat(text);
     const delta = e.shiftKey ? step * 5 : step;
     const nextVal = clamp(
-      precision > 0 ? Number((current + direction * delta).toFixed(precision)) : Math.round(current + direction * delta),
+      precision > 0
+        ? Number((current + direction * delta).toFixed(precision))
+        : Math.round(current + direction * delta),
       min,
       max
     );
@@ -240,7 +248,7 @@ export const PdfFilterNumericInput: React.FC<PdfFilterNumericInputProps> = ({
         id={id}
         type="text"
         inputMode="decimal"
-        aria-label={ariaLabel}
+        aria-label={ariaLabel || id}
         value={text}
         disabled={disabled}
         onChange={handleInputChange}

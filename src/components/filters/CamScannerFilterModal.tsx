@@ -9,6 +9,7 @@ import { executeFilterPipeline, BUILTIN_CAMSCANNER_PRESETS } from "../../engine/
 import { DEFAULT_FILTERS } from "../../engine/vision";
 import { FilterPresetGallery } from "./FilterPresetGallery";
 import { FilterParameterControls } from "./FilterParameterControls";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 import {
   X,
   Check,
@@ -108,6 +109,22 @@ export const CamScannerFilterModal: React.FC<CamScannerFilterModalProps> = ({
     const pos = Math.max(0.05, Math.min(0.95, (e.clientX - rect.left) / rect.width));
     setSplitPos(pos);
   };
+
+  // Centralized Scoped Shortcuts for CamScanner Filter Modal
+  useToolShortcuts({
+    scope: "filters",
+    isOpen,
+    priority: 200,
+    onEscape: onClose,
+    onEnter: () => onApplyFilters(pageIndex, activeFilters, false),
+    onDelete: handleResetFilters,
+    actions: {
+      "filters.apply": () => onApplyFilters(pageIndex, activeFilters, false),
+      "filters.reset": handleResetFilters,
+      "filters.split": () =>
+        setViewMode((v) => (v === "split" ? "side-by-side" : "split")),
+    },
+  });
 
   if (!isOpen) return null;
 

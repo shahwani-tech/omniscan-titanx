@@ -43,7 +43,7 @@ import {
 import { estimatePDFSize } from "../../engine/pdf";
 import { t } from "../../engine/i18n";
 import { BUILTIN_CAMSCANNER_PRESETS } from "../../engine/filters";
-import { PdfFilterNumericInput } from "../common/PdfFilterNumericInput";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
 import { UnifiedColorGradingPanel } from "../common/UnifiedColorGradingPanel";
 
 interface InspectorPanelProps {
@@ -106,25 +106,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     "maximum" | "high" | "balanced" | "small" | "extreme"
   >("balanced");
 
-  if (isCollapsed) {
-    return (
-      <aside className="w-10 bg-neutral-900 border-l border-neutral-800 flex flex-col items-center py-2 shrink-0 z-20">
-        <button
-          onClick={onToggleCollapse}
-          className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-          title="Expand Inspector"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <div className="mt-4 flex flex-col items-center space-y-2">
-          <span className="text-[11px] font-mono text-neutral-400 [writing-mode:vertical-lr] tracking-widest uppercase">
-            Inspector
-          </span>
-        </div>
-      </aside>
-    );
-  }
-
   const fallbackFilters: ImageFilterPipeline = {
     rotation: 0,
     deskewAngle: 0,
@@ -151,7 +132,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     invert: false,
   };
 
-  // Immediate local UI control state decoupled from expensive rendering
+  // Immediate local UI control state decoupled from expensive rendering - MUST run unconditionally
   const [immediateFilters, setImmediateFilters] = useState<ImageFilterPipeline>(
     () => (activePage?.filters ? { ...activePage.filters } : fallbackFilters)
   );
@@ -169,6 +150,25 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     },
     [onUpdateFilters]
   );
+
+  if (isCollapsed) {
+    return (
+      <aside className="w-10 bg-neutral-900 border-l border-neutral-800 flex flex-col items-center py-2 shrink-0 z-20">
+        <button
+          onClick={onToggleCollapse}
+          className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
+          title="Expand Inspector"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <div className="mt-4 flex flex-col items-center space-y-2">
+          <span className="text-[11px] font-mono text-neutral-400 [writing-mode:vertical-lr] tracking-widest uppercase">
+            Inspector
+          </span>
+        </div>
+      </aside>
+    );
+  }
 
   const filters = immediateFilters;
 
@@ -274,10 +274,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               {activePage?.adaptiveAnalysis ? (
                 <div className="space-y-1.5 bg-black/40 p-2 rounded-lg border border-neutral-800 text-[10px]">
                   <div className="flex items-center justify-between text-neutral-300">
-                    <span className="font-semibold text-sky-300">{activePage.adaptiveAnalysis.report.label}</span>
-                    <span className="text-emerald-400 font-mono">+{activePage.adaptiveAnalysis.qualityDelta} pts</span>
+                    <span className="font-semibold text-sky-300">{activePage.adaptiveAnalysis?.report?.label || "Optimized"}</span>
+                    <span className="text-emerald-400 font-mono">+{activePage.adaptiveAnalysis?.qualityDelta || 0} pts</span>
                   </div>
-                  {activePage.adaptiveAnalysis.report.diagnosedDefects.length > 0 && (
+                  {(activePage.adaptiveAnalysis?.report?.diagnosedDefects || []).length > 0 && (
                     <div className="flex flex-wrap gap-1 pt-1">
                       {activePage.adaptiveAnalysis.report.diagnosedDefects.map((defect, i) => (
                         <span key={i} className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300 text-[9px] border border-neutral-700">
@@ -434,7 +434,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     onPointerUp={() => handleControlChange({ deskewAngle: filters.deskewAngle }, true)}
                     className="flex-1 accent-sky-500 cursor-pointer h-1.5 bg-neutral-700 rounded-lg appearance-none"
                   />
-                  <PdfFilterNumericInput
+                  <UniversalNumericInput
                     id="pdf-input-deskew"
                     value={filters.deskewAngle}
                     min={-25}
@@ -604,14 +604,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <div className="p-3 rounded-lg bg-gradient-to-r from-purple-950/40 to-indigo-950/40 border border-purple-800/40 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] text-purple-300 font-mono uppercase tracking-wider">
-                      Classification: {intel.classification.category}
+                      Classification: {intel.classification?.category || "General"}
                     </span>
                     <span className="text-[10px] font-mono bg-purple-900/60 text-purple-200 px-1.5 py-0.5 rounded">
-                      {Math.round(intel.classification.confidence * 100)}% Conf
+                      {Math.round((intel.classification?.confidence || 0) * 100)}% Conf
                     </span>
                   </div>
                   <div className="text-sm font-bold text-white">
-                    {intel.classification.type}
+                    {intel.classification?.type || "Standard Document"}
                   </div>
                 </div>
 
@@ -772,7 +772,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <label className="text-[11px] text-neutral-400">Document Title</label>
                 <input
                   type="text"
-                  value={meta.title}
+                  value={meta?.title || ""}
                   onChange={(e) => onUpdateMetadata({ title: e.target.value })}
                   placeholder="e.g. Commercial Invoice 2026"
                   className="w-full bg-neutral-850 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-200 focus:outline-none"
@@ -783,7 +783,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <label className="text-[11px] text-neutral-400">Author / Creator</label>
                 <input
                   type="text"
-                  value={meta.author}
+                  value={meta?.author || ""}
                   onChange={(e) => onUpdateMetadata({ author: e.target.value })}
                   placeholder="e.g. Titan Document Systems"
                   className="w-full bg-neutral-850 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-200 focus:outline-none"
@@ -794,7 +794,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <label className="text-[11px] text-neutral-400">Subject / Category</label>
                 <input
                   type="text"
-                  value={meta.subject}
+                  value={meta?.subject || ""}
                   onChange={(e) => onUpdateMetadata({ subject: e.target.value })}
                   placeholder="e.g. Accounts Payable"
                   className="w-full bg-neutral-850 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-200 focus:outline-none"
@@ -805,7 +805,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 <label className="text-[11px] text-neutral-400">Keywords (comma-separated)</label>
                 <input
                   type="text"
-                  value={meta.keywords}
+                  value={meta?.keywords || ""}
                   onChange={(e) => onUpdateMetadata({ keywords: e.target.value })}
                   placeholder="invoice, payment, titan, 2026"
                   className="w-full bg-neutral-850 border border-neutral-700 rounded px-2.5 py-1 text-xs text-neutral-200 focus:outline-none"

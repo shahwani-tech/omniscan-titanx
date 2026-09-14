@@ -11,6 +11,7 @@ import {
   FilterStackOperation,
 } from "../types";
 import { DEFAULT_FILTERS, loadImage } from "./vision";
+import { runPixelFiltersAsync } from "../workers/filterWorkerPool";
 
 export const BUILTIN_CAMSCANNER_PRESETS: CamScannerPresetMeta[] = [
   {

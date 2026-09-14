@@ -29,7 +29,8 @@ import {
   Eye,
   Info,
 } from "lucide-react";
-import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 export interface A6CropBox {
   x: number; // 0 to 1 normalized relative to image width
@@ -260,97 +261,76 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
     };
   }, []);
 
-  // Spacebar Temporary Pan listener
+  // Spacebar Pan Keyup/Keydown listener for drag cursor
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest("input, textarea, select")) return;
-
+      if (target?.closest("input, textarea, select")) return;
       if (e.code === "Space" && !e.repeat) {
         e.preventDefault();
         setIsSpacePressed(true);
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      } else if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleApply();
-      } else if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleResetCrop();
-      } else if (e.key.toLowerCase() === "c" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleCenterCrop();
-      } else if (e.key.toLowerCase() === "h" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setActiveTool((t) => (t === "hand" ? "box" : "hand"));
-      } else if (e.key === "0" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setViewportZoom(1.0);
-        setViewportPan({ x: 0, y: 0 });
-      } else if (e.key === "1" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setViewportZoom(1.0);
-      } else if (e.key === "2" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleFitWidth();
-      } else if (e.key === "3" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleFitHeight();
-      } else if (e.key === "+" || e.key === "=") {
-        e.preventDefault();
-        setViewportZoom((z) => Math.min(5.0, Number((z + 0.15).toFixed(2))));
-      } else if (e.key === "-") {
-        e.preventDefault();
-        setViewportZoom((z) => Math.max(0.25, Number((z - 0.15).toFixed(2))));
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      } else if (
-        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") ||
-        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z")
-      ) {
-        e.preventDefault();
-        handleRedo();
-      } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
-        e.preventDefault();
-        const step = e.altKey ? 0.002 : e.shiftKey ? 0.05 : 0.01;
-        let dx = 0;
-        let dy = 0;
-        if (e.key === "ArrowUp") dy = -step;
-        if (e.key === "ArrowDown") dy = step;
-        if (e.key === "ArrowLeft") dx = -step;
-        if (e.key === "ArrowRight") dx = step;
-
-        if (activeTool === "image") {
-          setImagePan((prev) => ({
-            x: Number((prev.x + dx * 100).toFixed(1)),
-            y: Number((prev.y + dy * 100).toFixed(1)),
-          }));
-        } else {
-          setCropBox((prev) => ({
-            x: Math.max(0, Math.min(1 - prev.width, prev.x + dx)),
-            y: Math.max(0, Math.min(1 - prev.height, prev.y + dy)),
-            width: prev.width,
-            height: prev.height,
-          }));
-        }
       }
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         setIsSpacePressed(false);
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [activeTool, handleUndo, handleRedo, onClose]);
+  }, []);
+
+  // Centralized Scoped Shortcuts for A6 Half Card Crop Modal
+  useToolShortcuts({
+    scope: "crop",
+    isOpen: true,
+    priority: 250,
+    onEscape: onClose,
+    onEnter: () => handleApply(),
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+    onDelete: () => handleResetCrop(),
+    onZoomIn: () => setViewportZoom((z) => Math.min(5.0, Number((z + 0.15).toFixed(2)))),
+    onZoomOut: () => setViewportZoom((z) => Math.max(0.25, Number((z - 0.15).toFixed(2)))),
+    onResetZoom: () => {
+      setViewportZoom(1.0);
+      setViewportPan({ x: 0, y: 0 });
+    },
+    onNudge: (dir, multiplier) => {
+      const step = 0.01 * multiplier;
+      let dx = 0;
+      let dy = 0;
+      if (dir === "up") dy = -step;
+      if (dir === "down") dy = step;
+      if (dir === "left") dx = -step;
+      if (dir === "right") dx = step;
+
+      if (activeTool === "image") {
+        setImagePan((prev) => ({
+          x: Number((prev.x + dx * 100).toFixed(1)),
+          y: Number((prev.y + dy * 100).toFixed(1)),
+        }));
+      } else {
+        setCropBox((prev) => ({
+          x: Math.max(0, Math.min(1 - prev.width, prev.x + dx)),
+          y: Math.max(0, Math.min(1 - prev.height, prev.y + dy)),
+          width: prev.width,
+          height: prev.height,
+        }));
+      }
+    },
+    actions: {
+      "crop.reset": () => handleResetCrop(),
+      "crop.center": () => handleCenterCrop(),
+      "crop.hand": () => setActiveTool((t) => (t === "hand" ? "box" : "hand")),
+      "crop.fitWidth": () => handleFitWidth(),
+      "crop.fitHeight": () => handleFitHeight(),
+    },
+  });
 
   // Fit Width
   const handleFitWidth = () => {
@@ -1344,7 +1324,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[10px] text-neutral-400 block mb-1">Target Width</label>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-target-width-mm"
                       value={targetWidthMm}
                       min={20}
@@ -1363,7 +1343,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] text-neutral-400 block mb-1">Target Height</label>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-target-height-mm"
                       value={targetHeightMm}
                       min={20}
@@ -1401,7 +1381,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[10px] text-neutral-400 block mb-1">Crop X (%)</label>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-box-x"
                       value={Math.round(cropBox.x * 100)}
                       min={0}
@@ -1417,7 +1397,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] text-neutral-400 block mb-1">Crop Y (%)</label>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-box-y"
                       value={Math.round(cropBox.y * 100)}
                       min={0}
@@ -1433,7 +1413,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] text-neutral-400 block mb-1">Crop Width (%)</label>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-box-width"
                       value={Math.round(cropBox.width * 100)}
                       min={5}
@@ -1449,7 +1429,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                   </div>
                   <div>
                     <label className="text-[10px] text-neutral-400 block mb-1">Crop Height (%)</label>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-box-height"
                       value={Math.round(cropBox.height * 100)}
                       min={5}
@@ -1502,7 +1482,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                       <span>Image Zoom</span>
                       <span className="font-mono text-neutral-200">{Math.round(imageScale * 100)}%</span>
                     </div>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-image-scale"
                       value={Math.round(imageScale * 100)}
                       min={50}
@@ -1517,7 +1497,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="text-[10px] text-neutral-400 block mb-1">Image Pan X</label>
-                      <A6HalfCardNumericInput
+                      <UniversalNumericInput
                         id="crop-image-pan-x"
                         value={imagePan.x}
                         min={-200}
@@ -1530,7 +1510,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                     </div>
                     <div>
                       <label className="text-[10px] text-neutral-400 block mb-1">Image Pan Y</label>
-                      <A6HalfCardNumericInput
+                      <UniversalNumericInput
                         id="crop-image-pan-y"
                         value={imagePan.y}
                         min={-200}
@@ -1548,7 +1528,7 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
                       <span>Fine Rotation</span>
                       <span className="font-mono text-neutral-200">{rotation}°</span>
                     </div>
-                    <A6HalfCardNumericInput
+                    <UniversalNumericInput
                       id="crop-image-rotation"
                       value={rotation}
                       min={-180}

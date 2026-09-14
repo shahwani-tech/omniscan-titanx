@@ -21,6 +21,8 @@ import { OmniPage } from "../../types";
 import { ACCEPT_ALL_SUPPORTED, analyzeFile } from "../../services/upload/FileTypeRegistry";
 import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
 import { importPDFFile, renderPdfPageOnDemand } from "../../engine/pdf";
+import { toast } from "../../services/toast/toastService";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface DocumentCompareModalProps {
   isOpen: boolean;
@@ -54,15 +56,13 @@ export const DocumentCompareModal: React.FC<DocumentCompareModalProps> = ({
   const [zoom, setZoom] = useState(1.0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen || pages.length === 0) return null;
-
-  const leftPage = pages[leftIndex] || pages[0];
+  const leftPage = pages[leftIndex] || pages[0] || ({} as any);
   const activeRightPage: CompareTargetPage = useUploadedRevision && revisionPages.length > 0
     ? revisionPages[rightIndex] || revisionPages[0]
     : {
-        id: pages[rightIndex]?.id || pages[0]?.id,
+        id: pages[rightIndex]?.id || pages[0]?.id || "fallback-id",
         label: `Page #${rightIndex + 1}`,
-        dataUrl: pages[rightIndex]?.processedDataUrl || pages[0]?.processedDataUrl,
+        dataUrl: pages[rightIndex]?.processedDataUrl || pages[0]?.processedDataUrl || "",
         width: pages[rightIndex]?.width || 1000,
         height: pages[rightIndex]?.height || 1400,
       };
@@ -131,12 +131,30 @@ export const DocumentCompareModal: React.FC<DocumentCompareModalProps> = ({
       }
     } catch (err) {
       console.error("Failed to load revision file for comparison:", err);
-      alert("Failed to load file for comparison.");
+      toast.error("Failed to load file for comparison.");
     } finally {
       setIsUploadingRevision(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
+
+  // Centralized Scoped Shortcuts for Document Compare Modal
+  useToolShortcuts({
+    scope: "compare",
+    isOpen,
+    priority: 150,
+    onEscape: onClose,
+    onZoomIn: () => setZoom((z) => Math.min(3.0, Number((z + 0.15).toFixed(2)))),
+    onZoomOut: () => setZoom((z) => Math.max(0.4, Number((z - 0.15).toFixed(2)))),
+    onResetZoom: () => setZoom(1.0),
+    actions: {
+      "compare.toggleMode": () =>
+        setCompareMode((m) => (m === "side-by-side" ? "diff-overlay" : "side-by-side")),
+      "compare.close": onClose,
+    },
+  });
+
+  if (!isOpen || pages.length === 0) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 select-none">

@@ -17,7 +17,8 @@ import {
   X,
   Cpu,
   Globe,
-  Lock,
+  Shield,
+  Info,
 } from "lucide-react";
 
 interface BackgroundProviderConfigDialogProps {
@@ -38,7 +39,6 @@ export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDi
     backgroundRemovalService.getActiveProviderId()
   );
   const [endpointUrl, setEndpointUrl] = useState<string>(currentConfig.endpointUrl);
-  const [apiKey, setApiKey] = useState<string>(currentConfig.apiKey || "");
   const [timeoutSec, setTimeoutSec] = useState<number>(Math.round((currentConfig.timeoutMs || 30000) / 1000));
   const [modelName, setModelName] = useState<string>(currentConfig.modelName || "birefnet-general");
 
@@ -55,7 +55,6 @@ export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDi
     // Temporarily save config to provider to test
     githubProvider.updateConfig({
       endpointUrl,
-      apiKey,
       timeoutMs: timeoutSec * 1000,
       modelName,
     });
@@ -81,7 +80,6 @@ export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDi
   const handleSave = () => {
     githubProvider.updateConfig({
       endpointUrl,
-      apiKey,
       timeoutMs: timeoutSec * 1000,
       modelName,
     });
@@ -195,20 +193,15 @@ export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDi
               </span>
             </div>
 
-            {/* Optional API Key / Bearer */}
-            <div>
-              <label className="block text-[10px] font-semibold text-neutral-400 uppercase mb-1">
-                API Key / Auth Token (Optional)
-              </label>
-              <div className="flex items-center bg-neutral-900 border border-neutral-750 rounded px-2.5 py-1.5">
-                <Lock className="w-3.5 h-3.5 text-neutral-500 mr-1.5" />
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Bearer token or secret key"
-                  className="w-full bg-transparent font-mono text-xs text-neutral-200 outline-none"
-                />
+            {/* Server-Side Proxy Security Notice */}
+            <div className="rounded-md border border-emerald-900/60 bg-emerald-950/20 p-2.5 flex items-start space-x-2">
+              <Shield className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-neutral-300 leading-relaxed">
+                <span className="font-semibold text-emerald-400">Server-Side Proxy Security</span>
+                <p className="text-neutral-400 text-[10px] mt-0.5">
+                  All requests are securely proxied through <code className="text-neutral-300">/api/background/remove</code>.
+                  API keys and auth headers are managed exclusively on the backend server via <code className="text-neutral-300">BG_REMOVAL_API_KEY</code> in environment variables and are never stored in browser storage.
+                </p>
               </div>
             </div>
 
@@ -262,17 +255,28 @@ export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDi
                   className={`mt-2 p-2 rounded-lg border text-[11px] flex items-start space-x-2 ${
                     testStatus.success
                       ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-300"
+                      : testStatus.message.includes("isn't set up yet") ||
+                        testStatus.message.includes("not configured")
+                      ? "bg-amber-950/40 border-amber-500/40 text-amber-300"
                       : "bg-rose-950/40 border-rose-500/40 text-rose-300"
                   }`}
                 >
                   {testStatus.success ? (
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                  ) : testStatus.message.includes("isn't set up yet") ||
+                    testStatus.message.includes("not configured") ? (
+                    <Info className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                   ) : (
                     <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
                   )}
                   <div>
                     <span className="font-semibold block">
-                      {testStatus.success ? "Connection Verified" : "Backend Not Connected"}
+                      {testStatus.success
+                        ? "Connection Verified"
+                        : testStatus.message.includes("isn't set up yet") ||
+                          testStatus.message.includes("not configured")
+                        ? "Service Not Configured"
+                        : "Backend Not Connected"}
                     </span>
                     <span className="text-[10px] opacity-90">{testStatus.message}</span>
                   </div>

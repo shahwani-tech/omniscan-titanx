@@ -44,7 +44,7 @@ import {
   Compass,
   Zap,
 } from "lucide-react";
-import { useShortcuts } from "../../commands/ShortcutContext";
+import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
 import {
   IdCardStudioConfig,
   DEFAULT_ID_CARD_CONFIG,
@@ -65,7 +65,7 @@ import { BUILTIN_CAMSCANNER_PRESETS, executeFilterPipeline } from "../../engine/
 import { DEFAULT_FILTERS } from "../../engine/vision";
 import { ImageFilterPipeline, OmniPage } from "../../types";
 import { IdCardCropModal, IdCardCropState } from "./IdCardCropModal";
-import { IdCardFilterNumericInput } from "./IdCardFilterNumericInput";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
 import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
 import { BackgroundStudioState } from "../../engine/background/types";
 import { classifyImageContent, ContentClassificationResult } from "../../engine/autoClassifier";
@@ -719,7 +719,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     setPan(newPan);
     panRef.current = newPan;
     const mode = currentModeRef.current;
-    if (mode !== "summary") {
+    if (mode && viewportsRef.current[mode]) {
       viewportsRef.current[mode].pan = newPan;
     }
   };
@@ -1251,72 +1251,40 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     window.print();
   };
 
-  // Centralized Shortcut Management for ID Card / CNIC Studio
-  const { pushScope, popScope, registerAction } = useShortcuts();
-
-  useEffect(() => {
-    if (!isOpen || studioLayoutMode !== "idcard") return;
-    pushScope("idcard-studio");
-    return () => {
-      popScope("idcard-studio");
-    };
-  }, [isOpen, studioLayoutMode, pushScope, popScope]);
-
-  useEffect(() => {
-    if (!isOpen || studioLayoutMode !== "idcard") return;
-
-    const unregFront = registerAction("idcard.switchFront", () => setCropTargetSide("front"));
-    const unregBack = registerAction("idcard.switchBack", () => setCropTargetSide("back"));
-    const unregBoth = registerAction("idcard.toggleBoth", () =>
-      setPreviewMode((prev) => (prev === "side-by-side" ? "page-1" : "side-by-side"))
-    );
-    const unregRotateCw = registerAction("idcard.rotateCw", () =>
-      handleRotateSide(cropTargetSide, 90)
-    );
-    const unregRotateCcw = registerAction("idcard.rotateCcw", () =>
-      handleRotateSide(cropTargetSide, -90)
-    );
-    const unregGrid = registerAction("idcard.toggleGrid", () =>
-      setConfig((prev) => ({
-        ...prev,
-        border: { ...prev.border, enabled: !prev.border.enabled },
-      }))
-    );
-    const unregGuides = registerAction("idcard.toggleGuides", () =>
-      setConfig((prev) => ({
-        ...prev,
-        cuttingGuides: { ...prev.cuttingGuides, enabled: !prev.cuttingGuides.enabled },
-      }))
-    );
-    const unregReset = registerAction("idcard.resetAll", () => {
-      setConfig((prev) => ({ ...prev, frontRotation: 0, backRotation: 0 }));
-    });
-    const unregPrint = registerAction("idcard.print", handlePrint);
-    const unregExport = registerAction("idcard.export", handleExportPdf);
-    const unregClose = registerAction("idcard.close", onClose);
-
-    return () => {
-      unregFront();
-      unregBack();
-      unregBoth();
-      unregRotateCw();
-      unregRotateCcw();
-      unregGrid();
-      unregGuides();
-      unregReset();
-      unregPrint();
-      unregExport();
-      unregClose();
-    };
-  }, [
-    isOpen,
-    studioLayoutMode,
-    cropTargetSide,
-    handlePrint,
-    handleExportPdf,
-    onClose,
-    registerAction,
-  ]);
+  // Centralized Scoped Shortcuts for ID Card / CNIC Studio
+  useToolShortcuts({
+    scope: "idcard-studio",
+    isOpen: isOpen && studioLayoutMode === "idcard" && !cropModalOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: handlePrint,
+    onDelete: () => setConfig((prev) => ({ ...prev, frontRotation: 0, backRotation: 0 })),
+    onRotateCw: () => handleRotateSide(cropTargetSide, 90),
+    onRotateCcw: () => handleRotateSide(cropTargetSide, -90),
+    actions: {
+      "idcard.switchFront": () => setCropTargetSide("front"),
+      "idcard.switchBack": () => setCropTargetSide("back"),
+      "idcard.toggleBoth": () =>
+        setPreviewMode((prev) => (prev === "side-by-side" ? "page-1" : "side-by-side")),
+      "idcard.rotateCw": () => handleRotateSide(cropTargetSide, 90),
+      "idcard.rotateCcw": () => handleRotateSide(cropTargetSide, -90),
+      "idcard.toggleGrid": () =>
+        setConfig((prev) => ({
+          ...prev,
+          borderEnabled: !prev.borderEnabled,
+        })),
+      "idcard.toggleGuides": () =>
+        setConfig((prev) => ({
+          ...prev,
+          cuttingGuidesType: prev.cuttingGuidesType === "none" ? "corner-marks" : "none",
+        })),
+      "idcard.resetAll": () =>
+        setConfig((prev) => ({ ...prev, frontRotation: 0, backRotation: 0 })),
+      "idcard.print": handlePrint,
+      "idcard.export": handleExportPdf,
+      "idcard.close": onClose,
+    },
+  });
 
   if (!isOpen) return null;
 
@@ -1843,7 +1811,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                     onChange={(e) => handleFilterParamChange("brightness", parseInt(e.target.value, 10))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                   />
-                  <IdCardFilterNumericInput
+                  <UniversalNumericInput
                     id="filter-input-brightness"
                     value={currentFilters.brightness}
                     min={-100}
@@ -1885,7 +1853,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                     onChange={(e) => handleFilterParamChange("contrast", parseInt(e.target.value, 10))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                   />
-                  <IdCardFilterNumericInput
+                  <UniversalNumericInput
                     id="filter-input-contrast"
                     value={currentFilters.contrast}
                     min={-100}
@@ -1927,7 +1895,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                     onChange={(e) => handleFilterParamChange("gamma", parseFloat(e.target.value))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                   />
-                  <IdCardFilterNumericInput
+                  <UniversalNumericInput
                     id="filter-input-gamma"
                     value={currentFilters.gamma}
                     min={0.2}
@@ -1969,7 +1937,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                     onChange={(e) => handleFilterParamChange("sharpness", parseInt(e.target.value, 10))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                   />
-                  <IdCardFilterNumericInput
+                  <UniversalNumericInput
                     id="filter-input-sharpness"
                     value={currentFilters.sharpness}
                     min={0}
@@ -2011,7 +1979,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
                     onChange={(e) => handleFilterParamChange("deskewAngle", parseFloat(e.target.value))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                   />
-                  <IdCardFilterNumericInput
+                  <UniversalNumericInput
                     id="filter-input-deskew"
                     value={currentFilters.deskewAngle}
                     min={-15}
@@ -2856,9 +2824,6 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         imageSrc={cropTargetSide === "front" ? originalFrontImage : originalBackImage}
         sideName={cropTargetSide === "front" ? "Front Side" : "Back Side"}
         initialState={cropTargetSide === "front" ? frontCropState : backCropState}
-        docWidthMm={config.docWidthMm}
-        docHeightMm={config.docHeightMm}
-        unit={config.unit}
         onApplyCrop={handleApplyCroppedImage}
       />
 

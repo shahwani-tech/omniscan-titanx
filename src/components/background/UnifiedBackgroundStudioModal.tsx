@@ -23,6 +23,7 @@ import {
   BackgroundRemovalResult,
 } from "../../engine/background/types";
 import { BackgroundCompositor } from "../../engine/background/BackgroundCompositor";
+import { toast } from "../../services/toast/toastService";
 import { backgroundRemovalService } from "../../engine/background/BackgroundRemovalService";
 import {
   DEFAULT_BG_REMOVAL_OPTIONS,
@@ -55,7 +56,10 @@ import {
   Layers,
   Sparkles,
   AlertTriangle,
+  Info,
+  Cpu,
 } from "lucide-react";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface UnifiedBackgroundStudioModalProps {
   isOpen: boolean;
@@ -241,12 +245,21 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
       });
     } catch (err: any) {
       console.error("Removal failure:", err);
+      const isUnconfigured =
+        Boolean(err.isUnconfigured) ||
+        err.message?.includes("isn't set up yet") ||
+        err.message?.includes("not configured") ||
+        err.status === 503;
+
       setState((prev) => ({
         ...prev,
         removalState: {
           ...prev.removalState,
           status: "failed",
-          errorMessage: err.message || "Background removal failed.",
+          isUnconfigured,
+          errorMessage: isUnconfigured
+            ? "AI background removal isn't set up yet — this feature will be available once configured."
+            : (err.message || "Background removal failed."),
         },
       }));
     }
@@ -423,9 +436,85 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
       onClose();
     } catch (err) {
       console.error("Could not export final composite:", err);
-      alert("Failed to render background composite.");
+      toast.error("Failed to render background composite.");
     }
   };
+
+  // Centralized Scoped Shortcuts for Unified Background Studio
+  useToolShortcuts({
+    scope: "bg-studio",
+    isOpen: isOpen && !isCropModalOpen && !isProviderConfigOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: handleApplyToStudio,
+    onUndo: handleUndo,
+    onRedo: handleRedo,
+    onZoomIn: () => {
+      const target = activeTab === "image" ? "backgroundTransform" : "foregroundTransform";
+      updateState((prev) => ({
+        ...prev,
+        [target]: {
+          ...prev[target],
+          scale: Math.min(4, Number(((prev[target]?.scale || 1) + 0.15).toFixed(2))),
+        },
+      }));
+    },
+    onZoomOut: () => {
+      const target = activeTab === "image" ? "backgroundTransform" : "foregroundTransform";
+      updateState((prev) => ({
+        ...prev,
+        [target]: {
+          ...prev[target],
+          scale: Math.max(0.1, Number(((prev[target]?.scale || 1) - 0.15).toFixed(2))),
+        },
+      }));
+    },
+    onResetZoom: () => {
+      const target = activeTab === "image" ? "backgroundTransform" : "foregroundTransform";
+      updateState((prev) => ({
+        ...prev,
+        [target]: {
+          ...prev[target],
+          scale: 1,
+          x: 0,
+          y: 0,
+        },
+      }));
+    },
+    onNudge: (dir, multiplier) => {
+      const step = 8 * multiplier;
+      const target = activeTab === "image" ? "backgroundTransform" : "foregroundTransform";
+      let dx = 0;
+      let dy = 0;
+      if (dir === "up") dy = -step;
+      if (dir === "down") dy = step;
+      if (dir === "left") dx = -step;
+      if (dir === "right") dx = step;
+      updateState((prev) => ({
+        ...prev,
+        [target]: {
+          ...prev[target],
+          x: (prev[target]?.x || 0) + dx,
+          y: (prev[target]?.y || 0) + dy,
+        },
+      }));
+    },
+    actions: {
+      "bg.apply": handleApplyToStudio,
+      "bg.reset": () => {
+        const target = activeTab === "image" ? "backgroundTransform" : "foregroundTransform";
+        updateState((prev) => ({
+          ...prev,
+          [target]: {
+            ...prev[target],
+            scale: 1,
+            x: 0,
+            y: 0,
+          },
+        }));
+      },
+    },
+  });
 
   if (!isOpen) return null;
 
@@ -649,22 +738,63 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
                 </span>
               </div>
             ) : state.removalState.status === "failed" ? (
-              <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-5 max-w-md text-center space-y-3">
-                <AlertTriangle className="w-8 h-8 text-rose-400 mx-auto" />
-                <h4 className="font-bold text-white text-sm">Background Removal Failed</h4>
-                <p className="text-xs text-rose-200">{state.removalState.errorMessage}</p>
-                <div className="flex items-center justify-center space-x-2 pt-2">
+              <div
+                className={`border rounded-xl p-5 max-w-md text-center space-y-3 shadow-2xl ${
+                  state.removalState.isUnconfigured
+                    ? "bg-neutral-900/95 border-amber-500/40"
+                    : "bg-rose-950/40 border-rose-500/40"
+                }`}
+              >
+                {state.removalState.isUnconfigured ? (
+                  <Info className="w-8 h-8 text-amber-400 mx-auto" />
+                ) : (
+                  <AlertTriangle className="w-8 h-8 text-rose-400 mx-auto" />
+                )}
+                <h4 className="font-bold text-white text-sm">
+                  {state.removalState.isUnconfigured
+                    ? "AI Background Removal Not Set Up"
+                    : "Background Removal Failed"}
+                </h4>
+                <p
+                  className={`text-xs leading-relaxed ${
+                    state.removalState.isUnconfigured
+                      ? "text-amber-200/90"
+                      : "text-rose-200"
+                  }`}
+                >
+                  {state.removalState.errorMessage}
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
                   <button
-                    onClick={() => executeRemoval()}
-                    className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs"
+                    onClick={() => {
+                      backgroundRemovalService.setActiveProvider("local");
+                      executeRemoval();
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center space-x-1.5 shadow"
                   >
-                    Retry
+                    <Cpu className="w-3.5 h-3.5" />
+                    <span>Use Built-in Local Engine</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setState((prev) => ({
+                        ...prev,
+                        foregroundImage: prev.originalImage,
+                        removalState: {
+                          ...prev.removalState,
+                          status: "completed",
+                        },
+                      }));
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 text-xs border border-neutral-700 transition-colors"
+                  >
+                    Manual Studio Tools
                   </button>
                   <button
                     onClick={() => setIsProviderConfigOpen(true)}
-                    className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs"
+                    className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-400 hover:text-white text-xs border border-neutral-700 transition-colors"
                   >
-                    Configure Provider
+                    Configure
                   </button>
                 </div>
               </div>

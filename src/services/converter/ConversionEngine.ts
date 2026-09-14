@@ -27,6 +27,7 @@ import {
 } from "docx";
 import PptxGenJS from "pptxgenjs";
 import mammoth from "mammoth";
+import DOMPurify from "dompurify";
 
 import {
   WorkspaceFile,
@@ -1115,11 +1116,24 @@ export class ConversionEngine {
       try {
         const arrayBuffer = await file.rawFile.arrayBuffer();
         const result = await mammoth.convertToHtml({ arrayBuffer });
-        const html = result.value;
+        const rawHtml = result.value;
+
+        // Security: Sanitize HTML output from mammoth before DOM insertion to prevent DOM-based XSS
+        const cleanHtml = DOMPurify.sanitize(rawHtml, {
+          ALLOWED_TAGS: [
+            "p", "h1", "h2", "h3", "h4", "h5", "h6", "b", "i", "strong", "em",
+            "u", "strike", "s", "ul", "ol", "li", "table", "tbody", "thead", "tfoot",
+            "tr", "td", "th", "blockquote", "span", "div", "br", "hr"
+          ],
+          ALLOWED_ATTR: ["class", "id", "align", "valign", "colspan", "rowspan"],
+          FORBID_TAGS: ["script", "iframe", "object", "embed", "style", "link", "svg", "math", "base", "form", "input", "button"],
+          FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur", "style"],
+          ALLOW_DATA_ATTR: false,
+        });
 
         // Strip tags and split into paragraphs
         const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = html;
+        tempDiv.innerHTML = cleanHtml;
         const paragraphs = Array.from(tempDiv.querySelectorAll("p, h1, h2, h3, li, tr")).map(
           (el) => el.textContent?.trim() || ""
         );

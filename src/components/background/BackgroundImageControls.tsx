@@ -5,6 +5,7 @@
  */
 
 import React, { useRef } from "react";
+import { toast } from "../../services/toast/toastService";
 import { BackgroundTransform, ImageFitMode } from "../../engine/background/types";
 import { isAllowedBackgroundImage } from "../../engine/background/backgroundTransforms";
 import {
@@ -47,7 +48,7 @@ export const BackgroundImageControls: React.FC<BackgroundImageControlsProps> = (
     const file = e.target.files?.[0];
     if (!file) return;
     if (!isAllowedBackgroundImage(file)) {
-      alert("Unsupported image format. Please select JPG, PNG, WEBP, BMP, TIFF, or SVG.");
+      toast.warning("Unsupported image format. Please select JPG, PNG, WEBP, BMP, TIFF, or SVG.");
       return;
     }
 

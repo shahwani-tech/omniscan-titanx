@@ -243,7 +243,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   // Boundary clamping: ensure persisted bar stays comfortably inside workspace
   useEffect(() => {
     if (!barPos || !barRef.current) return;
-    const parentElem = barRef.current.parentElement || document.body;
+    const parentElem = barRef.current.parentElement || window.document.body;
     const parentRect = parentElem.getBoundingClientRect();
     const barRect = barRef.current.getBoundingClientRect();
     const padding = 12;
@@ -282,7 +282,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
     const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
 
     if (barRef.current) {
-      const parentElem = barRef.current.parentElement || document.body;
+      const parentElem = barRef.current.parentElement || window.document.body;
       const parentRect = parentElem.getBoundingClientRect();
       const barRect = barRef.current.getBoundingClientRect();
 
@@ -324,7 +324,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
       const clientY = "touches" in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
 
       if (!barRef.current) return;
-      const parentElem = barRef.current.parentElement || document.body;
+      const parentElem = barRef.current.parentElement || window.document.body;
       const parentRect = parentElem.getBoundingClientRect();
       const barRect = barRef.current.getBoundingClientRect();
 

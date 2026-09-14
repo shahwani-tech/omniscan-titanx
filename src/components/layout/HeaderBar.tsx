@@ -36,6 +36,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Keyboard,
+  Zap,
 } from "lucide-react";
 import { AppLanguage, AppTheme, ViewMode, ActiveTool } from "../../types";
 import { t } from "../../engine/i18n";
@@ -74,6 +75,7 @@ interface HeaderBarProps {
   onOpenCompare: () => void;
   onOpenSecurity: () => void;
   onOpenDiagnostics: () => void;
+  onOpenStressTest?: () => void;
   onOpenCommandPalette: () => void;
   onOpenKeyboardShortcuts?: () => void;
   onAnalyzeIntelligence: () => void;
@@ -123,6 +125,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenCompare,
   onOpenSecurity,
   onOpenDiagnostics,
+  onOpenStressTest,
   onOpenCommandPalette,
   onOpenKeyboardShortcuts,
   onAnalyzeIntelligence,
@@ -318,6 +321,17 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           >
             <Activity className="w-3.5 h-3.5" />
           </button>
+
+          {/* Extreme Scale Stress Test Button */}
+          {onOpenStressTest && (
+            <button
+              onClick={onOpenStressTest}
+              className="p-1 rounded hover:bg-neutral-800 text-amber-400 hover:text-amber-300 transition-colors"
+              title="Extreme Scale Stress Test (10,000 files/pages)"
+            >
+              <Zap className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

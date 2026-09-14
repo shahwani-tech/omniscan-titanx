@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { OmniPage, AppLanguage } from "../../types";
 import { t } from "../../engine/i18n";
-import { PdfFilterNumericInput } from "../common/PdfFilterNumericInput";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
 
 interface StatusBarProps {
   activePage: OmniPage | null;
@@ -174,7 +174,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             <ZoomIn className="w-3.5 h-3.5" />
           </button>
 
-          <PdfFilterNumericInput
+          <UniversalNumericInput
             id="pdf-zoom-numeric-input"
             value={Math.round(zoom * 100)}
             min={10}

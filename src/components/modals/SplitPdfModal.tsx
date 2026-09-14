@@ -7,6 +7,8 @@ import { Scissors, Download, FileText, CheckCircle2, AlertCircle, X } from "luci
 import JSZip from "jszip";
 import { OmniDocument } from "../../types";
 import { splitDocumentToPDFs } from "../../engine/pdf";
+import { toast } from "../../services/toast/toastService";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface SplitPdfModalProps {
   isOpen: boolean;
@@ -23,8 +25,6 @@ export const SplitPdfModal: React.FC<SplitPdfModalProps> = ({
   const [customRangeText, setCustomRangeText] = useState("1-2, 3-4");
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressMsg, setProgressMsg] = useState("");
-
-  if (!isOpen) return null;
 
   const totalPages = document.pages.length;
 
@@ -98,12 +98,29 @@ export const SplitPdfModal: React.FC<SplitPdfModalProps> = ({
 
       onClose();
     } catch (err: any) {
-      alert("Split operation failed: " + (err?.message || String(err)));
+      toast.error("Split operation failed: " + (err?.message || String(err)));
     } finally {
       setIsProcessing(false);
       setProgressMsg("");
     }
   };
+
+  // Centralized Scoped Shortcuts for Split PDF Modal
+  useToolShortcuts({
+    scope: "split-pdf",
+    isOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: () => {
+      if (!isProcessing) handleExecuteSplit();
+    },
+    actions: {
+      "split.execute": handleExecuteSplit,
+      "split.close": onClose,
+    },
+  });
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 select-none">

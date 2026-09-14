@@ -40,7 +40,7 @@ import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStu
 import { BackgroundStudioState } from "../../engine/background/types";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageToDataUrl } from "../../engine/pdf";
-import { useShortcuts } from "../../commands/ShortcutContext";
+import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
 import {
   PdfImportDialog,
   ACCEPTED_DOCUMENT_AND_IMAGE_TYPES,
@@ -100,7 +100,7 @@ import {
   Compass,
   Zap,
 } from "lucide-react";
-import { PhotoFilterNumericInput } from "./PhotoFilterNumericInput";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
 
 interface PhotoPrintStudioModalProps {
   pages: OmniPage[];
@@ -944,97 +944,57 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     }
   };
 
-  // Centralized Shortcut Management for Photo Print Studio
-  const { pushScope, popScope, registerAction } = useShortcuts();
-
-  useEffect(() => {
-    if (!isOpen) return;
-    pushScope("photo-studio");
-    return () => {
-      popScope("photo-studio");
-    };
-  }, [isOpen, pushScope, popScope]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const unregZoomIn = registerAction("photo.zoomIn", () =>
-      setCropZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2))))
-    );
-    const unregZoomOut = registerAction("photo.zoomOut", () =>
-      setCropZoom((prev) => Math.max(0.5, Number((prev - 0.1).toFixed(2))))
-    );
-    const unregResetZoom = registerAction("photo.resetZoom", () => {
+  // Centralized Scoped Shortcuts for Photo Print Studio
+  useToolShortcuts({
+    scope: "photo-studio",
+    isOpen: isOpen && !isBgRemoverOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: handlePrintSheet,
+    onDelete: handleResetFilters,
+    onZoomIn: () => setCropZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2)))),
+    onZoomOut: () => setCropZoom((prev) => Math.max(0.5, Number((prev - 0.1).toFixed(2)))),
+    onResetZoom: () => {
       setCropZoom(1.0);
       setCropImagePan({ x: 0, y: 0 });
-    });
-    const unregRotateCw = registerAction("photo.rotateCw", () =>
-      setCropRotation((prev) => (prev + 90) % 360)
-    );
-    const unregRotateCcw = registerAction("photo.rotateCcw", () =>
-      setCropRotation((prev) => (prev - 90 + 360) % 360)
-    );
-    const unregUp = registerAction("photo.nudgeUp", () =>
-      setCropImagePan((prev) => ({ ...prev, y: prev.y - 10 }))
-    );
-    const unregDown = registerAction("photo.nudgeDown", () =>
-      setCropImagePan((prev) => ({ ...prev, y: prev.y + 10 }))
-    );
-    const unregLeft = registerAction("photo.nudgeLeft", () =>
-      setCropImagePan((prev) => ({ ...prev, x: prev.x - 10 }))
-    );
-    const unregRight = registerAction("photo.nudgeRight", () =>
-      setCropImagePan((prev) => ({ ...prev, x: prev.x + 10 }))
-    );
-    const unregGrid = registerAction("photo.toggleGrid", () =>
-      setSheetConfig((prev) => ({
-        ...prev,
-        border: { ...prev.border, enabled: !prev.border.enabled },
-      }))
-    );
-    const unregGuides = registerAction("photo.toggleGuides", () =>
-      setSheetConfig((prev) => ({
-        ...prev,
-        cuttingGuides: {
-          ...prev.cuttingGuides,
-          type: prev.cuttingGuides.type === "none" ? "corner-marks" : "none",
-        },
-      }))
-    );
-    const unregResetAll = registerAction("photo.resetAll", () => {
-      setCropZoom(1.0);
-      setCropImagePan({ x: 0, y: 0 });
-      setCropRotation(0);
-      handleResetFilters();
-    });
-    const unregPrint = registerAction("photo.print", handlePrintSheet);
-    const unregExport = registerAction("photo.export", handleExportPDF);
-    const unregClose = registerAction("photo.close", onClose);
-
-    return () => {
-      unregZoomIn();
-      unregZoomOut();
-      unregResetZoom();
-      unregRotateCw();
-      unregRotateCcw();
-      unregUp();
-      unregDown();
-      unregLeft();
-      unregRight();
-      unregGrid();
-      unregGuides();
-      unregResetAll();
-      unregPrint();
-      unregExport();
-      unregClose();
-    };
-  }, [
-    isOpen,
-    registerAction,
-    handlePrintSheet,
-    handleExportPDF,
-    onClose,
-  ]);
+    },
+    onRotateCw: () => setCropRotation((prev) => (prev + 90) % 360),
+    onRotateCcw: () => setCropRotation((prev) => (prev - 90 + 360) % 360),
+    onNudge: (dir, multiplier) => {
+      const step = 10 * multiplier;
+      if (dir === "up") setCropImagePan((prev) => ({ ...prev, y: prev.y - step }));
+      if (dir === "down") setCropImagePan((prev) => ({ ...prev, y: prev.y + step }));
+      if (dir === "left") setCropImagePan((prev) => ({ ...prev, x: prev.x - step }));
+      if (dir === "right") setCropImagePan((prev) => ({ ...prev, x: prev.x + step }));
+    },
+    actions: {
+      "photo.zoomIn": () => setCropZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2)))),
+      "photo.zoomOut": () => setCropZoom((prev) => Math.max(0.5, Number((prev - 0.1).toFixed(2)))),
+      "photo.resetZoom": () => {
+        setCropZoom(1.0);
+        setCropImagePan({ x: 0, y: 0 });
+      },
+      "photo.rotateCw": () => setCropRotation((prev) => (prev + 90) % 360),
+      "photo.rotateCcw": () => setCropRotation((prev) => (prev - 90 + 360) % 360),
+      "photo.toggleGrid": () =>
+        setSheetConfig((prev) => ({
+          ...prev,
+          border: { ...prev.border, enabled: !prev.border.enabled },
+        })),
+      "photo.toggleGuides": () =>
+        setSheetConfig((prev) => ({
+          ...prev,
+          cuttingGuides: {
+            ...prev.cuttingGuides,
+            type: prev.cuttingGuides.type === "none" ? "corner-marks" : "none",
+          },
+        })),
+      "photo.resetAll": handleResetFilters,
+      "photo.print": handlePrintSheet,
+      "photo.export": handleExportPDF,
+      "photo.close": onClose,
+    },
+  });
 
   // Quick Preset Handlers
   const handleSelectPresetCopies = (copies: number, cols: number, rows: number) => {
@@ -1811,7 +1771,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         onChange={(e) => setBrightness(Number(e.target.value))}
                         className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                       />
-                      <PhotoFilterNumericInput
+                      <UniversalNumericInput
                         id="passport-input-brightness"
                         value={brightness}
                         min={-40}
@@ -1850,7 +1810,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         onChange={(e) => setContrast(Number(e.target.value))}
                         className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                       />
-                      <PhotoFilterNumericInput
+                      <UniversalNumericInput
                         id="passport-input-contrast"
                         value={contrast}
                         min={-30}
@@ -1889,7 +1849,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         onChange={(e) => setGamma(parseFloat(e.target.value))}
                         className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                       />
-                      <PhotoFilterNumericInput
+                      <UniversalNumericInput
                         id="passport-input-gamma"
                         value={gamma}
                         min={0.2}
@@ -1928,7 +1888,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         onChange={(e) => setSharpness(Number(e.target.value))}
                         className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                       />
-                      <PhotoFilterNumericInput
+                      <UniversalNumericInput
                         id="passport-input-sharpness"
                         value={sharpness}
                         min={0}
@@ -1967,7 +1927,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         onChange={(e) => setDeskewAngle(Number(parseFloat(e.target.value).toFixed(1)))}
                         className="flex-1 h-1.5 bg-neutral-800 accent-sky-500 rounded cursor-pointer"
                       />
-                      <PhotoFilterNumericInput
+                      <UniversalNumericInput
                         id="passport-input-deskew"
                         value={deskewAngle}
                         min={-15}

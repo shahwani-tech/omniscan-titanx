@@ -23,7 +23,7 @@ import {
   FileText,
   Image as ImageIcon,
 } from "lucide-react";
-import { PdfFilterNumericInput } from "./PdfFilterNumericInput";
+import { UniversalNumericInput } from "./UniversalNumericInput";
 import { analyzeImageAndComputeAutoGrade } from "../../engine/autoColorGrade";
 import { diagnoseDocumentDefects, buildAdaptivePlan } from "../../engine/autoProcessor";
 import { ContentClassificationResult } from "../../engine/autoClassifier";
@@ -32,15 +32,18 @@ export interface UnifiedColorGradingPanelProps {
   filters: ImageFilterPipeline;
   onChange: (updated: Partial<ImageFilterPipeline>, isCommit?: boolean) => void;
   onReset: () => void;
+  title?: string;
   imageSource?: string | HTMLImageElement | HTMLCanvasElement;
   compact?: boolean;
   showPresets?: boolean;
   showOptics?: boolean;
   showColorModes?: boolean;
   showGeometry?: boolean;
+  showAutoGrade?: boolean;
+  showCleanup?: boolean;
   idPrefix?: string;
   onAutoEnhanced?: (summary: string) => void;
-  detectedContent?: ContentClassificationResult | null;
+  detectedContent?: Partial<ContentClassificationResult> | null;
   filterSource?: "auto-detected" | "user-override";
   onReDetect?: () => void;
   onApplyToAllPages?: () => void;
@@ -377,7 +380,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
               }
               className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id={`${idPrefix}-brightness`}
               value={filters.brightness}
               min={-100}
@@ -420,7 +423,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
               }
               className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id={`${idPrefix}-contrast`}
               value={filters.contrast}
               min={-100}
@@ -463,7 +466,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
               }
               className="flex-1 accent-purple-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id={`${idPrefix}-gamma`}
               value={filters.gamma}
               min={0.2}
@@ -506,7 +509,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
               }
               className="flex-1 accent-emerald-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id={`${idPrefix}-saturation`}
               value={filters.saturation || 0}
               min={-100}
@@ -549,7 +552,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
               }
               className="flex-1 accent-amber-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id={`${idPrefix}-sharpness`}
               value={filters.sharpness || 0}
               min={0}
@@ -598,7 +601,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
                 }
                 className="flex-1 accent-teal-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
               />
-              <PdfFilterNumericInput
+              <UniversalNumericInput
                 id={`${idPrefix}-deskew`}
                 value={filters.deskewAngle || 0}
                 min={-25}
@@ -667,7 +670,7 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
                       }
                       className="flex-1 accent-amber-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
                     />
-                    <PdfFilterNumericInput
+                    <UniversalNumericInput
                       id={`${idPrefix}-whiten`}
                       value={filters.backgroundWhitenThreshold || 220}
                       min={140}

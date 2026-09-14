@@ -24,6 +24,7 @@ import { SCANNER_PROFILES, simulateScannerFeed } from "../../engine/scanner";
 import { generateSampleInvoicePage, generateSampleContractPage } from "../../data/sampleDocuments";
 import { DEFAULT_FILTERS } from "../../engine/vision";
 import { enhanceOmniPageAdaptive } from "../../engine/autoProcessor";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface ScanModalProps {
   isOpen: boolean;
@@ -85,8 +86,6 @@ export const ScanModal: React.FC<ScanModalProps> = ({
       setCameraActive(false);
     }
   };
-
-  if (!isOpen) return null;
 
   const handleCaptureCamera = async () => {
     if (!videoRef.current) return;
@@ -187,6 +186,27 @@ export const ScanModal: React.FC<ScanModalProps> = ({
       onClose();
     }
   };
+
+  // Centralized Scoped Shortcuts for Scanner Studio
+  useToolShortcuts({
+    scope: "scanner",
+    isOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: () => {
+      if (scannedPreviewPages.length > 0) {
+        handleCommitAcquisition();
+      } else if (!isScanning) {
+        handleExecuteScan();
+      }
+    },
+    actions: {
+      "scan.execute": handleExecuteScan,
+      "scan.commit": handleCommitAcquisition,
+    },
+  });
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 select-none">

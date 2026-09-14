@@ -61,8 +61,8 @@ import {
   getA6SheetDimensions,
 } from "../../engine/a6HalfCardLayout";
 import { renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
-import { useShortcuts } from "../../commands/ShortcutContext";
-import { A6HalfCardNumericInput } from "./A6HalfCardNumericInput";
+import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
 import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
 import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
@@ -316,60 +316,54 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
     };
   }, []);
 
-  // -------------------------------------------------------------
-  // Dedicated A6 Half-Card Keyboard Shortcuts
-  // -------------------------------------------------------------
+  // Spacebar Pan Keyup/Keydown listener for drag cursor
   useEffect(() => {
     if (!isOpen) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest("input, textarea, select")) return;
-
+      if (target?.closest("input, textarea, select")) return;
       if (e.code === "Space" && !e.repeat) {
         e.preventDefault();
         setIsSpacePressed(true);
-      } else if (e.key.toLowerCase() === "h" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setPreviewTool((prev) => (prev === "hand" ? "select" : "hand"));
-      } else if (e.key.toLowerCase() === "c" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setCropTargetSide(activeSideTab);
-        setIsCropModalOpen(true);
-      } else if (e.key === "0" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleResetPreview();
-      } else if (e.key === "1" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setPreviewZoom(1.0);
-      } else if (e.key === "2" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleFitWidth();
-      } else if (e.key === "3" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        handleFitHeight();
-      } else if (e.key === "+" || e.key === "=") {
-        e.preventDefault();
-        setPreviewZoom((z) => Math.min(3.0, Number((z + 0.1).toFixed(2))));
-      } else if (e.key === "-") {
-        e.preventDefault();
-        setPreviewZoom((z) => Math.max(0.4, Number((z - 0.1).toFixed(2))));
       }
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
         setIsSpacePressed(false);
       }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [isOpen, activeSideTab]);
+  }, [isOpen]);
+
+  // Centralized Scoped Shortcuts for A6 Half Card Studio
+  useToolShortcuts({
+    scope: "a6-studio",
+    isOpen: isOpen && !isCropModalOpen && !pdfPickerState.isOpen && !isBgStudioOpen,
+    priority: 150,
+    onEscape: onClose,
+    onEnter: () => handleExportPdf(),
+    onZoomIn: () => setPreviewZoom((z) => Math.min(3.0, Number((z + 0.1).toFixed(2)))),
+    onZoomOut: () => setPreviewZoom((z) => Math.max(0.4, Number((z - 0.1).toFixed(2)))),
+    onResetZoom: handleResetPreview,
+    actions: {
+      "a6.switchFront": () => setActiveSideTab("front"),
+      "a6.switchBack": () => setActiveSideTab("back"),
+      "a6.crop": () => {
+        setCropTargetSide(activeSideTab);
+        setIsCropModalOpen(true);
+      },
+      "a6.hand": () => setPreviewTool((prev) => (prev === "hand" ? "select" : "hand")),
+      "a6.fitWidth": handleFitWidth,
+      "a6.fitHeight": handleFitHeight,
+      "a6.resetAll": () => handleResetActiveSide(),
+      "a6.export": () => handleExportPdf(),
+    },
+  });
 
   // -------------------------------------------------------------
   // Unified File Processor (Images & PDFs)
@@ -1112,16 +1106,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
     const unregGrid = registerAction("a6.toggleGrid", () =>
       setConfig((prev) => ({
         ...prev,
-        border: { ...prev.border, enabled: !prev.border.enabled },
+        cardBorder: prev.cardBorder === "none" ? "hairline" : "none",
       }))
     );
     const unregGuides = registerAction("a6.toggleGuides", () =>
       setConfig((prev) => ({
         ...prev,
-        cuttingGuides: {
-          ...prev.cuttingGuides,
-          enabled: !prev.cuttingGuides.enabled,
-        },
+        showCuttingGuides: !prev.showCuttingGuides,
       }))
     );
     const unregReset = registerAction("a6.resetAll", () => {
@@ -1718,7 +1709,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id="a6-input-margin"
                     value={config.marginMm}
                     min={0}
@@ -1750,7 +1741,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id="a6-input-gap"
                     value={config.gapMm}
                     min={0}
@@ -1932,7 +1923,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     onChange={(e) => handleWidthChange(parseFloat(e.target.value))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-width-${activeSideTab}`}
                     value={currentAdjustment.widthMm}
                     min={30}
@@ -1962,7 +1953,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     onChange={(e) => handleHeightChange(parseFloat(e.target.value))}
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-height-${activeSideTab}`}
                     value={currentAdjustment.heightMm}
                     min={30}
@@ -2090,7 +2081,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                   </button>
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-rotation-${activeSideTab}`}
                     value={currentAdjustment.rotation}
                     min={0}
@@ -2138,7 +2129,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-deskew-${activeSideTab}`}
                     value={currentAdjustment.deskewAngle}
                     min={-15}
@@ -2175,7 +2166,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-zoom-${activeSideTab}`}
                     value={currentAdjustment.zoom}
                     min={0.5}
@@ -2193,7 +2184,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <div>
                   <span className="text-[10px] text-neutral-400 block mb-0.5">X Position (mm)</span>
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-offsetx-${activeSideTab}`}
                     value={currentAdjustment.offsetX}
                     min={-40}
@@ -2207,7 +2198,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] text-neutral-400 block mb-0.5">Y Position (mm)</span>
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-offsety-${activeSideTab}`}
                     value={currentAdjustment.offsetY}
                     min={-40}
@@ -2279,7 +2270,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-brightness-${activeSideTab}`}
                     value={currentAdjustment.brightness}
                     min={-100}
@@ -2315,7 +2306,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-contrast-${activeSideTab}`}
                     value={currentAdjustment.contrast}
                     min={-100}
@@ -2351,7 +2342,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-gamma-${activeSideTab}`}
                     value={currentAdjustment.gamma}
                     min={0.2}
@@ -2387,7 +2378,7 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     }
                     className="flex-1 h-1.5 bg-neutral-800 accent-indigo-500 rounded cursor-pointer"
                   />
-                  <A6HalfCardNumericInput
+                  <UniversalNumericInput
                     id={`a6-sharpness-${activeSideTab}`}
                     value={currentAdjustment.sharpness}
                     min={0}

@@ -3,7 +3,7 @@
  * Infinite Zoom, Pan, Split-View Comparison, 8x Loupe, Annotation & Redaction Layers
  */
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   OmniPage,
   ViewMode,
@@ -57,6 +57,7 @@ import {
   StandardCropPreset,
 } from "../../engine/cropEngine";
 import { OmniDocument } from "../../types";
+import { prioritizePdfThumbnailPages } from "../../engine/pdf";
 
 interface DocumentCanvasProps {
   pages: OmniPage[];
@@ -191,12 +192,17 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     if (!viewport) return;
 
     const handleNativeWheel = (e: WheelEvent) => {
-      // 1. If pointer is over the viewport's scrollbar, allow native scrollbar scrolling (no zoom, no preventDefault)
+      // 1. In continuous view mode, if not holding Ctrl/Cmd, allow smooth native vertical scrolling
+      if (viewMode === "continuous" && !e.ctrlKey && !e.metaKey) {
+        return;
+      }
+
+      // 2. If pointer is over the viewport's scrollbar, allow native scrollbar scrolling (no zoom, no preventDefault)
       if (isPointerOverScrollbar(viewport, e.clientX, e.clientY)) {
         return;
       }
 
-      // 2. If pointer is over any scrollable child container, input, or toolbar control, allow native child scrolling (no zoom, no preventDefault)
+      // 3. If pointer is over any scrollable child container, input, or toolbar control, allow native child scrolling (no zoom, no preventDefault)
       if (isInsideScrollableChild(e.target, viewport)) {
         return;
       }
@@ -228,7 +234,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     return () => {
       viewport.removeEventListener("wheel", handleNativeWheel);
     };
-  }, [onZoomChange]);
+  }, [onZoomChange, viewMode]);
 
   // Dedicated PDF Page Crop Mode State
   const [cropBox, setCropBox] = useState<NormalizedCropBox>({
@@ -246,6 +252,200 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   // Before/After Split Slider State (0 to 1)
   const [splitPos, setSplitPos] = useState<number>(0.5);
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+
+  // Continuous View Mode Windowed Virtualization State & Calculations
+  // (Mirrors the robust windowed virtualization pattern from PageNavigator.tsx)
+  const CONTINUOUS_OVERSCAN = 6;
+  const CONTINUOUS_PAGE_GAP = 24; // 24px gap between pages (space-y-6)
+  const continuousScrollContainerRef = useRef<HTMLDivElement>(null);
+  const [continuousScrollTop, setContinuousScrollTop] = useState<number>(0);
+  const [continuousContainerHeight, setContinuousContainerHeight] = useState<number>(800);
+
+  // Measure continuous scroll container height via ResizeObserver (matching PageNavigator pattern)
+  useEffect(() => {
+    if (viewMode !== "continuous") return;
+    const el = continuousScrollContainerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContinuousContainerHeight(entry.contentRect.height);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewMode]);
+
+  const handleContinuousScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setContinuousScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  // Base rendered width for continuous view based on zoom level
+  const continuousBaseWidth = Math.round(760 * zoom);
+
+  // Dynamic height calculation per page based on aspect ratio (supports mixed portrait/landscape/different sizes)
+  const getContinuousPageHeight = useCallback(
+    (page: OmniPage) => {
+      if (page.width && page.height && page.width > 0) {
+        return Math.round(continuousBaseWidth * (page.height / page.width));
+      }
+      // Standard A4 aspect ratio fallback (1.4142)
+      return Math.round(continuousBaseWidth * 1.4142);
+    },
+    [continuousBaseWidth]
+  );
+
+  // Cumulative layout metrics for all pages (exact top, height, and bottom boundaries)
+  const continuousMetrics = useMemo(() => {
+    let currentTop = 0;
+    const items: Array<{ index: number; top: number; height: number; bottom: number }> = [];
+
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const height = getContinuousPageHeight(page);
+      const top = currentTop;
+      const bottom = top + height;
+      items.push({ index: i, top, height, bottom });
+      currentTop = bottom + CONTINUOUS_PAGE_GAP;
+    }
+
+    const totalHeight = items.length > 0 ? items[items.length - 1].bottom : 0;
+    return { items, totalHeight };
+  }, [pages, getContinuousPageHeight]);
+
+  const totalPageCount = pages.length;
+  // Window virtualization activates when total pages > 20 to prevent DOM/memory bloat on 50, 100, 500, 1000+ page docs
+  const isContinuousVirtual = totalPageCount > 20;
+
+  // Windowed visible range calculation with binary search and OVERSCAN buffer
+  const { continuousStartIndex, continuousEndIndex } = useMemo(() => {
+    if (totalPageCount === 0) {
+      return { continuousStartIndex: 0, continuousEndIndex: 0 };
+    }
+    if (!isContinuousVirtual) {
+      return { continuousStartIndex: 0, continuousEndIndex: totalPageCount - 1 };
+    }
+
+    const visibleTop = continuousScrollTop;
+    const visibleBottom = continuousScrollTop + continuousContainerHeight;
+
+    // Binary search for first intersecting page (where page bottom >= visibleTop)
+    let low = 0;
+    let high = totalPageCount - 1;
+    let first = 0;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (continuousMetrics.items[mid].bottom >= visibleTop) {
+        first = mid;
+        high = mid - 1;
+      } else {
+        low = mid + 1;
+      }
+    }
+
+    // Binary search for last intersecting page (where page top <= visibleBottom)
+    low = 0;
+    high = totalPageCount - 1;
+    let last = totalPageCount - 1;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      if (continuousMetrics.items[mid].top <= visibleBottom) {
+        last = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    const start = Math.max(0, first - CONTINUOUS_OVERSCAN);
+    const end = Math.min(totalPageCount - 1, last + CONTINUOUS_OVERSCAN);
+    return { continuousStartIndex: start, continuousEndIndex: end };
+  }, [
+    totalPageCount,
+    isContinuousVirtual,
+    continuousScrollTop,
+    continuousContainerHeight,
+    continuousMetrics,
+  ]);
+
+  // Height of top spacer element for unrendered pages above the viewport
+  const continuousTopSpacer =
+    isContinuousVirtual && continuousStartIndex > 0
+      ? continuousMetrics.items[continuousStartIndex].top
+      : 0;
+
+  // Height of bottom spacer element for unrendered pages below the viewport
+  const continuousBottomSpacer =
+    isContinuousVirtual && continuousEndIndex < totalPageCount - 1
+      ? Math.max(
+          0,
+          continuousMetrics.totalHeight - continuousMetrics.items[continuousEndIndex].bottom
+        )
+      : 0;
+
+  // Handle clicking on spacer/placeholder areas to correctly navigate to not-yet-mounted pages
+  const handleContinuousSpacerClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>, isTopSpacer: boolean) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clickY = e.clientY - rect.top;
+      const targetY = isTopSpacer
+        ? clickY
+        : (continuousMetrics.items[continuousEndIndex]?.bottom || 0) + clickY;
+
+      for (let i = 0; i < continuousMetrics.items.length; i++) {
+        const m = continuousMetrics.items[i];
+        if (targetY >= m.top && targetY <= m.bottom + CONTINUOUS_PAGE_GAP) {
+          onSelectPage(i);
+          return;
+        }
+      }
+    },
+    [continuousMetrics, continuousEndIndex, onSelectPage]
+  );
+
+  // Prioritize PDF thumbnail rendering for visible range in continuous mode (matching PageNavigator pattern)
+  useEffect(() => {
+    if (viewMode === "continuous" && pages.length > 0) {
+      const visibleNums: number[] = [];
+      for (let i = continuousStartIndex; i <= continuousEndIndex; i++) {
+        if (pages[i]?.pageNumber) {
+          visibleNums.push(pages[i].pageNumber);
+        }
+      }
+      if (visibleNums.length > 0) {
+        prioritizePdfThumbnailPages(visibleNums);
+      }
+    }
+  }, [viewMode, continuousStartIndex, continuousEndIndex, pages]);
+
+  // Scroll active page into view in continuous mode if navigated externally
+  const scrollContinuousActivePageIntoView = useCallback(() => {
+    if (
+      viewMode !== "continuous" ||
+      !continuousScrollContainerRef.current ||
+      activePageIndex < 0 ||
+      activePageIndex >= continuousMetrics.items.length
+    ) {
+      return;
+    }
+
+    const item = continuousMetrics.items[activePageIndex];
+    if (!item) return;
+
+    const currentScroll = continuousScrollContainerRef.current.scrollTop;
+    const visibleBottom = currentScroll + continuousContainerHeight;
+
+    if (item.top < currentScroll || item.bottom > visibleBottom) {
+      continuousScrollContainerRef.current.scrollTo({
+        top: Math.max(0, item.top - continuousContainerHeight / 4),
+        behavior: "smooth",
+      });
+    }
+  }, [viewMode, activePageIndex, continuousContainerHeight, continuousMetrics]);
+
+  useEffect(() => {
+    scrollContinuousActivePageIntoView();
+  }, [activePageIndex, scrollContinuousActivePageIntoView]);
 
   // 8x Magnifier Loupe Tool
   const [loupePos, setLoupePos] = useState<Point | null>(null);
@@ -1025,7 +1225,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                 )}
 
                 {/* Vector Annotations Layer */}
-                {activePage.annotations.map((ann) => {
+                {(activePage.annotations || []).map((ann) => {
                   return (
                     <div
                       key={ann.id}
@@ -1074,7 +1274,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                 })}
 
                 {/* Redactions Layer */}
-                {activePage.redactions.map((red) => (
+                {(activePage.redactions || []).map((red) => (
                   <div
                     key={red.id}
                     style={{
@@ -1159,33 +1359,82 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           </div>
         )}
 
-        {/* Render Continuous Multi-Page Vertical Scroll View */}
+        {/* Render Continuous Multi-Page Windowed Virtualized Vertical Scroll View */}
         {viewMode === "continuous" && (
           <div
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: "top center",
-            }}
-            className="flex flex-col space-y-6 items-center"
+            ref={continuousScrollContainerRef}
+            onScroll={handleContinuousScroll}
+            className="absolute inset-0 overflow-y-auto overflow-x-auto custom-scrollbar flex flex-col items-center py-8 select-none"
+            data-continuous-scroll="true"
           >
-            {pages.map((page, idx) => (
-              <div
-                key={page.id}
-                onClick={() => onSelectPage(idx)}
-                className={`relative shadow-2xl rounded bg-neutral-900 border transition-all ${
-                  idx === activePageIndex ? "border-sky-500 ring-2 ring-sky-500/30" : "border-neutral-800"
-                }`}
-              >
-                <img
-                  src={page.processedDataUrl || page.thumbnailDataUrl}
-                  alt={`Page ${idx + 1}`}
-                  className="max-h-[75vh] w-auto pointer-events-none object-contain"
+            {/* Dynamic Sized Inner Container representing full document height */}
+            <div
+              style={{
+                width: `${continuousBaseWidth}px`,
+                minHeight: `${continuousMetrics.totalHeight}px`,
+                transform: pan.x ? `translateX(${pan.x}px)` : undefined,
+              }}
+              className="flex flex-col items-center relative"
+            >
+              {/* Top Spacer for unrendered pages above viewport */}
+              {continuousTopSpacer > 0 && (
+                <div
+                  style={{ height: `${continuousTopSpacer}px`, width: "100%" }}
+                  aria-hidden="true"
+                  onClick={(e) => handleContinuousSpacerClick(e, true)}
+                  className="cursor-pointer"
+                  title="Click to jump to page"
                 />
-                <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 font-mono text-xs text-neutral-300 font-bold">
-                  Page {idx + 1}
-                </span>
+              )}
+
+              {/* Rendered Windowed Pages with OVERSCAN buffer */}
+              <div className="flex flex-col space-y-6 items-center w-full">
+                {pages
+                  .slice(continuousStartIndex, continuousEndIndex + 1)
+                  .map((page, offset) => {
+                    const idx = continuousStartIndex + offset;
+                    const metric = continuousMetrics.items[idx];
+                    const pageH = metric ? metric.height : getContinuousPageHeight(page);
+
+                    return (
+                      <div
+                        key={page.id}
+                        onClick={() => onSelectPage(idx)}
+                        style={{
+                          width: `${continuousBaseWidth}px`,
+                          height: `${pageH}px`,
+                        }}
+                        className={`relative shadow-2xl rounded bg-neutral-900 border transition-all cursor-pointer flex items-center justify-center shrink-0 ${
+                          idx === activePageIndex
+                            ? "border-sky-500 ring-2 ring-sky-500/30"
+                            : "border-neutral-800 hover:border-neutral-700"
+                        }`}
+                      >
+                        <img
+                          src={page.processedDataUrl || page.thumbnailDataUrl}
+                          alt={`Page ${idx + 1}`}
+                          className="max-h-full max-w-full pointer-events-none object-contain rounded"
+                          loading="lazy"
+                        />
+                        <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 font-mono text-xs text-neutral-300 font-bold pointer-events-none">
+                          Page {idx + 1}
+                        </span>
+                      </div>
+                    );
+                  })}
               </div>
-            ))}
+
+              {/* Bottom Spacer for unrendered pages below viewport */}
+              {continuousBottomSpacer > 0 && (
+                <div
+                  style={{ height: `${continuousBottomSpacer}px`, width: "100%" }}
+                  aria-hidden="true"
+                  onClick={(e) => handleContinuousSpacerClick(e, false)}
+                  className="cursor-pointer"
+                  title="Click to jump to page"
+                />
+              )}
+            </div>
           </div>
         )}
 

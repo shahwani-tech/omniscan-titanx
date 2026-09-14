@@ -18,7 +18,7 @@ import {
   Droplets,
   Layers,
 } from "lucide-react";
-import { PdfFilterNumericInput } from "../common/PdfFilterNumericInput";
+import { UniversalNumericInput } from "../common/UniversalNumericInput";
 
 interface FilterParameterControlsProps {
   filters: ImageFilterPipeline;
@@ -78,7 +78,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
               onChange={(e) => onChange({ brightness: parseInt(e.target.value, 10) })}
               className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id="filter-studio-brightness"
               value={filters.brightness}
               min={-100}
@@ -114,7 +114,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
               onChange={(e) => onChange({ contrast: parseInt(e.target.value, 10) })}
               className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id="filter-studio-contrast"
               value={filters.contrast}
               min={-100}
@@ -149,7 +149,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
               onChange={(e) => onChange({ gamma: parseFloat(e.target.value) })}
               className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id="filter-studio-gamma"
               value={filters.gamma}
               min={0.3}
@@ -185,7 +185,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
               onChange={(e) => onChange({ saturation: parseInt(e.target.value, 10) })}
               className="flex-1 accent-emerald-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id="filter-studio-saturation"
               value={filters.saturation || 0}
               min={-100}
@@ -233,7 +233,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
                 onChange={(e) => onChange({ backgroundWhitenThreshold: parseInt(e.target.value, 10) })}
                 className="flex-1 accent-amber-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
               />
-              <PdfFilterNumericInput
+              <UniversalNumericInput
                 id="filter-studio-whiten"
                 value={filters.backgroundWhitenThreshold}
                 min={140}
@@ -273,7 +273,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
                 onChange={(e) => onChange({ shadowStrength: parseInt(e.target.value, 10) })}
                 className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
               />
-              <PdfFilterNumericInput
+              <UniversalNumericInput
                 id="filter-studio-shadow-strength"
                 value={filters.shadowStrength || 70}
                 min={10}
@@ -311,7 +311,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
               onChange={(e) => onChange({ sharpness: parseInt(e.target.value, 10) })}
               className="flex-1 accent-cyan-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
             />
-            <PdfFilterNumericInput
+            <UniversalNumericInput
               id="filter-studio-sharpness"
               value={filters.sharpness}
               min={0}
@@ -381,7 +381,7 @@ export const FilterParameterControls: React.FC<FilterParameterControlsProps> = (
                 onChange={(e) => onChange({ binarizationThreshold: parseInt(e.target.value, 10) })}
                 className="flex-1 accent-sky-500 bg-neutral-800 h-1.5 rounded cursor-pointer"
               />
-              <PdfFilterNumericInput
+              <UniversalNumericInput
                 id="filter-studio-binarize"
                 value={filters.binarizationThreshold}
                 min={60}

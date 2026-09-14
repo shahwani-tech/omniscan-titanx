@@ -8,7 +8,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { BackgroundCrop } from "../../engine/background/types";
 import { applyBackgroundCrop } from "../../engine/background/backgroundTransforms";
+import { toast } from "../../services/toast/toastService";
 import { Crop, Check, X, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { useToolShortcuts } from "../../commands/ShortcutContext";
 
 interface BackgroundCropModalProps {
   isOpen: boolean;
@@ -57,8 +59,6 @@ export const BackgroundCropModal: React.FC<BackgroundCropModalProps> = ({
       setCropBox({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 });
     }
   }, [initialCrop, isOpen]);
-
-  if (!isOpen) return null;
 
   const handleRatioSelect = (mode: typeof ratioMode) => {
     setRatioMode(mode);
@@ -169,9 +169,38 @@ export const BackgroundCropModal: React.FC<BackgroundCropModalProps> = ({
       onClose();
     } catch (err) {
       console.error("Crop application failed:", err);
-      alert("Could not crop background image.");
+      toast.error("Could not crop background image.");
     }
   };
+
+  useToolShortcuts({
+    scope: "crop",
+    isOpen,
+    priority: 250,
+    onEscape: onClose,
+    onEnter: handleApply,
+    onDelete: () => setCropBox({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 }),
+    onNudge: (dir, mult) => {
+      const step = 0.01 * mult;
+      let dx = 0;
+      let dy = 0;
+      if (dir === "up") dy = -step;
+      if (dir === "down") dy = step;
+      if (dir === "left") dx = -step;
+      if (dir === "right") dx = step;
+      setCropBox((prev) => ({
+        ...prev,
+        x: Math.max(0, Math.min(1 - prev.w, prev.x + dx)),
+        y: Math.max(0, Math.min(1 - prev.h, prev.y + dy)),
+      }));
+    },
+    actions: {
+      "crop.reset": () => setCropBox({ x: 0.05, y: 0.05, w: 0.9, h: 0.9 }),
+      "crop.apply": handleApply,
+    },
+  });
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-70 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 select-none animate-in fade-in duration-150">
