@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X, Check, FileText, ChevronLeft, ChevronRight, RefreshCw, ZoomIn } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
-import { renderPDFPageThumbnail } from "../../engine/pdf";
+import { renderPDFPageThumbnail, renderPdfThumbnailsConcurrent } from "../../engine/pdf";
 
 interface A6PdfPagePickerModalProps {
   isOpen: boolean;
@@ -33,39 +33,52 @@ export const A6PdfPagePickerModal: React.FC<A6PdfPagePickerModalProps> = ({
     setSelectedPage(currentPage);
   }, [currentPage, isOpen]);
 
-  // Lazy thumbnail loader: Loads pages progressively
+  // Lazy thumbnail loader: Loads pages progressively with 3-page concurrency
   useEffect(() => {
     if (!isOpen || !pdfDoc) return;
     isCancelledRef.current = false;
 
-    const loadThumbs = async () => {
-      // Prioritize current page first
-      const priorityOrder: number[] = [selectedPage];
-      for (let i = 1; i <= numPages; i++) {
-        if (i !== selectedPage) priorityOrder.push(i);
+    // Prioritize current page first, then remaining
+    const priorityOrder: number[] = [];
+    if (selectedPage >= 1 && selectedPage <= numPages && !thumbnails[selectedPage]) {
+      priorityOrder.push(selectedPage);
+    }
+    for (let i = 1; i <= numPages; i++) {
+      if (i !== selectedPage && !thumbnails[i]) {
+        priorityOrder.push(i);
       }
+    }
 
-      for (const p of priorityOrder) {
-        if (isCancelledRef.current) break;
-        if (thumbnails[p]) continue;
+    if (priorityOrder.length === 0) return;
 
-        setLoadingPages((prev) => ({ ...prev, [p]: true }));
-        try {
-          const thumb = await renderPDFPageThumbnail(pdfDoc, p, 220);
-          if (!isCancelledRef.current) {
-            setThumbnails((prev) => ({ ...prev, [p]: thumb.thumbnailUrl }));
-          }
-        } catch (err) {
-          console.warn(`Failed to render thumbnail for PDF page ${p}:`, err);
-        } finally {
-          if (!isCancelledRef.current) {
-            setLoadingPages((prev) => ({ ...prev, [p]: false }));
-          }
+    setLoadingPages((prev) => {
+      const next = { ...prev };
+      for (const p of priorityOrder) next[p] = true;
+      return next;
+    });
+
+    renderPdfThumbnailsConcurrent(
+      pdfDoc,
+      priorityOrder,
+      220,
+      undefined,
+      3, // 3 concurrent in flight
+      (p, thumb) => {
+        if (!isCancelledRef.current) {
+          setThumbnails((prev) => ({ ...prev, [p]: thumb.thumbnailUrl }));
+          setLoadingPages((prev) => ({ ...prev, [p]: false }));
         }
+      },
+      () => isCancelledRef.current
+    ).finally(() => {
+      if (!isCancelledRef.current) {
+        setLoadingPages((prev) => {
+          const next = { ...prev };
+          for (const p of priorityOrder) next[p] = false;
+          return next;
+        });
       }
-    };
-
-    loadThumbs();
+    });
 
     return () => {
       isCancelledRef.current = true;

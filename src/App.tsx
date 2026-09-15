@@ -332,7 +332,17 @@ export function AppContent() {
 
     renderPdfPageOnDemand(activePage.pdfDocId, activePage.pageNumber).then((rendered) => {
       inFlightRenderingRef.current.delete(pageKey);
-      if (isCancelled || !rendered) return;
+      if (isCancelled) return;
+      if (!rendered) {
+        // Fallback: clear pending render to unblock UI
+        setDocument((prev) => ({
+          ...prev,
+          pages: prev.pages.map((p) =>
+            p.id === activePage.id ? { ...p, isPendingRender: false } : p
+          ),
+        }));
+        return;
+      }
 
       setDocument((prev) => ({
         ...prev,
@@ -372,6 +382,13 @@ export function AppContent() {
     }).catch((err) => {
       inFlightRenderingRef.current.delete(pageKey);
       console.warn(`On-demand render failed for page ${activePage.pageNumber}:`, err);
+      // Guarantee that pending state is reset so user is never stuck in loading screen
+      setDocument((prev) => ({
+        ...prev,
+        pages: prev.pages.map((p) =>
+          p.id === activePage.id ? { ...p, isPendingRender: false } : p
+        ),
+      }));
     });
 
     return () => {
@@ -2362,6 +2379,7 @@ export function AppContent() {
           activePagePreviewUrl={activePagePreviewUrl}
           onZoomChange={setZoom}
           onSelectPage={handleSelectPage}
+          onViewModeChange={setViewMode}
           onAddAnnotation={handleAddAnnotation}
           onAddRedaction={handleAddRedaction}
           onDeleteAnnotation={handleDeleteAnnotation}

@@ -77,25 +77,13 @@ export const DocumentCompareModal: React.FC<DocumentCompareModalProps> = ({
       if (analysis.category === "pdf") {
         const imported = await importPDFFile(file);
         // Pre-render any pending pages on demand for instant comparison
-        const loadedPages: CompareTargetPage[] = [];
-        for (const p of imported.pages) {
-          let dataUrl = p.processedDataUrl;
-          if (p.isPendingRender && p.pdfDocId) {
-            try {
-              const fullRes = await renderPdfPageOnDemand(p.pdfDocId, p.pageNumber, 200);
-              dataUrl = fullRes.dataUrl;
-            } catch {
-              dataUrl = p.thumbnailDataUrl || p.processedDataUrl;
-            }
-          }
-          loadedPages.push({
-            id: p.id,
-            label: `${file.name} - Page ${p.pageNumber}`,
-            dataUrl,
-            width: p.width,
-            height: p.height,
-          });
-        }
+        const loadedPages: CompareTargetPage[] = imported.pages.map((p) => ({
+          id: p.id,
+          label: `${file.name} - Page ${p.pageNumber}`,
+          dataUrl: p.processedDataUrl || p.thumbnailDataUrl || p.originalDataUrl,
+          width: p.width,
+          height: p.height,
+        }));
         setRevisionPages(loadedPages);
         setRevisionDocName(file.name);
         setUseUploadedRevision(true);

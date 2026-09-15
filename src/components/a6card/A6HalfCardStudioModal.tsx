@@ -395,19 +395,27 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
           } catch {}
         }
 
-        let objectUrl: string | undefined;
-        try {
-          objectUrl = URL.createObjectURL(file);
-          if (side === "front") frontObjectUrlRef.current = objectUrl;
-          else backObjectUrlRef.current = objectUrl;
-        } catch {}
-
         ensurePdfWorker();
-        const loadingTask = objectUrl
-          ? pdfjsLib.getDocument({ url: objectUrl, useSystemFonts: true })
-          : pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), useSystemFonts: true });
+        const buffer = await file.arrayBuffer();
+        const loadingTask = (pdfjsLib.getDocument as any)({
+          data: new Uint8Array(buffer),
+          useSystemFonts: true,
+          isEvalSupported: false,
+        });
 
-        const pdfDoc = await loadingTask.promise;
+        // 30-second safety timeout
+        let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(() => {
+            try {
+              loadingTask.destroy();
+            } catch {}
+            reject(new Error("PDF loading timed out after 30 seconds."));
+          }, 30000);
+        });
+
+        const pdfDoc = await Promise.race([loadingTask.promise, timeoutPromise]);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
 
         // Render page 1 at 200 DPI for fast interactive responsiveness
         const rendered = await renderPDFPageToDataUrl(pdfDoc, 1, 200);

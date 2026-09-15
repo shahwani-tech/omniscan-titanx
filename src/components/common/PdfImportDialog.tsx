@@ -18,7 +18,12 @@ import {
   Copy,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
-import { renderPDFPageThumbnail, renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
+import {
+  renderPDFPageThumbnail,
+  renderPDFPageToDataUrl,
+  renderPdfThumbnailsConcurrent,
+  ensurePdfWorker,
+} from "../../engine/pdf";
 import {
   ACCEPT_ALL_SUPPORTED,
   ACCEPT_PDF_AND_IMAGES,
@@ -151,32 +156,40 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
       }
 
       try {
-        let objectUrl: string | undefined;
-        try {
-          objectUrl = URL.createObjectURL(file);
-          currentObjectUrlRef.current = objectUrl;
-        } catch {}
-
         ensurePdfWorker();
-        const loadingTask = objectUrl
-          ? pdfjsLib.getDocument({
-              url: objectUrl,
-              password: pwd,
-              useSystemFonts: true,
-            })
-          : pdfjsLib.getDocument({
-              data: new Uint8Array(await file.arrayBuffer()),
-              password: pwd,
-              useSystemFonts: true,
-            });
+        const buffer = await file.arrayBuffer();
+        const loadingTask = (pdfjsLib.getDocument as any)({
+          data: new Uint8Array(buffer),
+          password: pwd,
+          useSystemFonts: true,
+          isEvalSupported: false,
+        });
 
-        const doc = await loadingTask.promise;
+        // 30-second safety timeout
+        let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutTimer = setTimeout(() => {
+            try {
+              loadingTask.destroy();
+            } catch {}
+            reject(new Error("PDF loading timed out after 30 seconds. Please try again with a valid PDF."));
+          }, 30000);
+        });
+
+        const doc = await Promise.race([loadingTask.promise, timeoutPromise]);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
 
         if (doc.numPages <= 0) {
           throw new Error("This PDF document contains 0 pages.");
         }
 
         setPdfDoc(doc);
+
+        // Immediate Page 1 thumbnail rendering (< 300ms)
+        try {
+          const p1 = await renderPDFPageThumbnail(doc, 1, 220);
+          setThumbnails((prev) => ({ ...prev, 1: p1.thumbnailUrl }));
+        } catch {}
       } catch (err: any) {
         console.error("PDF loading error:", err);
         if (err.name === "PasswordException") {
@@ -208,48 +221,64 @@ export const PdfImportDialog: React.FC<PdfImportDialogProps> = ({
       cleanupObjectUrl();
       setPdfDoc(null);
       setThumbnails({});
+      setLoadingThumbs({});
       setErrorMessage(null);
       setIsProcessingImport(false);
+      setIsLoadingPdf(false);
     } else {
       isCancelledRef.current = false;
     }
   }, [isOpen, cleanupObjectUrl]);
 
-  // Progressive thumbnail loader
+  // Progressive thumbnail loader using 3-page concurrency pool
   useEffect(() => {
     if (!isOpen || !pdfDoc) return;
     isCancelledRef.current = false;
 
     const numPages = pdfDoc.numPages;
 
-    const loadBatch = async () => {
-      // Prioritize active page, then remaining
-      const pagesToLoad: number[] = [activePageNum];
-      for (let i = 1; i <= numPages; i++) {
-        if (i !== activePageNum) pagesToLoad.push(i);
+    // Prioritize active page, then remaining pages
+    const pagesToLoad: number[] = [];
+    if (activePageNum >= 1 && activePageNum <= numPages && !thumbnails[activePageNum]) {
+      pagesToLoad.push(activePageNum);
+    }
+    for (let i = 1; i <= numPages; i++) {
+      if (i !== activePageNum && !thumbnails[i]) {
+        pagesToLoad.push(i);
       }
+    }
 
-      for (const p of pagesToLoad) {
-        if (isCancelledRef.current) break;
-        if (thumbnails[p]) continue;
+    if (pagesToLoad.length === 0) return;
 
-        setLoadingThumbs((prev) => ({ ...prev, [p]: true }));
-        try {
-          const thumb = await renderPDFPageThumbnail(pdfDoc, p, 220);
-          if (!isCancelledRef.current) {
-            setThumbnails((prev) => ({ ...prev, [p]: thumb.thumbnailUrl }));
-          }
-        } catch (e) {
-          console.warn(`Failed thumbnail for page ${p}:`, e);
-        } finally {
-          if (!isCancelledRef.current) {
-            setLoadingThumbs((prev) => ({ ...prev, [p]: false }));
-          }
+    // Set loading states for pending batch
+    setLoadingThumbs((prev) => {
+      const next = { ...prev };
+      for (const p of pagesToLoad) next[p] = true;
+      return next;
+    });
+
+    renderPdfThumbnailsConcurrent(
+      pdfDoc,
+      pagesToLoad,
+      220,
+      undefined,
+      3, // 3 concurrent in flight
+      (p, thumb) => {
+        if (!isCancelledRef.current) {
+          setThumbnails((prev) => ({ ...prev, [p]: thumb.thumbnailUrl }));
+          setLoadingThumbs((prev) => ({ ...prev, [p]: false }));
         }
+      },
+      () => isCancelledRef.current
+    ).finally(() => {
+      if (!isCancelledRef.current) {
+        setLoadingThumbs((prev) => {
+          const next = { ...prev };
+          for (const p of pagesToLoad) next[p] = false;
+          return next;
+        });
       }
-    };
-
-    loadBatch();
+    });
 
     return () => {
       isCancelledRef.current = true;

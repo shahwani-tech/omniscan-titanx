@@ -33,6 +33,8 @@ import {
 } from "../../engine/perspectiveEngine";
 import { CropLivePreviewCard } from "./CropLivePreviewCard";
 import { useShortcuts } from "../../commands/ShortcutContext";
+import { DraggableBarContainer } from "../common/DraggableBarContainer";
+import { useAdaptiveViewport } from "../../hooks/useAdaptiveViewport";
 import {
   Crop,
   Check,
@@ -157,6 +159,9 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   // Collapsed / Expanded state (persists across tool use, defaults to expanded)
   const [isCropPanelCollapsed, setIsCropPanelCollapsed] = useState(false);
 
+  // Responsive adaptive viewport metrics
+  const { tier, cropbarPaddingClass, cropbarInputClass, cropbarSliderLengthClass, cropbarCompactMode } = useAdaptiveViewport();
+
   // Active popover menu (only one open at a time for clean non-blocking UX)
   const [activePopover, setActivePopover] = useState<ActivePopoverType>(null);
 
@@ -258,27 +263,10 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   ]);
 
   // -------------------------------------------------------------
-  // Free 2D Floating Toolbar Positioning & Resizing with Persistence
+  // Toolbar Scaling with Persistence (Draggable positioning is managed by DraggableBarContainer)
   // -------------------------------------------------------------
-  const barRef = useRef<HTMLDivElement>(null);
-  const [barPos, setBarPosState] = useState<{ x: number; y: number } | null>(() => sessionCropBarPos);
   const [barScale, setBarScaleState] = useState<number>(() => sessionCropBarScale);
-  const [isDraggingBar, setIsDraggingBar] = useState(false);
   const [isResizingBar, setIsResizingBar] = useState(false);
-
-  const setBarPos = (pos: { x: number; y: number } | null) => {
-    sessionCropBarPos = pos;
-    setBarPosState(pos);
-    try {
-      if (pos) {
-        localStorage.setItem(STORAGE_KEY_CROPBAR_POS, JSON.stringify(pos));
-      } else {
-        localStorage.removeItem(STORAGE_KEY_CROPBAR_POS);
-      }
-    } catch {
-      // Ignore if localStorage unavailable
-    }
-  };
 
   const setBarScale = (scale: number) => {
     sessionCropBarScale = scale;
@@ -290,40 +278,6 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
     }
   };
 
-  // Close popovers when clicking anywhere outside the toolbar
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (barRef.current && !barRef.current.contains(e.target as Node)) {
-        setActivePopover(null);
-      }
-    };
-    window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Boundary clamping: ensure persisted bar stays comfortably inside workspace
-  useEffect(() => {
-    if (!barPos || !barRef.current) return;
-    const parentElem = barRef.current.parentElement || window.document.body;
-    const parentRect = parentElem.getBoundingClientRect();
-    const barRect = barRef.current.getBoundingClientRect();
-    const padding = 12;
-    const maxX = Math.max(padding, parentRect.width - barRect.width - padding);
-    const maxY = Math.max(padding, parentRect.height - barRect.height - padding);
-
-    const clampedX = Math.max(padding, Math.min(maxX, barPos.x));
-    const clampedY = Math.max(padding, Math.min(maxY, barPos.y));
-
-    if (clampedX !== barPos.x || clampedY !== barPos.y) {
-      setBarPos({ x: clampedX, y: clampedY });
-    }
-  }, []);
-
-  const dragStartOffsetRef = useRef<{ offsetX: number; offsetY: number }>({
-    offsetX: 0,
-    offsetY: 0,
-  });
-
   const resizeStartRef = useRef<{
     startX: number;
     startY: number;
@@ -333,32 +287,6 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
     startY: 0,
     startScale: 1.0,
   });
-
-  const handleBarDragStart = (e: React.MouseEvent | React.TouchEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setActivePopover(null);
-
-    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
-    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
-
-    if (barRef.current) {
-      const parentElem = barRef.current.parentElement || window.document.body;
-      const parentRect = parentElem.getBoundingClientRect();
-      const barRect = barRef.current.getBoundingClientRect();
-
-      const currentX = barRect.left - parentRect.left;
-      const currentY = barRect.top - parentRect.top;
-
-      dragStartOffsetRef.current = {
-        offsetX: clientX - barRect.left,
-        offsetY: clientY - barRect.top,
-      };
-
-      setBarPos({ x: currentX, y: currentY });
-      setIsDraggingBar(true);
-    }
-  };
 
   const handleBarResizeStart = (e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
@@ -375,49 +303,6 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
     };
     setIsResizingBar(true);
   };
-
-  // Drag 2D Window Movement Listener with Boundary Clamping
-  useEffect(() => {
-    if (!isDraggingBar) return;
-
-    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
-      const clientX = "touches" in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
-      const clientY = "touches" in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
-
-      if (!barRef.current) return;
-      const parentElem = barRef.current.parentElement || window.document.body;
-      const parentRect = parentElem.getBoundingClientRect();
-      const barRect = barRef.current.getBoundingClientRect();
-
-      const rawX = clientX - parentRect.left - dragStartOffsetRef.current.offsetX;
-      const rawY = clientY - parentRect.top - dragStartOffsetRef.current.offsetY;
-
-      const padding = 12;
-      const maxX = Math.max(padding, parentRect.width - barRect.width - padding);
-      const maxY = Math.max(padding, parentRect.height - barRect.height - padding);
-
-      const clampedX = Math.max(padding, Math.min(maxX, rawX));
-      const clampedY = Math.max(padding, Math.min(maxY, rawY));
-
-      setBarPos({ x: clampedX, y: clampedY });
-    };
-
-    const handlePointerUp = () => {
-      setIsDraggingBar(false);
-    };
-
-    window.addEventListener("mousemove", handlePointerMove);
-    window.addEventListener("mouseup", handlePointerUp);
-    window.addEventListener("touchmove", handlePointerMove, { passive: false });
-    window.addEventListener("touchend", handlePointerUp);
-
-    return () => {
-      window.removeEventListener("mousemove", handlePointerMove);
-      window.removeEventListener("mouseup", handlePointerUp);
-      window.removeEventListener("touchmove", handlePointerMove);
-      window.removeEventListener("touchend", handlePointerUp);
-    };
-  }, [isDraggingBar]);
 
   // Drag-to-Resize Scaling Window Listener
   useEffect(() => {
@@ -627,229 +512,209 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
     }
   };
 
-  // Shared Floating Container Style
-  const floatingStyle: React.CSSProperties = barPos
-    ? {
-        left: `${barPos.x}px`,
-        top: `${barPos.y}px`,
-        transform: `scale(${barScale})`,
-        transformOrigin: "top left",
-      }
-    : {
-        top: "14px",
-        left: "50%",
-        transform: `translateX(-50%) scale(${barScale})`,
-        transformOrigin: "top center",
-      };
-
-  // =============================================================
-  // COLLAPSED STATE: Ultra-Compact Minimal Floating Capsule
-  // =============================================================
-  if (isCropPanelCollapsed) {
-    return (
-      <div
-        ref={barRef}
-        style={floatingStyle}
-        onMouseDown={(e) => e.stopPropagation()}
-        onTouchStart={(e) => e.stopPropagation()}
-        className={`pdf-crop-bar absolute z-40 bg-neutral-900/98 backdrop-blur-2xl rounded-full border border-neutral-750/90 shadow-[0_12px_36px_rgba(0,0,0,0.6)] px-2.5 py-1 flex items-center gap-2 text-xs select-none max-w-[95vw] transition-all duration-150 ${
-          isDraggingBar
-            ? "ring-2 ring-sky-500/70 shadow-2xl cursor-grabbing scale-[1.01]"
-            : isResizingBar
-            ? "ring-2 ring-amber-500/70 shadow-2xl cursor-se-resize"
-            : "hover:border-neutral-650"
-        }`}
-      >
-        {/* Subtle Drag Grip */}
-        <div
-          onMouseDown={handleBarDragStart}
-          onTouchStart={handleBarDragStart}
-          onDoubleClick={() => {
-            setBarPos(null);
-            setBarScale(1.0);
-          }}
-          className="flex items-center justify-center p-1 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing hover:bg-neutral-800/80 rounded-full transition-colors group select-none"
-          title="Drag Crop Bar (Double-click to snap to top center)"
-        >
-          <GripVertical className="w-3.5 h-3.5 text-neutral-400 group-hover:text-sky-400" />
-        </div>
-
-        {/* Snap back icon if displaced */}
-        {barPos && (
-          <button
-            onClick={() => {
-              setBarPos(null);
-              setBarScale(1.0);
-            }}
-            className="p-1 rounded-full text-neutral-400 hover:text-sky-300 hover:bg-neutral-800 transition-colors"
-            title="Snap back to top center"
-          >
-            <RotateCcw className="w-3 h-3" />
-          </button>
-        )}
-
-        {/* Mode Status Pill */}
-        {cropMode === "perspective" ? (
-          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/25 to-orange-500/25 text-amber-300 font-bold border border-amber-500/40">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-[11px] uppercase tracking-wider font-semibold">Warp</span>
-          </div>
-        ) : (
-          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 font-bold border border-sky-500/30">
-            <Crop className="w-3.5 h-3.5" />
-            <span className="text-[11px] uppercase tracking-wider font-semibold">Crop</span>
-          </div>
-        )}
-
-        {/* Live Dimension Badge */}
-        {cropMode === "perspective" && perspectiveDims ? (
-          <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
-            {perspectiveDims.targetW} × {perspectiveDims.targetH} px
-          </span>
-        ) : (
-          <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
-            {realWidth} × {realHeight} {unit}
-          </span>
-        )}
-
-        {/* Preset Name */}
-        {cropMode === "perspective" ? (
-          <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-750/60">
-            {activePerspectivePresetDef.name}
-          </span>
-        ) : (
-          preset !== "free" && (
-            <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-sky-300 bg-sky-950/80 px-2 py-0.5 rounded-full border border-sky-750/60">
-              {activePresetDef.name}
-            </span>
-          )
-        )}
-
-        {/* Scope Dropdown */}
-        <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80 text-[11px]">
-          <Layers className="w-3 h-3 text-neutral-400" />
-          <select
-            value={cropScope}
-            onChange={(e) => onCropScopeChange(e.target.value as any)}
-            className="bg-transparent text-neutral-200 text-[11px] focus:outline-none cursor-pointer pr-1"
-          >
-            <option value="current">Page {activePage.pageNumber}</option>
-            {(document?.selectedPageIds?.length ?? 0) > 1 && (
-              <option value="selected">Selected ({document?.selectedPageIds?.length ?? 0})</option>
-            )}
-            <option value="all">All ({document?.pages?.length ?? 1})</option>
-          </select>
-        </div>
-
-        {/* Reset */}
-        <button
-          onClick={cropMode === "perspective" ? onResetPerspectiveQuad : onResetCrop}
-          className="p-1 rounded-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-          title={cropMode === "perspective" ? "Reset Corner Pins (R)" : "Reset Crop to Full Page (R)"}
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Cancel */}
-        <button
-          onClick={onCancelCrop}
-          className="p-1 rounded-full text-neutral-400 hover:text-rose-300 hover:bg-neutral-800 transition-colors"
-          title="Cancel & Exit (Esc)"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
-
-        {/* Primary Apply Button */}
-        <button
-          onClick={cropMode === "perspective" ? onApplyPerspectiveWarp : onApplyCrop}
-          className={`flex items-center space-x-1.5 px-3 py-1 rounded-full font-bold text-[11px] shadow-md transition-all active:scale-95 ${
-            cropMode === "perspective"
-              ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-neutral-950 shadow-amber-950/60"
-              : "bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sky-950/60"
-          }`}
-          title={cropMode === "perspective" ? "Apply Perspective Warp (Enter)" : "Apply Crop (Enter)"}
-        >
-          <Check className="w-3.5 h-3.5" />
-          <span>{cropMode === "perspective" ? "Warp" : "Apply"}</span>
-        </button>
-
-        <div className="h-3.5 w-px bg-neutral-750 mx-0.5" />
-
-        {/* Expand Button */}
-        <button
-          onClick={() => setIsCropPanelCollapsed(false)}
-          className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-neutral-800 hover:bg-neutral-750 text-sky-300 hover:text-white border border-neutral-700/80 transition-colors font-medium text-[11px]"
-          title="Expand complete crop controls"
-        >
-          <ChevronDown className="w-3.5 h-3.5 text-sky-400" />
-          <span>Expand</span>
-        </button>
-
-        {/* Scale Grip */}
-        <div
-          onMouseDown={handleBarResizeStart}
-          onTouchStart={handleBarResizeStart}
-          onDoubleClick={() => setBarScale(1.0)}
-          className={`flex items-center justify-center p-1 text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 rounded-full transition-colors cursor-se-resize select-none ${
-            isResizingBar ? "text-amber-400 bg-neutral-800" : ""
-          }`}
-          title={`Scale: ${Math.round(barScale * 100)}% (Drag to resize, double-click to reset)`}
-        >
-          <Scaling className="w-3.5 h-3.5" />
-        </div>
-      </div>
-    );
-  }
-
-  // =============================================================
-  // EXPANDED STATE: Ultra-Compact Single-Row Desktop Floating Toolbar
-  // =============================================================
+  // Shared Floating Container Style rendered inside DraggableBarContainer
   return (
-    <div
-      ref={barRef}
-      style={floatingStyle}
-      onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
-      className={`pdf-crop-bar absolute z-40 bg-neutral-900/98 backdrop-blur-2xl rounded-2xl border border-neutral-750/90 shadow-[0_16px_48px_rgba(0,0,0,0.65)] px-3 py-2 flex flex-col space-y-2 text-xs select-none min-w-[720px] max-w-[96vw] transition-all duration-150 ${
-        isDraggingBar
-          ? "ring-2 ring-sky-500/70 shadow-2xl scale-[1.01] cursor-grabbing"
-          : isResizingBar
-          ? "ring-2 ring-amber-500/70 shadow-2xl cursor-se-resize"
-          : "hover:border-neutral-650"
-      }`}
+    <DraggableBarContainer
+      storageKey="omniscan.cropbar.position"
+      barTitle="Crop Bar"
+      defaultDock="top-center"
+      defaultY={14}
+      canSwitchOrientation={false}
+      initialCollapsed={isCropPanelCollapsed}
+      onCollapsedChange={setIsCropPanelCollapsed}
+      zIndex={40}
     >
-      {/* ========================================================= */}
-      {/* ROW 1: PRIMARY MAIN CROPBAR (ALWAYS STABLE ACROSS MODES)  */}
-      {/* ========================================================= */}
-      <div className="flex items-center justify-between space-x-2.5 h-8 select-none">
-        {/* Left: Drag Handle, Mode Switcher, Scope, Preview */}
-        <div className="flex items-center space-x-2 flex-shrink-0">
-          {/* Drag Handle & Snap Reset */}
-          <div
-            onMouseDown={handleBarDragStart}
-            onTouchStart={handleBarDragStart}
-            onDoubleClick={() => {
-              setBarPos(null);
-              setBarScale(1.0);
-            }}
-            className="flex items-center justify-center p-1.5 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing hover:bg-neutral-800/80 rounded-lg transition-colors group select-none"
-            title="Drag Crop Bar anywhere in workspace (Double-click to snap back to top-center)"
-          >
-            <GripVertical className="w-4 h-4 text-neutral-400 group-hover:text-sky-400 transition-colors" />
-          </div>
-
-          {barPos && (
-            <button
-              onClick={() => {
-                setBarPos(null);
-                setBarScale(1.0);
+      {({ isDragging, resetPosition, dragHandleProps, isCollapsed, setIsCollapsed }) => {
+        if (isCollapsed) {
+          return (
+            <div
+              style={{
+                transform: `scale(${barScale})`,
+                transformOrigin: "top left",
               }}
-              className="p-1 rounded-lg text-neutral-400 hover:text-sky-300 hover:bg-neutral-800 transition-colors"
-              title="Snap Crop Bar back to top center"
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              className={`pdf-crop-bar bg-neutral-900/98 backdrop-blur-2xl rounded-full border border-neutral-750/90 shadow-[0_12px_36px_rgba(0,0,0,0.6)] px-2.5 py-1 flex items-center gap-2 text-xs select-none max-w-[95vw] transition-all duration-150 ${
+                isDragging
+                  ? "ring-2 ring-sky-500/70 shadow-2xl cursor-grabbing scale-[1.01]"
+                  : isResizingBar
+                  ? "ring-2 ring-amber-500/70 shadow-2xl cursor-se-resize"
+                  : "hover:border-neutral-650"
+              }`}
             >
-              <RotateCcw className="w-3 h-3" />
-            </button>
-          )}
+              {/* Subtle Drag Grip */}
+              <div
+                {...dragHandleProps}
+                className="flex items-center justify-center p-1 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing hover:bg-neutral-800/80 rounded-full transition-colors group select-none"
+                title="Drag Crop Bar (Double-click to reset to top-center)"
+              >
+                <GripVertical className="w-3.5 h-3.5 text-neutral-400 group-hover:text-sky-400" />
+              </div>
+
+              {/* Reset button */}
+              <button
+                type="button"
+                onClick={resetPosition}
+                className="p-1 rounded-full text-neutral-400 hover:text-sky-300 hover:bg-neutral-800 transition-colors"
+                title="Reset Crop Bar to top center"
+              >
+                <RotateCcw className="w-3 h-3" />
+              </button>
+
+              {/* Mode Status Pill */}
+              {cropMode === "perspective" ? (
+                <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/25 to-orange-500/25 text-amber-300 font-bold border border-amber-500/40">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-[11px] uppercase tracking-wider font-semibold">Warp</span>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 font-bold border border-sky-500/30">
+                  <Crop className="w-3.5 h-3.5" />
+                  <span className="text-[11px] uppercase tracking-wider font-semibold">Crop</span>
+                </div>
+              )}
+
+              {/* Live Dimension Badge */}
+              {cropMode === "perspective" && perspectiveDims ? (
+                <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
+                  {perspectiveDims.targetW} × {perspectiveDims.targetH} px
+                </span>
+              ) : (
+                <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
+                  {realWidth} × {realHeight} {unit}
+                </span>
+              )}
+
+              {/* Preset Name */}
+              {cropMode === "perspective" ? (
+                <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-750/60">
+                  {activePerspectivePresetDef.name}
+                </span>
+              ) : (
+                preset !== "free" && (
+                  <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-sky-300 bg-sky-950/80 px-2 py-0.5 rounded-full border border-sky-750/60">
+                    {activePresetDef.name}
+                  </span>
+                )
+              )}
+
+              {/* Scope Dropdown */}
+              <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80 text-[11px]">
+                <Layers className="w-3 h-3 text-neutral-400" />
+                <select
+                  value={cropScope}
+                  onChange={(e) => onCropScopeChange(e.target.value as any)}
+                  className="bg-transparent text-neutral-200 text-[11px] focus:outline-none cursor-pointer pr-1"
+                >
+                  <option value="current">Page {activePage.pageNumber}</option>
+                  {(document?.selectedPageIds?.length ?? 0) > 1 && (
+                    <option value="selected">Selected ({document?.selectedPageIds?.length ?? 0})</option>
+                  )}
+                  <option value="all">All ({document?.pages?.length ?? 1})</option>
+                </select>
+              </div>
+
+              {/* Reset */}
+              <button
+                onClick={cropMode === "perspective" ? onResetPerspectiveQuad : onResetCrop}
+                className="p-1 rounded-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                title={cropMode === "perspective" ? "Reset Corner Pins (R)" : "Reset Crop to Full Page (R)"}
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Cancel */}
+              <button
+                onClick={onCancelCrop}
+                className="p-1 rounded-full text-neutral-400 hover:text-rose-300 hover:bg-neutral-800 transition-colors"
+                title="Cancel & Exit (Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Primary Apply Button */}
+              <button
+                onClick={cropMode === "perspective" ? onApplyPerspectiveWarp : onApplyCrop}
+                className={`flex items-center space-x-1.5 px-3 py-1 rounded-full font-bold text-[11px] shadow-md transition-all active:scale-95 ${
+                  cropMode === "perspective"
+                    ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-neutral-950 shadow-amber-950/60"
+                    : "bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sky-950/60"
+                }`}
+                title={cropMode === "perspective" ? "Apply Perspective Warp (Enter)" : "Apply Crop (Enter)"}
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>{cropMode === "perspective" ? "Warp" : "Apply"}</span>
+              </button>
+
+              <div className="h-3.5 w-px bg-neutral-750 mx-0.5" />
+
+              {/* Expand Button */}
+              <button
+                onClick={() => setIsCollapsed(false)}
+                className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-neutral-800 hover:bg-neutral-750 text-sky-300 hover:text-white border border-neutral-700/80 transition-colors font-medium text-[11px]"
+                title="Expand complete crop controls"
+              >
+                <ChevronDown className="w-3.5 h-3.5 text-sky-400" />
+                <span>Expand</span>
+              </button>
+
+              {/* Scale Grip */}
+              <div
+                onMouseDown={handleBarResizeStart}
+                onTouchStart={handleBarResizeStart}
+                onDoubleClick={() => setBarScale(1.0)}
+                className={`flex items-center justify-center p-1 text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 rounded-full transition-colors cursor-se-resize select-none ${
+                  isResizingBar ? "text-amber-400 bg-neutral-800" : ""
+                }`}
+                title={`Scale: ${Math.round(barScale * 100)}% (Drag to resize, double-click to reset)`}
+              >
+                <Scaling className="w-3.5 h-3.5" />
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <div
+            style={{
+              transform: `scale(${barScale})`,
+              transformOrigin: "top left",
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            className={`pdf-crop-bar bg-neutral-900/98 backdrop-blur-2xl rounded-2xl border border-neutral-750/90 shadow-[0_16px_48px_rgba(0,0,0,0.65)] ${cropbarPaddingClass} flex flex-col space-y-2 text-xs select-none ${
+              cropbarCompactMode ? "min-w-0 max-w-[96vw]" : "min-w-[720px] max-w-[96vw]"
+            } transition-all duration-150 ${
+              isDragging
+                ? "ring-2 ring-sky-500/70 shadow-2xl scale-[1.01] cursor-grabbing"
+                : isResizingBar
+                ? "ring-2 ring-amber-500/70 shadow-2xl cursor-se-resize"
+                : "hover:border-neutral-650"
+            }`}
+          >
+            {/* ========================================================= */}
+            {/* ROW 1: PRIMARY MAIN CROPBAR (ALWAYS STABLE ACROSS MODES)  */}
+            {/* ========================================================= */}
+            <div className="flex items-center justify-between space-x-2.5 h-8 select-none">
+              {/* Left: Drag Handle, Mode Switcher, Scope, Preview */}
+              <div className="flex items-center space-x-2 flex-shrink-0">
+                {/* Drag Handle & Snap Reset */}
+                <div
+                  {...dragHandleProps}
+                  className="flex items-center justify-center p-1.5 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing hover:bg-neutral-800/80 rounded-lg transition-colors group select-none"
+                  title="Drag Crop Bar anywhere in workspace (Double-click to snap back to top-center)"
+                >
+                  <GripVertical className="w-4 h-4 text-neutral-400 group-hover:text-sky-400 transition-colors" />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={resetPosition}
+                  className="p-1 rounded-lg text-neutral-400 hover:text-sky-300 hover:bg-neutral-800 transition-colors"
+                  title="Reset Crop Bar to top center"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
 
           {/* Mode Switcher Pill (Fixed dimensions: zero reflow or jump on toggle) */}
           <div className="w-[236px] h-[30px] bg-neutral-950/90 p-0.5 rounded-lg border border-neutral-750/90 grid grid-cols-2 gap-1 flex-shrink-0">
@@ -1512,5 +1377,8 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
         />
       )}
     </div>
+        );
+      }}
+    </DraggableBarContainer>
   );
 };

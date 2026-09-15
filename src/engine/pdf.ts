@@ -30,18 +30,39 @@ import { performPageOCR } from "./ocr";
 import { pageBlobStore } from "../services/storage/PageBlobStore";
 
 // Configure PDF.js worker locally for 100% offline execution
+let workerInitialized = false;
+let workerFailed = false;
+
 export function ensurePdfWorker(): void {
   if (typeof window !== "undefined") {
     try {
       if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
         pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
       }
+      if (!workerInitialized) {
+        workerInitialized = true;
+        // Verify worker URL configuration
+        if (!pdfWorkerUrl) {
+          console.warn("[PDF Engine] PDF worker URL not found. Falling back to inline execution.");
+          workerFailed = true;
+        } else {
+          // Pre-test worker URL accessibility non-blockingly
+          fetch(pdfWorkerUrl, { method: "HEAD" }).catch(() => {
+            console.warn("[PDF Engine] Note: PDF.js worker fetch returned warning, local execution active.");
+          });
+        }
+      }
     } catch (e) {
-      console.warn("Could not set PDF worker URL:", e);
+      console.warn("[PDF Engine] Could not set PDF worker URL:", e);
+      workerFailed = true;
     }
   }
 }
 ensurePdfWorker();
+
+export function isPdfWorkerHealthy(): boolean {
+  return !workerFailed && !!pdfjsLib.GlobalWorkerOptions.workerSrc;
+}
 
 export { pdfjsLib };
 
@@ -508,9 +529,52 @@ export async function renderPDFPageToDataUrl(
 }
 
 /**
+ * Render thumbnails for a list of pages concurrently with a bounded pool (default 3 concurrent workers)
+ * Balances high-throughput rendering with browser memory safety.
+ */
+export async function renderPdfThumbnailsConcurrent(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  pageNums: number[],
+  maxDim = 220,
+  pdfDocId?: string,
+  concurrency = 3,
+  onPageDone?: (pageNum: number, thumb: { thumbnailUrl: string; width: number; height: number; isBlank: boolean; blankScore: number }) => void,
+  shouldCancel?: () => boolean
+): Promise<void> {
+  const queue = [...pageNums];
+  const workers: Promise<void>[] = [];
+
+  for (let i = 0; i < Math.min(concurrency, queue.length); i++) {
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          if (shouldCancel && shouldCancel()) break;
+          const pageNum = queue.shift();
+          if (pageNum === undefined) break;
+
+          try {
+            const thumb = await renderPDFPageThumbnail(pdfDoc, pageNum, maxDim, pdfDocId);
+            if (shouldCancel && shouldCancel()) break;
+            onPageDone?.(pageNum, thumb);
+          } catch (err: any) {
+            if (err?.name !== "RenderingCancelledException") {
+              console.warn(`[PDF Engine] Thumbnail render warning on page ${pageNum}:`, err);
+            }
+          }
+          // Micro-yield to allow UI thread event processing
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      })()
+    );
+  }
+
+  await Promise.all(workers);
+}
+
+/**
  * Import a PDF file (supporting large 1000+ page documents, password encryption, and mixed page sizes)
  * Ultra-fast progressive loading: initializes Page 1 immediately, returning in ~150ms while
- * generating remaining thumbnails smoothly in the background.
+ * generating remaining thumbnails smoothly in the background using a 3-page concurrency pool.
  */
 export async function importPDFFile(
   file: File | ArrayBuffer | Uint8Array,
@@ -521,54 +585,42 @@ export async function importPDFFile(
   numPages: number;
   pdfDocId: string;
 }> {
-  let objectUrl: string | undefined;
-  let loadingTask: pdfjsLib.PDFDocumentLoadingTask;
+  ensurePdfWorker();
 
+  // Load binary buffer directly into Uint8Array to avoid base64/URL intermediate overhead
+  let uint8Data: Uint8Array;
   if (file instanceof File) {
-    try {
-      // Use zero-copy blob object URL for instant parsing without copying entire buffer to JS memory
-      objectUrl = URL.createObjectURL(file);
-      loadingTask = (pdfjsLib.getDocument as any)({
-        url: objectUrl,
-        password: options?.password || "",
-        useSystemFonts: true,
-        isEvalSupported: false, // Security hardening against untrusted embedded scripts
-      });
-    } catch {
-      // Fallback to ArrayBuffer if blob URL is restricted
-      const buffer = await file.arrayBuffer();
-      loadingTask = (pdfjsLib.getDocument as any)({
-        data: new Uint8Array(buffer),
-        password: options?.password || "",
-        useSystemFonts: true,
-        isEvalSupported: false,
-      });
-    }
+    const buffer = await file.arrayBuffer();
+    uint8Data = new Uint8Array(buffer);
   } else if (file instanceof Uint8Array) {
-    loadingTask = (pdfjsLib.getDocument as any)({
-      data: file,
-      password: options?.password || "",
-      useSystemFonts: true,
-      isEvalSupported: false,
-    });
+    uint8Data = file;
   } else {
-    loadingTask = (pdfjsLib.getDocument as any)({
-      data: new Uint8Array(file),
-      password: options?.password || "",
-      useSystemFonts: true,
-      isEvalSupported: false,
-    });
+    uint8Data = new Uint8Array(file);
   }
+
+  const loadingTask: pdfjsLib.PDFDocumentLoadingTask = (pdfjsLib.getDocument as any)({
+    data: uint8Data,
+    password: options?.password || "",
+    useSystemFonts: true,
+    isEvalSupported: false, // Hardening against untrusted embedded scripts
+  });
+
+  // 30-second safety timeout net to ensure loading never hangs indefinitely
+  const timeoutMs = 30000;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      try {
+        loadingTask.destroy();
+      } catch {}
+      reject(new Error("PDF loading timed out after 30 seconds. The file may be corrupt or too large."));
+    }, timeoutMs);
+  });
 
   let pdfDoc: pdfjsLib.PDFDocumentProxy;
   try {
-    pdfDoc = await loadingTask.promise;
+    pdfDoc = await Promise.race([loadingTask.promise, timeoutPromise]);
   } catch (err: any) {
-    if (objectUrl) {
-      try {
-        URL.revokeObjectURL(objectUrl);
-      } catch {}
-    }
     // Check for password requirement
     const errMsg = err?.message || String(err);
     const errName = err?.name || "";
@@ -592,6 +644,8 @@ export async function importPDFFile(
     }
 
     throw new Error(`Failed to parse PDF document: ${errMsg}`);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 
   const numPages = pdfDoc.numPages;
@@ -599,7 +653,6 @@ export async function importPDFFile(
   pdfProxyCache.set(pdfDocId, {
     pdfDocId,
     pdfDoc,
-    objectUrl,
     numPages,
   });
 
@@ -630,7 +683,7 @@ export async function importPDFFile(
 
   const pages: OmniPage[] = [];
 
-  // Step 1: Eagerly render Page 1 at full 200 DPI so user can interact instantly
+  // Step 1: Eagerly render Page 1 at full 200 DPI so user can interact instantly (< 500ms target)
   options?.onProgress?.(1, numPages, `Opening Page 1 of ${numPages}...`);
   const page1 = await renderPDFPageToDataUrl(pdfDoc, 1, 200, pdfDocId);
 
@@ -687,44 +740,39 @@ export async function importPDFFile(
     });
   }
 
-  // Step 3: Progressive background thumbnail generator with dynamic prioritization & cooperative scheduling
+  // Step 3: Progressive background thumbnail generator using 3-page concurrency pool
   if (numPages > 1) {
     const docJobId = (activeDocJobIds.get(pdfDocId) || 0) + 1;
     activeDocJobIds.set(pdfDocId, docJobId);
-    setTimeout(async () => {
-      // Build list of remaining pages
-      const remainingPages = new Set<number>();
-      for (let p = 2; p <= numPages; p++) remainingPages.add(p);
 
-      while (remainingPages.size > 0) {
-        if (activeDocJobIds.get(pdfDocId) !== docJobId) break; // Cancelled for this document
-
-        // Pick next page: check if any prioritized page is pending
-        let nextP: number | null = null;
-        for (const p of prioritizedPageNums) {
-          if (remainingPages.has(p)) {
-            nextP = p;
-            break;
-          }
+    // Schedule background queue with microtask delay
+    setTimeout(() => {
+      // Build order of remaining pages, prioritizing any requested page numbers first
+      const remainingPages: number[] = [];
+      for (const p of prioritizedPageNums) {
+        if (p >= 2 && p <= numPages && !remainingPages.includes(p)) {
+          remainingPages.push(p);
         }
-
-        if (nextP === null) {
-          // Take lowest page number in set
-          nextP = remainingPages.values().next().value;
+      }
+      for (let p = 2; p <= numPages; p++) {
+        if (!remainingPages.includes(p)) {
+          remainingPages.push(p);
         }
+      }
 
-        remainingPages.delete(nextP);
-
-        try {
-          const thumb = await renderPDFPageThumbnail(pdfDoc, nextP, 220, pdfDocId);
-          if (activeDocJobIds.get(pdfDocId) !== docJobId) break;
-
+      renderPdfThumbnailsConcurrent(
+        pdfDoc,
+        remainingPages,
+        220,
+        pdfDocId,
+        3, // 3 concurrent pages in flight
+        (pageNum, thumb) => {
           if (typeof window !== "undefined") {
             window.dispatchEvent(
               new CustomEvent("titan-pdf-thumbnail-ready", {
                 detail: {
                   pdfDocId,
-                  pageNum: nextP,
+                  pageNum,
                   thumbnailUrl: thumb.thumbnailUrl,
                   width: thumb.width,
                   height: thumb.height,
@@ -734,16 +782,10 @@ export async function importPDFFile(
               })
             );
           }
-        } catch (err: any) {
-          if (err?.name !== "RenderingCancelledException") {
-            console.warn(`Thumbnail render error on page ${nextP}:`, err);
-          }
-        }
-
-        // Cooperative yield so UI remains 60 FPS fluid
-        await new Promise((r) => setTimeout(r, 12));
-      }
-    }, 25);
+        },
+        () => activeDocJobIds.get(pdfDocId) !== docJobId
+      );
+    }, 20);
   }
 
   return {

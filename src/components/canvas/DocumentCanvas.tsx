@@ -70,6 +70,8 @@ import { loadImage } from "../../engine/vision";
 import { OmniDocument } from "../../types";
 import { prioritizePdfThumbnailPages } from "../../engine/pdf";
 import { pageBlobStore } from "../../services/storage/PageBlobStore";
+import { DraggableBarContainer } from "../common/DraggableBarContainer";
+import { useAdaptiveViewport } from "../../hooks/useAdaptiveViewport";
 
 interface DocumentCanvasProps {
   pages: OmniPage[];
@@ -81,6 +83,7 @@ interface DocumentCanvasProps {
   activePagePreviewUrl?: string | null;
   onZoomChange: (newZoom: number) => void;
   onSelectPage: (index: number) => void;
+  onViewModeChange?: (mode: ViewMode) => void;
   onAddAnnotation: (pageIndex: number, annotation: OmniAnnotation) => void;
   onAddRedaction: (pageIndex: number, redaction: OmniRedaction) => void;
   onDeleteAnnotation: (pageIndex: number, id: string) => void;
@@ -109,6 +112,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   activePagePreviewUrl,
   onZoomChange,
   onSelectPage,
+  onViewModeChange,
   onAddAnnotation,
   onAddRedaction,
   onDeleteAnnotation,
@@ -216,6 +220,11 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         return;
       }
 
+      // 1b. In grid view mode, allow smooth native vertical scrolling through the page grid (do NOT intercept/zoom)
+      if (viewMode === "grid") {
+        return;
+      }
+
       // 2. If pointer is over the viewport's scrollbar, allow native scrollbar scrolling (no zoom, no preventDefault)
       if (isPointerOverScrollbar(viewport, e.clientX, e.clientY)) {
         return;
@@ -286,6 +295,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   // Before/After Split Slider State (0 to 1)
   const [splitPos, setSplitPos] = useState<number>(0.5);
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+
+  // Grid View Scroll Container Ref
+  const gridScrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Continuous View Mode Windowed Virtualization State & Calculations
   // (Mirrors the robust windowed virtualization pattern from PageNavigator.tsx)
@@ -499,37 +511,14 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   // OCR bounding box hover
   const [hoveredOcrWord, setHoveredOcrWord] = useState<any | null>(null);
 
-  // Floating Canvas Toolbar Draggable & Resizable State
-  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
-  const [isDraggingToolbar, setIsDraggingToolbar] = useState<boolean>(false);
+  // Adaptive Viewport Metrics for Responsive Density
+  const { toolbarPaddingClass } = useAdaptiveViewport();
+
+  // Floating Canvas Toolbar Scaling & Orientation (Positioning and dragging handled by DraggableBarContainer)
   const [toolbarScale, setToolbarScale] = useState<number>(1.0);
   const [toolbarOrientation, setToolbarOrientation] = useState<"horizontal" | "vertical">("horizontal");
   const [isResizingToolbar, setIsResizingToolbar] = useState<boolean>(false);
-  const toolbarRef = useRef<HTMLDivElement>(null);
-  const dragStartOffsetRef = useRef<{ offsetX: number; offsetY: number }>({ offsetX: 0, offsetY: 0 });
   const resizeStartRef = useRef<{ startX: number; startY: number; startScale: number }>({ startX: 0, startY: 0, startScale: 1.0 });
-
-  const handleToolbarDragStart = (e: React.MouseEvent | React.TouchEvent) => {
-    e.stopPropagation();
-    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
-    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
-
-    if (toolbarRef.current && containerRef.current) {
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const toolbarRect = toolbarRef.current.getBoundingClientRect();
-
-      const currentX = toolbarRect.left - containerRect.left;
-      const currentY = toolbarRect.top - containerRect.top;
-
-      dragStartOffsetRef.current = {
-        offsetX: clientX - toolbarRect.left,
-        offsetY: clientY - toolbarRect.top,
-      };
-
-      setToolbarPos({ x: currentX, y: currentY });
-      setIsDraggingToolbar(true);
-    }
-  };
 
   const handleToolbarResizeStart = (e: React.MouseEvent | React.TouchEvent) => {
     e.stopPropagation();
@@ -544,47 +533,6 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     };
     setIsResizingToolbar(true);
   };
-
-  useEffect(() => {
-    if (!isDraggingToolbar) return;
-
-    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
-      const clientX = "touches" in e ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
-      const clientY = "touches" in e ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
-
-      if (!containerRef.current || !toolbarRef.current) return;
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const toolbarRect = toolbarRef.current.getBoundingClientRect();
-
-      const rawX = clientX - containerRect.left - dragStartOffsetRef.current.offsetX;
-      const rawY = clientY - containerRect.top - dragStartOffsetRef.current.offsetY;
-
-      const padding = 8;
-      const maxX = Math.max(padding, containerRect.width - toolbarRect.width - padding);
-      const maxY = Math.max(padding, containerRect.height - toolbarRect.height - padding);
-
-      const clampedX = Math.max(padding, Math.min(maxX, rawX));
-      const clampedY = Math.max(padding, Math.min(maxY, rawY));
-
-      setToolbarPos({ x: clampedX, y: clampedY });
-    };
-
-    const handlePointerUp = () => {
-      setIsDraggingToolbar(false);
-    };
-
-    window.addEventListener("mousemove", handlePointerMove);
-    window.addEventListener("mouseup", handlePointerUp);
-    window.addEventListener("touchmove", handlePointerMove, { passive: false });
-    window.addEventListener("touchend", handlePointerUp);
-
-    return () => {
-      window.removeEventListener("mousemove", handlePointerMove);
-      window.removeEventListener("mouseup", handlePointerUp);
-      window.removeEventListener("touchmove", handlePointerMove);
-      window.removeEventListener("touchend", handlePointerUp);
-    };
-  }, [isDraggingToolbar]);
 
   // Handle Drag-to-Resize Toolbar
   useEffect(() => {
@@ -1081,71 +1029,66 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           onResetPerspectiveQuad={handleResetPerspectiveQuad}
         />
       )}
-      {/* Floating Canvas Toolbar (Freely Draggable & Resizable) */}
-      <div
-        ref={toolbarRef}
-        style={{
-          ...(toolbarPos
-            ? {
-                left: `${toolbarPos.x}px`,
-                top: `${toolbarPos.y}px`,
-                transform: `scale(${toolbarScale})`,
-                transformOrigin: "top left",
-              }
-            : {
-                top: "12px",
-                left: "50%",
-                transform: `translateX(-50%) scale(${toolbarScale})`,
-                transformOrigin: "top center",
-              }),
-        }}
-        className={`absolute z-20 flex ${
-          toolbarOrientation === "vertical"
-            ? "flex-col space-y-1.5 p-1.5"
-            : "items-center space-x-1 px-2 py-1"
-        } bg-neutral-900/95 backdrop-blur-xl rounded-xl border border-neutral-800 shadow-2xl text-xs transition-shadow duration-150 ${
-          isDraggingToolbar
-            ? "ring-2 ring-sky-500/50 shadow-2xl scale-[1.01] cursor-grabbing"
-            : isResizingToolbar
-            ? "ring-2 ring-amber-500/50 shadow-2xl cursor-se-resize"
-            : "hover:border-neutral-700"
-        }`}
+      {/* Floating Canvas Toolbar (Freely Draggable, Responsive & Persistent) */}
+      <DraggableBarContainer
+        storageKey="omniscan.toolbar.position"
+        barTitle="Toolbar"
+        defaultDock="top-center"
+        defaultY={12}
+        canSwitchOrientation={true}
+        defaultOrientation={toolbarOrientation}
+        onOrientationChange={setToolbarOrientation}
+        zIndex={20}
       >
-        {/* Drag Handle & Orientation Controls */}
-        <div
-          className={`flex ${
-            toolbarOrientation === "vertical" ? "flex-col items-center space-y-1" : "items-center space-x-1"
-          }`}
-        >
+        {({ isDragging, resetPosition, orientation, toggleOrientation, dragHandleProps }) => (
           <div
-            onMouseDown={handleToolbarDragStart}
-            onTouchStart={handleToolbarDragStart}
-            onDoubleClick={() => {
-              setToolbarPos(null);
-              setToolbarScale(1.0);
+            style={{
+              transform: `scale(${toolbarScale})`,
+              transformOrigin: orientation === "vertical" ? "top left" : "top center",
             }}
-            className="flex items-center justify-center p-1 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing hover:bg-neutral-800/80 rounded transition-colors group select-none"
-            title="Drag bar anywhere (Double-click to snap back to top-center)"
+            className={`flex ${
+              orientation === "vertical"
+                ? "flex-col space-y-1.5 p-1.5"
+                : `${toolbarPaddingClass} items-center space-x-1`
+            } bg-neutral-900/95 backdrop-blur-xl rounded-xl border border-neutral-800 shadow-2xl text-xs transition-shadow duration-150 ${
+              isDragging
+                ? "ring-2 ring-sky-500/50 shadow-2xl scale-[1.01] cursor-grabbing"
+                : isResizingToolbar
+                ? "ring-2 ring-amber-500/50 shadow-2xl cursor-se-resize"
+                : "hover:border-neutral-700"
+            }`}
           >
-            <GripVertical className="w-4 h-4 text-neutral-400 group-hover:text-sky-400 transition-colors" />
-          </div>
+            {/* Drag Handle & Orientation Controls */}
+            <div
+              className={`flex ${
+                orientation === "vertical" ? "flex-col items-center space-y-1" : "items-center space-x-1"
+              }`}
+            >
+              <div
+                {...dragHandleProps}
+                className="flex items-center justify-center p-1 text-neutral-400 hover:text-white cursor-grab active:cursor-grabbing hover:bg-neutral-800/80 rounded transition-colors group select-none"
+                title="Drag bar anywhere (Double-click to snap back to top-center)"
+              >
+                <GripVertical className="w-4 h-4 text-neutral-400 group-hover:text-sky-400 transition-colors" />
+              </div>
 
-          <button
-            onClick={() => setToolbarOrientation(toolbarOrientation === "horizontal" ? "vertical" : "horizontal")}
-            className="p-1 rounded text-neutral-400 hover:text-sky-300 hover:bg-neutral-800/80 transition-colors"
-            title={`Switch to ${toolbarOrientation === "horizontal" ? "Vertical Dock" : "Horizontal Bar"}`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-          </button>
-        </div>
+              <button
+                type="button"
+                onClick={toggleOrientation}
+                className="p-1 rounded text-neutral-400 hover:text-sky-300 hover:bg-neutral-800/80 transition-colors"
+                title={`Switch to ${orientation === "horizontal" ? "Vertical Dock" : "Horizontal Bar"}`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
-        <div
-          className={
-            toolbarOrientation === "vertical"
-              ? "w-full h-px bg-neutral-800 my-0.5"
-              : "h-4 w-px bg-neutral-800 mx-0.5"
-          }
-        />
+            <div
+              className={
+                orientation === "vertical"
+                  ? "w-full h-px bg-neutral-800 my-0.5"
+                  : "h-4 w-px bg-neutral-800 mx-0.5"
+              }
+            />
 
         {/* Tool Selectors */}
         <button
@@ -1302,19 +1245,17 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         </div>
 
         {/* Reset position & scale icon */}
-        {(toolbarPos || toolbarScale !== 1.0 || toolbarOrientation !== "horizontal") && (
-          <button
-            onClick={() => {
-              setToolbarPos(null);
-              setToolbarScale(1.0);
-              setToolbarOrientation("horizontal");
-            }}
-            className="p-1 rounded text-neutral-400 hover:text-sky-300 hover:bg-neutral-800 transition-colors"
-            title="Reset bar position, orientation & scale"
-          >
-            <RotateCcw className="w-3 h-3" />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => {
+            resetPosition();
+            setToolbarScale(1.0);
+          }}
+          className="p-1 rounded text-neutral-400 hover:text-sky-300 hover:bg-neutral-800 transition-colors"
+          title="Reset bar position, orientation & scale"
+        >
+          <RotateCcw className="w-3 h-3" />
+        </button>
 
         {/* Interactive Drag-to-Resize Grip */}
         <div
@@ -1329,6 +1270,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           <Scaling className="w-3.5 h-3.5" />
         </div>
       </div>
+        )}
+      </DraggableBarContainer>
 
       {/* Main Canvas Viewport */}
       <div
@@ -1743,29 +1686,57 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
 
         {/* Render Grid View */}
         {viewMode === "grid" && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 p-4 max-w-6xl w-full">
-            {pages.map((page, idx) => (
-              <div
-                key={page.id}
-                onClick={() => {
-                  onSelectPage(idx);
-                  // Double click to single mode
-                }}
-                className={`flex flex-col rounded-lg border bg-neutral-900 p-2 cursor-pointer shadow-lg transition-all hover:scale-102 ${
-                  idx === activePageIndex ? "border-sky-500 ring-2 ring-sky-500/40" : "border-neutral-800"
-                }`}
-              >
-                <img
-                  src={page.thumbnailDataUrl || page.processedDataUrl}
-                  alt={`Grid ${idx + 1}`}
-                  className="w-full aspect-[3/4] object-contain bg-neutral-950 rounded mb-2"
-                />
-                <div className="flex items-center justify-between text-xs text-neutral-300 font-mono">
-                  <span className="font-bold">Page {idx + 1}</span>
-                  <span className="text-neutral-500 text-[10px]">{page.width}×{page.height}</span>
+          <div
+            ref={gridScrollContainerRef}
+            style={{ scrollBehavior: "smooth" }}
+            className="absolute inset-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col items-center p-6 select-none scroll-smooth"
+            data-grid-scroll="true"
+          >
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 p-4 max-w-6xl w-full">
+              {pages.map((page, idx) => (
+                <div
+                  key={page.id}
+                  onClick={() => {
+                    onSelectPage(idx);
+                  }}
+                  onDoubleClick={() => {
+                    onSelectPage(idx);
+                    if (onViewModeChange) {
+                      onViewModeChange("single");
+                    }
+                    setPan({ x: 0, y: 0 });
+                    if (viewportRef.current) {
+                      viewportRef.current.scrollTop = 0;
+                      viewportRef.current.scrollLeft = 0;
+                    }
+                  }}
+                  title="Double-click to open in Single Page view"
+                  className={`group relative flex flex-col rounded-lg border bg-neutral-900 p-2 cursor-pointer shadow-lg transition-all hover:scale-102 ${
+                    idx === activePageIndex
+                      ? "border-sky-500 ring-2 ring-sky-500/40"
+                      : "border-neutral-800 hover:border-neutral-700"
+                  }`}
+                >
+                  <div className="relative w-full aspect-[3/4] bg-neutral-950 rounded mb-2 overflow-hidden flex items-center justify-center">
+                    <img
+                      src={page.thumbnailDataUrl || page.processedDataUrl}
+                      alt={`Grid ${idx + 1}`}
+                      className="w-full h-full object-contain pointer-events-none select-none"
+                    />
+
+                    {/* Subtle hover hint for discoverability */}
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-neutral-900/95 border border-neutral-700/80 text-[11px] text-sky-300 font-medium shadow-lg pointer-events-none backdrop-blur-sm">
+                      <Maximize2 className="w-3 h-3 text-sky-400" />
+                      <span>Double-click to open</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-neutral-300 font-mono">
+                    <span className="font-bold">Page {idx + 1}</span>
+                    <span className="text-neutral-500 text-[10px]">{page.width}×{page.height}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
 

@@ -9,6 +9,7 @@
  */
 
 import JSZip from "jszip";
+import { importPDFFile } from "../../engine/pdf";
 
 export interface ImportedDocumentPage {
   dataUrl: string;
@@ -360,11 +361,34 @@ export async function decodeImageFile(
 }
 
 /**
- * Universal document parser for DOCX, TXT, RTF, and DOC
+ * High-performance PDF parser with immediate first-page rendering and streaming thumbnails
+ */
+export async function parsePdfDocumentFile(
+  file: File,
+  options?: { password?: string }
+): Promise<ImportedDocumentPage[]> {
+  const imported = await importPDFFile(file, { password: options?.password });
+  const total = imported.pages.length;
+  return imported.pages.map((p, idx) => ({
+    pageNumber: p.pageNumber || idx + 1,
+    totalPages: total,
+    dataUrl: p.processedDataUrl || p.originalDataUrl || p.thumbnailDataUrl || "",
+    width: p.width,
+    height: p.height,
+    title: `${file.name} - Page ${p.pageNumber || idx + 1}`,
+  }));
+}
+
+/**
+ * Universal document parser for PDF, DOCX, TXT, RTF, and DOC
  * Returns an array of ImportedDocumentPage
  */
 export async function parseDocumentFile(file: File): Promise<ImportedDocumentPage[]> {
   const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  if (ext === "pdf" || file.type === "application/pdf") {
+    return parsePdfDocumentFile(file);
+  }
+
   let result: DocumentImportResult;
   if (ext === "docx") {
     result = await parseDocxFile(file);
