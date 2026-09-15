@@ -43,7 +43,11 @@ import {
   Contrast,
   Compass,
   Zap,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
 } from "lucide-react";
+import { UnifiedStudioShell, StudioStep } from "../common/UnifiedStudioShell";
 import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
 import {
   IdCardStudioConfig,
@@ -1304,142 +1308,230 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     );
   }
 
+  const ID_CARD_STUDIO_STEPS: StudioStep[] = [
+    {
+      id: "page-1",
+      label: "1. Front Card",
+      shortLabel: "Front",
+      description: "Front ID-1 card upload, crop, & CamScanner tone",
+      icon: <CreditCard className="w-3.5 h-3.5 text-emerald-400" />,
+      isCompleted: !!frontImage,
+    },
+    {
+      id: "page-2",
+      label: "2. Back Card",
+      shortLabel: "Back",
+      description: "Back ID-1 card upload, crop, & CamScanner tone",
+      icon: <CreditCard className="w-3.5 h-3.5 text-indigo-400" />,
+      isCompleted: !!backImage,
+    },
+    {
+      id: "side-by-side",
+      label: "3. 2-Page Layout",
+      shortLabel: "Layout",
+      description: `Side-by-side preview of Both A4 Pages (${frontCopiesCount} Front / ${backCopiesCount} Back copies)`,
+      icon: <Grid className="w-3.5 h-3.5 text-sky-400" />,
+      isCompleted: layout.fits,
+    },
+    {
+      id: "summary",
+      label: "4. Inspection",
+      shortLabel: "Safety",
+      description: "Pre-flight DPI, margin safety, & cutting guide check",
+      icon: <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />,
+      isCompleted: true,
+    },
+  ];
+
+  const handleSelectStudioStep = (stepId: string) => {
+    handleSwitchTab(stepId as "side-by-side" | "page-1" | "page-2" | "summary");
+    if (stepId === "page-1") {
+      setActiveFilterSide("front");
+    } else if (stepId === "page-2") {
+      setActiveFilterSide("back");
+    }
+  };
+
+  const isDirty =
+    frontCropState !== null ||
+    backCropState !== null ||
+    config.presetId !== "id-1";
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex flex-col select-none">
-      {/* -------------------------------------------------------------
-          TOP BAR: Title, Mode Toggles, Zoom & Action Buttons
-         ------------------------------------------------------------- */}
-      <header className="h-14 bg-neutral-900 border-b border-neutral-800 px-4 flex items-center justify-between shrink-0 shadow-md">
-        {/* Title & Badge */}
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-sky-600 flex items-center justify-center shadow-lg shadow-sky-600/30">
-            <CreditCard className="w-4 h-4 text-white" />
+    <>
+      <UnifiedStudioShell
+        isOpen={isOpen}
+        onClose={onClose}
+        title="ID Card & CNIC Print Studio"
+        subtitle="2-Page A4 Studio • Front / Back Cards • Exact Millimeter Physical Alignment"
+        badgeText="2-Page A4 Studio"
+        badgeVariant="sky"
+        icon={<CreditCard className="w-5 h-5 text-sky-400" />}
+        modeSwitcher={
+          <div className="flex items-center bg-neutral-900 p-0.5 rounded-lg border border-neutral-800 text-xs">
+            <button
+              type="button"
+              className="px-2.5 py-1 rounded-md font-semibold flex items-center space-x-1.5 bg-sky-600 text-white shadow-sm"
+              title="Currently in Standard ID Card / CNIC (A4 Multi-Card) Studio"
+            >
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>ID Card (A4)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStudioLayoutMode("a6")}
+              className="px-2.5 py-1 rounded-md font-semibold flex items-center space-x-1.5 text-neutral-400 hover:text-white cursor-pointer"
+              title="Switch to A6 Half-Card Layout Studio (74×105mm, Independent Front/Back, Exact Physical Scale)"
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-400" />
+              <span>A6 Half-Card</span>
+            </button>
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-sm font-bold text-white tracking-wide">ID CARD / CNIC PRINT STUDIO</h1>
-              <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30">
-                2-Page A4 Studio
-              </span>
-            </div>
-            <p className="text-[11px] text-neutral-400">
-              Page 1: {frontCopiesCount} Front Copies • Page 2: {backCopiesCount} Back Copies • Exact Physical Scale
-            </p>
+        }
+        steps={ID_CARD_STUDIO_STEPS}
+        activeStepId={previewMode}
+        onSelectStep={handleSelectStudioStep}
+        leftPanelTitle="Card Setup & Print Parameters"
+        leftPanelWidth="w-80"
+        footerLeft={
+          <div className="flex items-center space-x-2">
+            {previewMode !== "page-1" && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (previewMode === "summary") handleSelectStudioStep("side-by-side");
+                  else if (previewMode === "side-by-side") handleSelectStudioStep("page-2");
+                  else if (previewMode === "page-2") handleSelectStudioStep("page-1");
+                }}
+                className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-xs font-medium border border-neutral-700 transition-colors cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Back</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSwapSides}
+              className="flex items-center space-x-1 text-xs text-neutral-300 hover:text-white font-medium px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 transition-colors cursor-pointer"
+              title="Swap Front and Back sides"
+            >
+              <ArrowLeftRight className="w-3 h-3 text-sky-400" />
+              <span>Swap Sides</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleResetSpecimen}
+              className="flex items-center space-x-1 text-xs text-neutral-400 hover:text-neutral-200 font-medium px-2.5 py-1.5 rounded-lg bg-neutral-800/80 hover:bg-neutral-750 border border-neutral-700 transition-colors cursor-pointer"
+              title="Reset to specimen card artwork"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Reset Specimen</span>
+            </button>
+            {onInsertIntoDocument && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setIsExporting(true);
+                    const blob1 = await exportIdCardSheetAsBlob(config, frontImage, backImage, "image/png", 300, 0);
+                    const blob2 = await exportIdCardSheetAsBlob(config, frontImage, backImage, "image/png", 300, 1);
+                    const url1 = URL.createObjectURL(blob1);
+                    const url2 = URL.createObjectURL(blob2);
+                    onInsertIntoDocument([url1, url2]);
+                    onClose();
+                  } catch (err) {
+                    console.error(err);
+                  } finally {
+                    setIsExporting(false);
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-sky-300 border border-sky-700/50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 text-sky-400" />
+                <span>Insert to Project</span>
+              </button>
+            )}
           </div>
-        </div>
-
-        {/* Primary Studio Layout Mode Switcher */}
-        <div className="flex items-center bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-xs shadow-inner">
-          <button
-            type="button"
-            className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 bg-sky-600 text-white shadow-sm cursor-default"
-            title="Currently in Standard ID Card / CNIC (A4 Multi-Card) Studio"
-          >
-            <CreditCard className="w-3.5 h-3.5" />
-            <span>ID Card / CNIC (A4)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStudioLayoutMode("a6")}
-            className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 text-neutral-400 hover:text-white cursor-pointer"
-            title="Switch to A6 Half-Card Layout Studio (74×105mm, Independent Front/Back, Exact Physical Scale)"
-          >
-            <Layers className="w-3.5 h-3.5 text-indigo-400" />
-            <span>A6 Half-Card (74×105mm)</span>
-          </button>
-        </div>
-
-        {/* View Mode Switcher */}
-        <div className="flex items-center bg-neutral-950 p-1 rounded-lg border border-neutral-800 text-xs">
-          <button
-            onClick={() => handleSwitchTab("side-by-side")}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 ${
-              previewMode === "side-by-side"
-                ? "bg-sky-600 text-white shadow"
-                : "text-neutral-400 hover:text-white"
-            }`}
-            title="Display both Page 1 (Front) and Page 2 (Back) simultaneously side-by-side"
-          >
-            <Grid className="w-3.5 h-3.5" />
-            <span>Both Pages (Side-by-Side)</span>
-          </button>
-          <button
-            onClick={() => handleSwitchTab("page-1")}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 ${
-              previewMode === "page-1"
-                ? "bg-emerald-600 text-white shadow"
-                : "text-neutral-400 hover:text-white"
-            }`}
-            title="Focus on Page 1 (Front Copies)"
-          >
-            <span>Page 1 (Front)</span>
-          </button>
-          <button
-            onClick={() => handleSwitchTab("page-2")}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 ${
-              previewMode === "page-2"
-                ? "bg-indigo-600 text-white shadow"
-                : "text-neutral-400 hover:text-white"
-            }`}
-            title="Focus on Page 2 (Back Copies)"
-          >
-            <span>Page 2 (Back)</span>
-          </button>
-          <button
-            onClick={() => handleSwitchTab("summary")}
-            className={`px-3 py-1 rounded-md font-medium transition-all flex items-center space-x-1.5 ${
-              previewMode === "summary"
-                ? "bg-sky-600 text-white shadow"
-                : "text-neutral-400 hover:text-white"
-            }`}
-            title="Pre-flight Print Safety Inspection"
-          >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Inspection</span>
-          </button>
-        </div>
-
-        {/* Action Buttons: Print, PDF Export & Close */}
-        <div className="flex items-center space-x-2">
-          {statusMessage && (
-            <span className="text-xs text-amber-400 bg-amber-950/50 border border-amber-800/50 px-2.5 py-1 rounded-md font-medium animate-pulse">
-              {statusMessage}
+        }
+        footerCenter={
+          <div className="flex items-center space-x-2 text-xs">
+            <span className="font-semibold text-neutral-200">
+              Page 1: {frontCopiesCount} Front • Page 2: {backCopiesCount} Back Copies
             </span>
-          )}
-          <button
-            onClick={handlePrint}
-            disabled={isExporting}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-all disabled:opacity-50"
-            title="Print 2-Page Sheet with browser print dialog"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print 2-Page Sheet</span>
-          </button>
-          <button
-            onClick={handleExportPdf}
-            disabled={isExporting}
-            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow transition-all disabled:opacity-50"
-            title="Export 300 DPI Two-Page PDF"
-          >
-            <FileDown className="w-3.5 h-3.5" />
-            <span>Export 2-Page PDF</span>
-          </button>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-            title="Close ID Card Studio (Esc)"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      </header>
-
-      {/* -------------------------------------------------------------
-          MAIN WORKSPACE: Sidebar Controls + Center Canvas Viewport
-         ------------------------------------------------------------- */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* LEFT CONTROL SIDEBAR */}
-        <aside className="w-80 bg-neutral-900/95 border-r border-neutral-800 flex flex-col shrink-0 overflow-y-auto custom-scrollbar text-xs">
+            <span className="text-neutral-600">|</span>
+            <span className="text-neutral-400 font-mono">
+              {config.presetId.toUpperCase()} ({config.docWidthMm} × {config.docHeightMm} mm)
+            </span>
+            {layout.warningMessage && (
+              <span className="text-amber-400 font-medium flex items-center space-x-1 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800 text-[11px]">
+                <AlertTriangle className="w-3 h-3" />
+                <span>{layout.warningMessage}</span>
+              </span>
+            )}
+          </div>
+        }
+        footerRight={
+          <div className="flex items-center space-x-2">
+            {previewMode === "page-1" && (
+              <button
+                type="button"
+                onClick={() => handleSelectStudioStep("page-2")}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs shadow transition-colors cursor-pointer"
+              >
+                <span>Next: Back Card</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {previewMode === "page-2" && (
+              <button
+                type="button"
+                onClick={() => handleSelectStudioStep("side-by-side")}
+                className="flex items-center space-x-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs shadow transition-colors cursor-pointer"
+              >
+                <span>Next: 2-Page Layout</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={isExporting}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 text-xs font-semibold shadow transition-all disabled:opacity-50 cursor-pointer"
+              title="Export 300 DPI Two-Page PDF"
+            >
+              <FileDown className="w-3.5 h-3.5 text-sky-400" />
+              <span>Export PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={isExporting}
+              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold shadow transition-all disabled:opacity-50 cursor-pointer"
+              title="Print 2-Page Sheet with browser print dialog"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print 2-Page Sheet</span>
+            </button>
+          </div>
+        }
+        isDirty={isDirty}
+        dirtyWarningMessage="You have loaded cards or altered layout adjustments that will be lost."
+        onRotateCW={() => handleRotateSide(activeFilterSide, 90)}
+        onRotateCCW={() => handleRotateSide(activeFilterSide, -90)}
+        onZoomIn={() => updateZoomPan(Math.min(3.0, Number((zoomRef.current * 1.15).toFixed(2))), panRef.current)}
+        onZoomOut={() => updateZoomPan(Math.max(0.2, Number((zoomRef.current / 1.15).toFixed(2))), panRef.current)}
+        onFitZoom={() => {
+          const mode = currentModeRef.current;
+          const defaultZ = mode === "side-by-side" ? 0.65 : 0.85;
+          updateZoomPan(defaultZ, { x: 0, y: 0 });
+        }}
+        onPrimaryAction={() => {
+          if (previewMode === "page-1") handleSelectStudioStep("page-2");
+          else if (previewMode === "page-2") handleSelectStudioStep("side-by-side");
+          else handlePrint();
+        }}
+        leftPanel={
+          <div className="space-y-3 text-xs">
           {/* Document Source Slots & Crop Controls */}
           <div className="p-3 border-b border-neutral-800 space-y-3">
             <div className="flex items-center justify-between">
@@ -2505,10 +2597,10 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
               />
             )}
           </div>
-        </aside>
-
-        {/* CENTER VIEWPORT / WORKSPACE */}
-        <main className="flex-1 flex flex-col bg-neutral-950 overflow-hidden relative">
+        </div>
+      }
+      centerContent={
+        <div className="flex-1 flex flex-col bg-neutral-950 overflow-hidden relative w-full h-full">
           {/* Top Sub-Bar: Status, Zoom & Navigation */}
           <div className="h-10 bg-neutral-900/80 border-b border-neutral-800 px-4 flex items-center justify-between text-xs shrink-0 z-10">
             {/* Left Info Badges */}
@@ -2779,8 +2871,9 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
               </div>
             </div>
           </div>
-        </main>
-      </div>
+        </div>
+      }
+      />
 
       {/* -------------------------------------------------------------
           Hidden File Inputs
@@ -2859,6 +2952,6 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
         subtitle="Automatic Matting • Solid Colors & Gradients • Texture Layers • Local AI & GitHub Backend"
         onApply={handleApplyBgStudio}
       />
-    </div>
+    </>
   );
 };

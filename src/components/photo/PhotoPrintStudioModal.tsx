@@ -99,8 +99,11 @@ import {
   Contrast,
   Compass,
   Zap,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { UniversalNumericInput } from "../common/UniversalNumericInput";
+import { UnifiedStudioShell, StudioStep } from "../common/UnifiedStudioShell";
 
 interface PhotoPrintStudioModalProps {
   pages: OmniPage[];
@@ -1035,94 +1038,198 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     });
   };
 
+  const PASSPORT_STUDIO_STEPS: StudioStep[] = [
+    {
+      id: "crop",
+      label: "1. Biometric Cutout",
+      shortLabel: "1. Cutout",
+      description: "Source portrait, standard specs, & biometric crop",
+      icon: <Crop className="w-3.5 h-3.5" />,
+      isCompleted: !!processedPhotoDataUrl,
+    },
+    {
+      id: "filters",
+      label: "2. Retouch & Tone",
+      shortLabel: "2. Retouch",
+      description: "CamScanner presets, tone grading, & contrast",
+      icon: <Palette className="w-3.5 h-3.5" />,
+      isCompleted: !!processedPhotoDataUrl,
+    },
+    {
+      id: "sheet",
+      label: `3. 4×6″ Print Sheet (${sheetConfig.copies} Copies)`,
+      shortLabel: "3. 4×6″ Sheet",
+      description: `4×6" multi-copy grid layout (${sheetConfig.copies} copies), margins, & 300 DPI PDF export`,
+      icon: <Grid className="w-3.5 h-3.5" />,
+      isCompleted: layoutResult.fits,
+    },
+  ];
+
+  const isDirty =
+    cropRotation !== 0 ||
+    cropZoom !== 1.0 ||
+    cropImagePan.x !== 0 ||
+    cropImagePan.y !== 0 ||
+    activePreset !== "original" ||
+    rawSourceImage !== defaultInitialImage;
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-neutral-900 border border-neutral-700/80 rounded-xl shadow-2xl flex flex-col w-full max-w-7xl h-[94vh] overflow-hidden">
-        {/* Studio Top Header Bar */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-800 bg-neutral-850 select-none">
-          <div className="flex items-center space-x-3">
-            <div className="p-1.5 rounded-lg bg-sky-500/10 border border-sky-500/30 text-sky-400">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-sm font-bold text-white tracking-wide uppercase">
-                  Passport & 4×6" Photo Studio
-                </h2>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-950 text-sky-300 border border-sky-700/50">
-                  ICAO 9303 Biometric Engine
-                </span>
-              </div>
-              <p className="text-[11px] text-neutral-400">
-                Official Biometric Cropping, Face Guides, Retouch, & 4×6" Multi-Copy Grid Printing
-              </p>
-            </div>
-          </div>
-
-          {/* Stepper Tabs */}
-          <div className="flex items-center bg-neutral-900 p-1 rounded-lg border border-neutral-800 space-x-1">
-            <button
-              onClick={() => handleSelectStep("crop")}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                studioStep === "crop"
-                  ? "bg-sky-600 text-white shadow-sm"
-                  : "text-neutral-400 hover:text-white hover:bg-neutral-800"
-              }`}
-            >
-              <Crop className="w-3.5 h-3.5" />
-              <span>1. Biometric Cutout</span>
-            </button>
-            <button
-              onClick={() => handleSelectStep("filters")}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                studioStep === "filters"
-                  ? "bg-sky-600 text-white shadow-sm"
-                  : "text-neutral-400 hover:text-white hover:bg-neutral-800"
-              }`}
-            >
-              <Palette className="w-3.5 h-3.5" />
-              <span>2. Retouch & Tone</span>
-            </button>
-            <button
-              onClick={() => handleSelectStep("sheet")}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                studioStep === "sheet"
-                  ? "bg-sky-600 text-white shadow-sm"
-                  : "text-neutral-400 hover:text-white hover:bg-neutral-800"
-              }`}
-            >
-              <Grid className="w-3.5 h-3.5" />
-              <span>3. 4×6" Print Sheet ({sheetConfig.copies} Copies)</span>
-            </button>
-          </div>
-
-          {/* Background Remover Action & Close Studio */}
+    <>
+      <UnifiedStudioShell
+        isOpen={isOpen}
+        onClose={onClose}
+        title="Passport & 4×6″ Photo Studio"
+        subtitle="Official Biometric Cropping, Face Guides, Retouch, & 4×6″ Multi-Copy Grid Printing"
+        badgeText="ICAO 9303 Biometric Engine"
+        badgeVariant="sky"
+        icon={<Sparkles className="w-5 h-5 text-sky-400" />}
+        steps={PASSPORT_STUDIO_STEPS}
+        activeStepId={studioStep}
+        onSelectStep={(stepId) => handleSelectStep(stepId as "crop" | "filters" | "sheet")}
+        headerExtraActions={
+          <button
+            type="button"
+            onClick={handleOpenBgRemover}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-medium transition-colors shadow-sm cursor-pointer"
+            title="Open Professional Studio Background Remover"
+          >
+            <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Background Remover</span>
+          </button>
+        }
+        rightPanelWidth="w-96"
+        rightPanelTitle={
+          studioStep === "crop"
+            ? "Portrait Source & Specifications"
+            : studioStep === "filters"
+            ? "Tone Grading & CamScanner Filters"
+            : "4×6″ Sheet & Layout Parameters"
+        }
+        footerLeft={
           <div className="flex items-center space-x-2">
-            <button
-              onClick={handleOpenBgRemover}
-              className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-medium transition-colors shadow-sm"
-              title="Open Professional Studio Background Remover"
-            >
-              <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Background Remover</span>
-            </button>
-
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-              title="Close Passport Photo Studio"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {studioStep !== "crop" && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (studioStep === "sheet") handleSelectStep("filters");
+                  else if (studioStep === "filters") handleSelectStep("crop");
+                }}
+                className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-xs font-medium border border-neutral-700 transition-colors cursor-pointer"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Back to {studioStep === "sheet" ? "Retouch" : "Cutout"}</span>
+              </button>
+            )}
+            {onInsertIntoDocument && studioStep === "sheet" && (
+              <button
+                type="button"
+                onClick={handleInsertIntoDocument}
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-sky-300 border border-sky-700/50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5 text-sky-400" />
+                <span>Insert to Project</span>
+              </button>
+            )}
           </div>
-        </div>
-
-        {/* Studio Main Workspace (2-Column Layout) */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* LEFT: Interactive Stage Canvas */}
-          <div className="flex-1 bg-neutral-950 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none">
+        }
+        footerCenter={
+          studioStep === "sheet" ? (
+            layoutResult.fits ? (
+              <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-950/90 border border-emerald-500/50 text-emerald-300 text-xs shadow-lg backdrop-blur">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="font-semibold">✓ Fits Perfectly on {currentPaperSpec.name} ({layoutResult.totalPhotosPlaced} copies)</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-rose-950/90 border border-rose-500/50 text-rose-300 text-xs shadow-lg backdrop-blur">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                <span className="font-semibold">⚠ Layout does not fit</span>
+                <button
+                  type="button"
+                  onClick={handleAutoFitLayout}
+                  className="ml-2 px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px]"
+                >
+                  Auto Fit
+                </button>
+              </div>
+            )
+          ) : (
+            <span className="text-xs text-neutral-400 font-mono">
+              {currentPassportSpec.name} ({currentPassportSpec.widthMm} × {currentPassportSpec.heightMm} mm)
+            </span>
+          )
+        }
+        footerRight={
+          <div className="flex items-center space-x-2">
+            {studioStep === "crop" && (
+              <button
+                type="button"
+                onClick={() => handleSelectStep("filters")}
+                className="flex items-center space-x-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs shadow transition-colors cursor-pointer"
+              >
+                <span>Continue to Retouch &amp; Tone</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {studioStep === "filters" && (
+              <button
+                type="button"
+                onClick={() => handleSelectStep("sheet")}
+                className="flex items-center space-x-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs shadow transition-colors cursor-pointer"
+              >
+                <span>Proceed to 4×6″ Sheet Layout</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {studioStep === "sheet" && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleExportImage("image/jpeg")}
+                  className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 rounded-lg flex items-center space-x-1.5 transition-colors border border-neutral-700 text-xs cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5 text-sky-400" />
+                  <span>JPG</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPDF}
+                  disabled={isExporting}
+                  className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-semibold rounded-lg flex items-center space-x-1.5 transition-colors shadow text-xs cursor-pointer disabled:opacity-50"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  <span>Export PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrintSheet}
+                  className="px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-lg flex items-center space-x-1.5 transition-colors shadow text-xs cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Sheet</span>
+                </button>
+              </>
+            )}
+          </div>
+        }
+        isDirty={isDirty}
+        dirtyWarningMessage="You have an active portrait session with crop or filter settings that will be discarded."
+        onRotateCW={() => handleRotateImage(90)}
+        onRotateCCW={() => handleRotateImage(-90)}
+        onZoomIn={() => setCropZoom((prev) => Math.min(5.0, Number((prev * 1.1).toFixed(2))))}
+        onZoomOut={() => setCropZoom((prev) => Math.max(0.2, Number((prev / 1.1).toFixed(2))))}
+        onFitZoom={() => {
+          setCropZoom(1.0);
+          setCropImagePan({ x: 0, y: 0 });
+        }}
+        onPrimaryAction={() => {
+          if (studioStep === "crop") handleSelectStep("filters");
+          else if (studioStep === "filters") handleSelectStep("sheet");
+          else handlePrintSheet();
+        }}
+        centerContent={
+          <div className="flex-1 bg-neutral-950 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none w-full h-full">
             {/* STAGE 1: Biometric Crop Editor */}
             {studioStep === "crop" && (
               <div
@@ -1379,9 +1486,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
               </button>
             </div>
           </div>
-
-          {/* RIGHT: Studio Controls & Configuration Sidebar */}
-          <div className="w-96 bg-neutral-900 border-l border-neutral-800 flex flex-col h-full overflow-y-auto custom-scrollbar select-none text-xs text-neutral-200">
+        }
+        rightPanel={
+          <div className="space-y-4 select-none text-xs text-neutral-200">
             {/* STEP 1: Biometric Cutout Settings */}
             {studioStep === "crop" && (
               <div className="p-4 space-y-4">
@@ -2438,51 +2545,51 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
               </div>
             )}
           </div>
+        }
+      />
+
+      {/* Centralized Unified Background Studio Modal */}
+      <UnifiedBackgroundStudioModal
+        isOpen={isBgRemoverOpen}
+        onClose={() => setIsBgRemoverOpen(false)}
+        initialImage={rawSourceImage}
+        initialState={bgStudioState || undefined}
+        title="Passport Studio Background Editor"
+        subtitle="Biometric Subject Matting • Multi-Layer Composition • Offline AI & GitHub Backend"
+        onApply={(finalCompositeUrl, fullState) => {
+          setBgStudioState(fullState);
+          setRawSourceImage(finalCompositeUrl);
+          showToast("Passport photo background updated.");
+          setIsBgRemoverOpen(false);
+        }}
+      />
+
+      {/* Centralized PDF Import Dialog */}
+      <PdfImportDialog
+        isOpen={isPdfImportDialogOpen}
+        onClose={() => {
+          setIsPdfImportDialogOpen(false);
+          setSelectedPdfFile(null);
+        }}
+        initialFile={selectedPdfFile}
+        title="Extract Portrait from PDF Document"
+        description="Select the PDF page containing your passport or portrait photo."
+        selectionMode="single"
+        primaryButtonLabel="Import Selected Page"
+        onImportSingle={(result) => {
+          setRawSourceImage(result.dataUrl);
+          setSourceTab("upload");
+          showToast(`Loaded Page ${result.pageNum} from ${result.fileName}`);
+        }}
+      />
+
+      {/* Toast Notification Banner */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 bg-neutral-900/95 border border-sky-500/80 text-white text-xs px-4 py-2 rounded-lg shadow-2xl flex items-center space-x-2 animate-in slide-in-from-bottom duration-150 z-[60]">
+          <CheckCircle className="w-4 h-4 text-sky-400" />
+          <span>{toastMessage}</span>
         </div>
-
-                {/* Centralized Unified Background Studio Modal */}
-        <UnifiedBackgroundStudioModal
-          isOpen={isBgRemoverOpen}
-          onClose={() => setIsBgRemoverOpen(false)}
-          initialImage={rawSourceImage}
-          initialState={bgStudioState || undefined}
-          title="Passport Studio Background Editor"
-          subtitle="Biometric Subject Matting • Multi-Layer Composition • Offline AI & GitHub Backend"
-          onApply={(finalCompositeUrl, fullState) => {
-            setBgStudioState(fullState);
-            setRawSourceImage(finalCompositeUrl);
-            showToast("Passport photo background updated.");
-            setIsBgRemoverOpen(false);
-          }}
-        />
-
-        {/* Centralized PDF Import Dialog */}
-        <PdfImportDialog
-          isOpen={isPdfImportDialogOpen}
-          onClose={() => {
-            setIsPdfImportDialogOpen(false);
-            setSelectedPdfFile(null);
-          }}
-          initialFile={selectedPdfFile}
-          title="Extract Portrait from PDF Document"
-          description="Select the PDF page containing your passport or portrait photo."
-          selectionMode="single"
-          primaryButtonLabel="Import Selected Page"
-          onImportSingle={(result) => {
-            setRawSourceImage(result.dataUrl);
-            setSourceTab("upload");
-            showToast(`Loaded Page ${result.pageNum} from ${result.fileName}`);
-          }}
-        />
-
-        {/* Toast Notification Banner */}
-        {toastMessage && (
-          <div className="absolute bottom-4 right-4 bg-neutral-900/95 border border-sky-500/80 text-white text-xs px-4 py-2 rounded-lg shadow-2xl flex items-center space-x-2 animate-in slide-in-from-bottom duration-150 z-50">
-            <CheckCircle className="w-4 h-4 text-sky-400" />
-            <span>{toastMessage}</span>
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </>
   );
 };

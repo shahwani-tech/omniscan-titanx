@@ -421,41 +421,44 @@ export const A6DuplexFlipPreview: React.FC<A6DuplexFlipPreviewProps> = ({
         </div>
       </div>
 
-      {/* Binding Axis Selector (Long-Edge vs Short-Edge) */}
+      {/* Flip Edge (Long / Short) Selector */}
       <div className="mt-2.5 pt-2 border-t border-neutral-850">
-        <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1">
-          <span>Duplex Printer Flip Axis:</span>
+        <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-1.5">
+          <span className="flex items-center space-x-1 font-medium text-neutral-300">
+            <ArrowRightLeft className="w-3 h-3 text-indigo-400" />
+            <span>Flip Edge (Long / Short):</span>
+          </span>
           <span className="font-mono text-neutral-300">
-            {duplexBinding === "long-edge" ? "Book (Vertical)" : "Notepad (Horizontal)"}
+            {duplexBinding === "long-edge" ? "Book (Long Edge)" : "Notepad (Short Edge)"}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-1.5">
           <button
             type="button"
             onClick={() => onBindingChange?.("long-edge")}
-            className={`py-1 px-2 rounded-lg text-[10px] font-medium border flex items-center justify-center space-x-1 transition-all cursor-pointer ${
+            className={`py-1.5 px-2 rounded-lg text-[10px] font-medium border flex items-center justify-center space-x-1.5 transition-all cursor-pointer ${
               duplexBinding === "long-edge"
                 ? "bg-indigo-950 text-indigo-300 border-indigo-600 shadow-sm"
                 : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white hover:border-neutral-700"
             }`}
-            title="Long-Edge Binding: Sheet flips along long edge (standard portrait book)"
+            title="Flip Edge (Long / Short): Sheet flips along long edge (standard portrait book)"
           >
-            <BookOpen className="w-3 h-3" aria-hidden="true" />
-            <span>Long Edge</span>
+            <BookOpen className="w-3.5 h-3.5 text-indigo-400" aria-hidden="true" />
+            <span>Long Edge (Book)</span>
           </button>
 
           <button
             type="button"
             onClick={() => onBindingChange?.("short-edge")}
-            className={`py-1 px-2 rounded-lg text-[10px] font-medium border flex items-center justify-center space-x-1 transition-all cursor-pointer ${
+            className={`py-1.5 px-2 rounded-lg text-[10px] font-medium border flex items-center justify-center space-x-1.5 transition-all cursor-pointer ${
               duplexBinding === "short-edge"
                 ? "bg-indigo-950 text-indigo-300 border-indigo-600 shadow-sm"
                 : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white hover:border-neutral-700"
             }`}
-            title="Short-Edge Binding: Sheet flips along short edge (calendar / notepad)"
+            title="Flip Edge (Long / Short): Sheet flips along short edge (calendar / notepad)"
           >
-            <FileText className="w-3 h-3" aria-hidden="true" />
-            <span>Short Edge</span>
+            <FileText className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+            <span>Short Edge (Pad)</span>
           </button>
         </div>
       </div>

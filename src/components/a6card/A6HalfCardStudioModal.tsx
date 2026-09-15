@@ -38,6 +38,8 @@ import {
   ArrowDown,
   Hand,
   MousePointer,
+  Scissors,
+  BookOpen,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import { analyzeFile, ACCEPT_ALL_SUPPORTED } from "../../services/upload/FileTypeRegistry";
@@ -63,6 +65,7 @@ import {
 import { renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
 import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
 import { UniversalNumericInput } from "../common/UniversalNumericInput";
+import { UnifiedStudioShell, StudioStep } from "../common/UnifiedStudioShell";
 import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
 import { A6DuplexFlipPreview } from "./A6DuplexFlipPreview";
@@ -1160,8 +1163,44 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
 
   const currentSheetDim = getA6SheetDimensions(config.orientation);
 
+  const [activeStudioStep, setActiveStudioStep] = useState<string>("upload");
+
+  const A6_STUDIO_STEPS: StudioStep[] = [
+    {
+      id: "upload",
+      label: "1. Upload & Mode",
+      shortLabel: "Upload",
+      description: "Front & Back half-card inputs and layout mode (A-E)",
+      icon: <Upload className="w-3.5 h-3.5 text-indigo-400" />,
+      isCompleted: !!(frontImage && backImage),
+    },
+    {
+      id: "adjust",
+      label: "2. Card Tuning",
+      shortLabel: "Tuning",
+      description: "Physical dimensions (74×105mm) and CamScanner tone",
+      icon: <Sliders className="w-3.5 h-3.5 text-sky-400" />,
+      isCompleted: true,
+    },
+    {
+      id: "preview",
+      label: "3. Duplex Preview",
+      shortLabel: "Preview",
+      description: "Interactive A6 sheet preview, alignment, & 3D flip",
+      icon: <Layers className="w-3.5 h-3.5 text-emerald-400" />,
+      isCompleted: !layout.pages.some((p) => p.hasOverflowWarning),
+    },
+  ];
+
+  const isDirty =
+    frontCropState !== null ||
+    backCropState !== null ||
+    config.layoutMode !== DEFAULT_A6_CONFIG.layoutMode ||
+    config.front.rotation !== 0 ||
+    config.back.rotation !== 0;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md select-none overflow-hidden animate-fadeIn">
+    <>
       {/* Hidden File Inputs for Front and Back (Supports PDF, Images, and Text Documents) */}
       <input
         ref={frontInputRef}
@@ -1180,117 +1219,142 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
         className="hidden"
       />
 
-      {/* Main Studio Container */}
-      <div className="flex flex-col w-[98vw] h-[96vh] max-w-[1720px] bg-neutral-900 border border-neutral-750 rounded-2xl shadow-2xl overflow-hidden">
-        {/* Top Header Bar */}
-        <header className="flex items-center justify-between px-5 py-3 border-b border-neutral-800 bg-neutral-950/80">
-          <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Layers className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="text-sm font-bold text-white tracking-wide">
-                  A6 Half-Card PDF Layout Studio
-                </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-indigo-950/80 text-indigo-300 border border-indigo-700/60">
-                  Target: 74 × 105 mm
-                </span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-neutral-400 bg-neutral-800 border border-neutral-700">
-                  A6 Paper: {currentSheetDim.widthMm} × {currentSheetDim.heightMm} mm
-                </span>
-              </div>
-              <p className="text-[11px] text-neutral-400">
-                Images &amp; PDF Uploads • Independent Front/Back State • Center-Based Zoom • High-Precision Print &amp; PDF Export
-              </p>
-            </div>
-          </div>
-
-          {/* Studio Layout Mode Switcher */}
-          {onSwitchStudioMode && (
-            <div className="flex items-center bg-neutral-950 p-1 rounded-xl border border-neutral-800 text-xs shadow-inner">
+      <UnifiedStudioShell
+        isOpen={isOpen}
+        onClose={onClose}
+        title="A6 Half-Card PDF Layout Studio"
+        subtitle="Target: 74 × 105 mm • Independent Front/Back State • Exact Physical Scale"
+        badgeText="A6 Duplex Studio"
+        badgeVariant="indigo"
+        icon={<Layers className="w-5 h-5 text-indigo-400" />}
+        modeSwitcher={
+          onSwitchStudioMode ? (
+            <div className="flex items-center bg-neutral-900 p-0.5 rounded-lg border border-neutral-800 text-xs">
               <button
                 type="button"
                 onClick={() => onSwitchStudioMode("idcard")}
-                className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 text-neutral-400 hover:text-white cursor-pointer"
+                className="px-2.5 py-1 rounded-md font-semibold flex items-center space-x-1.5 text-neutral-400 hover:text-white cursor-pointer"
                 title="Switch to Standard ID Card / CNIC (Multi-Card on A4/Letter Paper)"
               >
                 <CreditCard className="w-3.5 h-3.5 text-sky-400" />
-                <span>ID Card / CNIC (A4)</span>
+                <span>ID Card (A4)</span>
               </button>
               <button
                 type="button"
-                className="px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center space-x-1.5 bg-indigo-600 text-white shadow-sm cursor-default"
+                className="px-2.5 py-1 rounded-md font-semibold flex items-center space-x-1.5 bg-indigo-600 text-white shadow-sm"
                 title="Currently in A6 Half-Card Layout Studio (74×105mm)"
               >
                 <Layers className="w-3.5 h-3.5 text-indigo-200" />
-                <span>A6 Half-Card (74×105mm)</span>
+                <span>A6 Half-Card</span>
               </button>
             </div>
-          )}
-
-          {/* Header Action Buttons */}
-          <div className="flex items-center space-x-2.5">
+          ) : undefined
+        }
+        steps={A6_STUDIO_STEPS}
+        activeStepId={activeStudioStep}
+        onSelectStep={(stepId) => setActiveStudioStep(stepId)}
+        leftPanelTitle="Upload & Sheet Layout"
+        leftPanelWidth="w-80"
+        rightPanelTitle="Card Tuning & Tone"
+        rightPanelWidth="w-80"
+        rightPanelCollapsible={true}
+        defaultRightPanelOpen={true}
+        footerLeft={
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={handleSwapFrontBack}
+              className="flex items-center space-x-1 text-xs text-neutral-300 hover:text-white font-medium px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 border border-neutral-700 transition-colors cursor-pointer"
+              title="Swap Front and Back images"
+            >
+              <ArrowRightLeft className="w-3 h-3 text-indigo-400" />
+              <span>Swap Front &amp; Back</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleLoadSamples}
+              className="flex items-center space-x-1 text-xs text-neutral-400 hover:text-neutral-200 font-medium px-2.5 py-1.5 rounded-lg bg-neutral-800/80 hover:bg-neutral-750 border border-neutral-700 transition-colors cursor-pointer"
+              title="Load sample high-res A6 half-cards"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Load Samples</span>
+            </button>
             {onInsertIntoDocument && (
               <button
+                type="button"
                 onClick={handleInsertDocument}
                 disabled={isExporting}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800 flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-indigo-300 border border-indigo-700/50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50"
                 title="Insert A6 sheet(s) into current PDF project"
               >
                 <Plus className="w-3.5 h-3.5 text-indigo-400" />
                 <span>Insert Into Project</span>
               </button>
             )}
-
+          </div>
+        }
+        footerCenter={
+          <div className="flex items-center space-x-2 text-xs">
+            <span className="font-semibold text-neutral-200">
+              A6 Paper: {currentSheetDim.widthMm} × {currentSheetDim.heightMm} mm ({config.orientation})
+            </span>
+            <span className="text-neutral-600">|</span>
+            <span className="text-neutral-400 font-mono">
+              Target: 74 × 105 mm • {config.layoutMode.toUpperCase()}
+            </span>
+            {layout.pages[activePreviewPageIndex]?.hasOverflowWarning && (
+              <span className="text-amber-400 font-medium flex items-center space-x-1 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800 text-[11px]">
+                <AlertTriangle className="w-3 h-3" />
+                <span>Card boundaries exceed sheet area</span>
+              </span>
+            )}
+          </div>
+        }
+        footerRight={
+          <div className="flex items-center space-x-2">
             <button
-              onClick={handleExportPdf}
-              disabled={isExporting}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50"
-              title="Export high-resolution PDF with exact physical dimensions"
-            >
-              <FileDown className="w-3.5 h-3.5 text-red-400" />
-              <span>Export PDF</span>
-            </button>
-
-            <button
+              type="button"
               onClick={() => handleExportImage("image/png")}
               disabled={isExporting}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 text-xs font-semibold shadow transition-all disabled:opacity-50 cursor-pointer"
               title="Download 300 DPI PNG Image"
             >
               <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
               <span>PNG (300 DPI)</span>
             </button>
-
             <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={isExporting}
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border border-neutral-700 text-xs font-semibold shadow transition-all disabled:opacity-50 cursor-pointer"
+              title="Export high-resolution PDF with exact physical dimensions"
+            >
+              <FileDown className="w-3.5 h-3.5 text-red-400" />
+              <span>Export PDF</span>
+            </button>
+            <button
+              type="button"
               onClick={handleDirectPrint}
               disabled={isExporting}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow transition-all disabled:opacity-50 cursor-pointer"
               title="Direct High-Precision Print"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Print A6</span>
             </button>
-
-            <div className="h-5 w-px bg-neutral-800 mx-1" />
-
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
-              title="Close Studio (Esc)"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
-        </header>
-
-        {/* Studio Body: 3-Column Layout */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* ========================================================= */}
-          {/* COLUMN 1: UPLOAD & LAYOUT MODES                           */}
-          {/* ========================================================= */}
-          <div className="w-80 border-r border-neutral-800 bg-neutral-900/60 overflow-y-auto p-4 space-y-4 text-xs">
+        }
+        isDirty={isDirty}
+        dirtyWarningMessage="You have loaded cards or altered layout adjustments that will be lost."
+        onRotateCW={() => updateActiveAdjustment({ rotation: (currentAdjustment.rotation + 90) % 360 })}
+        onRotateCCW={() => updateActiveAdjustment({ rotation: (currentAdjustment.rotation - 90 + 360) % 360 })}
+        onZoomIn={() => setPreviewZoom((p) => Math.min(3.0, Number((p + 0.1).toFixed(2))))}
+        onZoomOut={() => setPreviewZoom((p) => Math.max(0.4, Number((p - 0.1).toFixed(2))))}
+        onResetZoom={handleResetPreview}
+        onFitZoom={handleFitWidth}
+        onPrimaryAction={handleDirectPrint}
+        leftPanel={
+          <div className="space-y-4 text-xs">
             {/* 1. Upload Front & Back Sections */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1744,10 +1808,13 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                 </div>
               </div>
 
-              {/* Gap Between Slots Slider + Input */}
+              {/* Fold Margin Slider + Input */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-neutral-400">Slot Gap</span>
+                  <span className="text-neutral-400 flex items-center space-x-1.5">
+                    <Scissors className="w-3 h-3 text-indigo-400" />
+                    <span>Fold Margin</span>
+                  </span>
                   <span className="text-neutral-300 font-mono">{config.gapMm} mm</span>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -1771,8 +1838,49 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
                     precision={1}
                     unit="mm"
                     onChange={(val) => setConfig((p) => ({ ...p, gapMm: val }))}
-                    ariaLabel="Gap between slots in millimeters"
+                    ariaLabel="Fold margin between card slots in millimeters"
                   />
+                </div>
+              </div>
+
+              {/* Flip Edge (Long / Short) Binding Selector */}
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-neutral-400 flex items-center space-x-1.5">
+                    <ArrowRightLeft className="w-3 h-3 text-indigo-400" />
+                    <span>Flip Edge (Long / Short)</span>
+                  </span>
+                  <span className="font-mono text-[10px] text-neutral-300">
+                    {duplexBinding === "long-edge" ? "Long Edge (Book)" : "Short Edge (Pad)"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDuplexBinding("long-edge")}
+                    className={`py-1 px-2 rounded text-[10px] font-medium border flex items-center justify-center space-x-1 transition-all cursor-pointer ${
+                      duplexBinding === "long-edge"
+                        ? "bg-indigo-950 text-indigo-300 border-indigo-600 shadow-sm"
+                        : "bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white"
+                    }`}
+                    title="Flip Edge: Long edge flip (book style)"
+                  >
+                    <BookOpen className="w-3 h-3 text-indigo-400" />
+                    <span>Long Edge</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDuplexBinding("short-edge")}
+                    className={`py-1 px-2 rounded text-[10px] font-medium border flex items-center justify-center space-x-1 transition-all cursor-pointer ${
+                      duplexBinding === "short-edge"
+                        ? "bg-indigo-950 text-indigo-300 border-indigo-600 shadow-sm"
+                        : "bg-neutral-800 text-neutral-400 border-neutral-700 hover:text-white"
+                    }`}
+                    title="Flip Edge: Short edge flip (pad style)"
+                  >
+                    <FileText className="w-3 h-3 text-amber-400" />
+                    <span>Short Edge</span>
+                  </button>
                 </div>
               </div>
 
@@ -1836,11 +1944,9 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               </div>
             </div>
           </div>
-
-          {/* ========================================================= */}
-          {/* COLUMN 2: ACTIVE CARD ADJUSTMENTS (FRONT VS BACK TABS)    */}
-          {/* ========================================================= */}
-          <div className="w-80 border-r border-neutral-800 bg-neutral-900/40 overflow-y-auto p-4 space-y-4 text-xs">
+        }
+        rightPanel={
+          <div className="space-y-4 text-xs">
             {/* Front / Back Switcher Tabs */}
             <div className="flex rounded-xl bg-neutral-950 p-1 border border-neutral-800">
               <button
@@ -2424,11 +2530,9 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               </label>
             </div>
           </div>
-
-          {/* ========================================================= */}
-          {/* COLUMN 3: INTERACTIVE A6 PREVIEW CANVAS                   */}
-          {/* ========================================================= */}
-          <div className="flex-1 bg-neutral-950 flex flex-col relative overflow-hidden">
+        }
+        centerContent={
+          <div className="flex-1 bg-neutral-950 flex flex-col relative overflow-hidden w-full h-full">
             {/* Top Preview Controls Bar */}
             <div className="flex items-center justify-between px-5 py-2.5 border-b border-neutral-800 bg-neutral-900/80">
               <div className="flex items-center space-x-3">
@@ -2651,16 +2755,16 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               </div>
             </div>
           </div>
-        </div>
+        }
+      />
 
-        {/* Floating Toast Notification */}
-        {toastMessage && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-2xl z-50 flex items-center space-x-2 animate-slideUp">
-            <Check className="w-4 h-4 text-white shrink-0" />
-            <span>{toastMessage}</span>
-          </div>
-        )}
-      </div>
+      {/* Floating Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-2xl z-50 flex items-center space-x-2 animate-slideUp pointer-events-none">
+          <Check className="w-4 h-4 text-white shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
       {/* PDF Multi-Page Selector Modal */}
       {pdfPickerState.isOpen && (
@@ -2720,6 +2824,6 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
           onApply={handleApplyBgStudio}
         />
       )}
-    </div>
+    </>
   );
 };
