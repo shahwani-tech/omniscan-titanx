@@ -7,6 +7,7 @@ import { ImageFilterPipeline, Point } from "../types";
 import {
   calculateDeskewAsync,
   analyzeBlanknessAsync,
+  detectDocumentQuadAsync,
 } from "../workers/filterWorkerPool";
 
 export const DEFAULT_FILTERS: ImageFilterPipeline = {
@@ -133,20 +134,28 @@ export async function applyAdaptiveDefectAnalysis(dataUrl: string): Promise<{
  * Intelligent Page Contour / Boundary Detection
  */
 export async function detectPageContour(dataUrl: string): Promise<[Point, Point, Point, Point]> {
-  const img = await loadImage(dataUrl);
-  const w = img.width;
-  const h = img.height;
-
-  // Default inset of 2% if not found
-  const marginX = w * 0.02;
-  const marginY = h * 0.02;
-
-  return [
-    { x: marginX / w, y: marginY / h },
-    { x: (w - marginX) / w, y: marginY / h },
-    { x: (w - marginX) / w, y: (h - marginY) / h },
-    { x: marginX / w, y: (h - marginY) / h },
-  ];
+  try {
+    const img = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    const maxDim = 400;
+    const scale = Math.min(1.0, maxDim / Math.max(img.width, img.height));
+    canvas.width = Math.max(64, Math.round(img.width * scale));
+    canvas.height = Math.max(64, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) throw new Error("Canvas context unavailable");
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const { quad } = await detectDocumentQuadAsync(imgData.data, canvas.width, canvas.height);
+    return [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft];
+  } catch (err) {
+    console.warn("detectPageContour fallback to safe inset:", err);
+    return [
+      { x: 0.025, y: 0.025 },
+      { x: 0.975, y: 0.025 },
+      { x: 0.975, y: 0.975 },
+      { x: 0.025, y: 0.975 },
+    ];
+  }
 }
 
 export const detectDocumentBoundingBox = detectPageContour;

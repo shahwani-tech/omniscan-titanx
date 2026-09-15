@@ -8,6 +8,8 @@ import {
   applyPixelFiltersToBuffer,
   computeRadonDeskewFromBuffer,
   computeBlanknessFromBuffer,
+  executePerspectiveWarpBuffer,
+  detectDocumentQuadFromBuffer,
 } from "../engine/pixelCore";
 
 self.onmessage = (event: MessageEvent) => {
@@ -47,6 +49,41 @@ self.onmessage = (event: MessageEvent) => {
         (self as any).postMessage({
           id,
           type: "ANALYZE_BLANKNESS_SUCCESS",
+          result,
+        });
+        break;
+      }
+
+      case "PERSPECTIVE_WARP": {
+        const { quad, targetW, targetH } = event.data;
+        const u8 = new Uint8ClampedArray(buffer);
+        const targetBuffer = executePerspectiveWarpBuffer(
+          u8,
+          width,
+          height,
+          quad,
+          targetW,
+          targetH
+        );
+        (self as any).postMessage(
+          {
+            id,
+            type: "PERSPECTIVE_WARP_SUCCESS",
+            buffer: targetBuffer.buffer,
+            targetW,
+            targetH,
+          },
+          [targetBuffer.buffer]
+        );
+        break;
+      }
+
+      case "DETECT_DOCUMENT_QUAD": {
+        const u8 = new Uint8ClampedArray(buffer);
+        const result = detectDocumentQuadFromBuffer(u8, width, height);
+        (self as any).postMessage({
+          id,
+          type: "DETECT_DOCUMENT_QUAD_SUCCESS",
           result,
         });
         break;

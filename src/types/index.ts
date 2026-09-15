@@ -278,6 +278,48 @@ export interface DocumentGeometryDiagnostics {
   suggestedRotation: number;
   hasBorderOrBackground: boolean;
   suggestedCropBox?: { x: number; y: number; width: number; height: number };
+  suggestedPerspectiveQuad?: PerspectiveQuad;
+}
+
+export type PerspectiveCorner = "topLeft" | "topRight" | "bottomRight" | "bottomLeft";
+
+export interface PerspectiveQuad {
+  topLeft: Point;     // normalized 0-1
+  topRight: Point;    // normalized 0-1
+  bottomRight: Point; // normalized 0-1
+  bottomLeft: Point;  // normalized 0-1
+  targetAspectRatio?: number | null; // width / height, null for natural
+  preset?: PerspectivePreset;
+}
+
+export type PerspectivePreset =
+  | "natural"
+  | "a4"
+  | "letter"
+  | "legal"
+  | "id-card"
+  | "business-card"
+  | "square"
+  | "photo-4x6"
+  | "custom";
+
+export interface PerspectivePresetDefinition {
+  id: PerspectivePreset;
+  name: string;
+  widthMm?: number;
+  heightMm?: number;
+  widthInches?: number;
+  heightInches?: number;
+  aspectRatio: number | null; // width / height, null for natural
+  description: string;
+}
+
+export interface PerspectiveDetectionCandidate {
+  id: string;
+  label: string;
+  quad: PerspectiveQuad;
+  confidence: number;
+  areaFraction: number;
 }
 
 export interface DocumentDefectReport {
@@ -528,6 +570,7 @@ export interface OmniPage {
   redactions: OmniRedaction[];
   formFields: OmniFormField[];
   intelligence?: DocumentIntelligenceResult;
+  perspectiveQuad?: PerspectiveQuad;
 
   isModified: boolean;
   lastModifiedAt: string;

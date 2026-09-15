@@ -261,6 +261,47 @@ class PageBlobStore {
   }
 
   /**
+   * Generate a fast, compact thumbnail data URL (< 15KB) from an image data URL
+   */
+  async generateThumbnail(sourceUrl: string, maxDim: number = 240): Promise<string> {
+    if (!sourceUrl) return "";
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return sourceUrl.length > 500 ? sourceUrl.slice(0, 500) : sourceUrl;
+    }
+
+    return new Promise<string>((resolve) => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const w = img.naturalWidth || img.width || 1;
+            const h = img.naturalHeight || img.height || 1;
+            const scale = Math.min(1, maxDim / Math.max(w, h));
+            const tw = Math.max(1, Math.floor(w * scale));
+            const th = Math.max(1, Math.floor(h * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = tw;
+            canvas.height = th;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, tw, th);
+              resolve(canvas.toDataURL("image/jpeg", 0.7));
+            } else {
+              resolve("");
+            }
+          } catch {
+            resolve("");
+          }
+        };
+        img.onerror = () => resolve("");
+        img.src = sourceUrl;
+      } catch {
+        resolve("");
+      }
+    });
+  }
+
+  /**
    * Transparently migrate a legacy in-memory page to Blob-backed storage
    * Frees massive base64 strings from the JavaScript heap!
    */
@@ -279,10 +320,24 @@ class PageBlobStore {
       modified = true;
     }
 
-    if (modified) {
-      // Ensure small thumbnail exists
-      const thumbnailDataUrl = page.thumbnailDataUrl || page.processedDataUrl?.slice(0, 1024) || "";
+    // Ensure thumbnail is compact (< 32KB) and does not hold megabytes of base64 in React state
+    let thumbnailDataUrl = page.thumbnailDataUrl || "";
+    if (!thumbnailDataUrl || thumbnailDataUrl.length > 32768) {
+      const sourceForThumb = page.processedDataUrl || page.originalDataUrl || thumbnailDataUrl;
+      if (sourceForThumb) {
+        const generated = await this.generateThumbnail(sourceForThumb, 240);
+        if (generated) {
+          thumbnailDataUrl = generated;
+          modified = true;
+        }
+      }
+    }
 
+    if (
+      modified ||
+      (page.originalDataUrl && page.originalDataUrl.length > 2048) ||
+      (page.processedDataUrl && page.processedDataUrl.length > 2048)
+    ) {
       return {
         ...page,
         originalBlobId,
@@ -295,6 +350,27 @@ class PageBlobStore {
     }
 
     return page;
+  }
+
+  /**
+   * Migrate a batch of pages concurrently with cooperative yielding
+   */
+  async migratePagesToBlobs(
+    pages: OmniPage[],
+    onProgress?: (migratedCount: number, total: number) => void
+  ): Promise<OmniPage[]> {
+    const result: OmniPage[] = [];
+    const chunkSize = 6;
+    for (let i = 0; i < pages.length; i += chunkSize) {
+      const chunk = pages.slice(i, i + chunkSize);
+      const migratedChunk = await Promise.all(chunk.map((p) => this.migratePageToBlobs(p)));
+      result.push(...migratedChunk);
+      onProgress?.(result.length, pages.length);
+      if (i + chunkSize < pages.length) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    return result;
   }
 
   /**

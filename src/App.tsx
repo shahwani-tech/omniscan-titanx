@@ -15,6 +15,8 @@ import {
   DocumentMetadata,
   OmniAnnotation,
   OmniRedaction,
+  PerspectiveQuad,
+  PerspectivePreset,
 } from "./types";
 import { createInitialSampleDocument } from "./data/sampleDocuments";
 import {
@@ -24,6 +26,10 @@ import {
   analyzeDataUrlBlankness,
   DEFAULT_FILTERS,
 } from "./engine/vision";
+import {
+  warpPagePerspective,
+  PERSPECTIVE_PRESETS,
+} from "./engine/perspectiveEngine";
 import { runPageOCR } from "./engine/ocr";
 import {
   exportDocumentToPDF,
@@ -73,6 +79,7 @@ import { executeFilterPipeline } from "./engine/filters";
 import { isRTL } from "./engine/i18n";
 import { analyzeFile, ACCEPT_ALL_SUPPORTED } from "./services/upload/FileTypeRegistry";
 import { parseDocumentFile, decodeImageFile } from "./services/upload/DocumentImportService";
+import { pageBlobStore } from "./services/storage/PageBlobStore";
 import {
   Scan,
   Download,
@@ -384,12 +391,21 @@ export function AppContent() {
         if (applyToAll) {
           const updatedPages = await Promise.all(
             document.pages.map(async (pg) => {
-              const { processedDataUrl } = await executeFilterPipeline(pg.originalDataUrl, newFilters);
+              const origUrl = pg.originalDataUrl || (await pageBlobStore.resolvePageUrl(pg, "original"));
+              const { processedDataUrl } = await executeFilterPipeline(origUrl, newFilters);
+              const thumb = (await pageBlobStore.generateThumbnail(processedDataUrl, 240)) || processedDataUrl;
+              let processedBlobId = pg.processedBlobId;
+              let finalProcessedUrl = processedDataUrl;
+              if (pg.originalBlobId || pg.processedBlobId) {
+                processedBlobId = await pageBlobStore.saveDataUrl(pg.id, "processed", processedDataUrl);
+                finalProcessedUrl = "";
+              }
               return {
                 ...pg,
                 filters: { ...newFilters },
-                processedDataUrl,
-                thumbnailDataUrl: processedDataUrl,
+                processedBlobId,
+                processedDataUrl: finalProcessedUrl,
+                thumbnailDataUrl: thumb,
                 isModified: true,
                 lastModifiedAt: new Date().toISOString(),
               };
@@ -399,14 +415,23 @@ export function AppContent() {
         } else {
           const target = document.pages[targetIdx];
           if (target) {
-            const { processedDataUrl } = await executeFilterPipeline(target.originalDataUrl, newFilters);
+            const origUrl = target.originalDataUrl || (await pageBlobStore.resolvePageUrl(target, "original"));
+            const { processedDataUrl } = await executeFilterPipeline(origUrl, newFilters);
+            const thumb = (await pageBlobStore.generateThumbnail(processedDataUrl, 240)) || processedDataUrl;
+            let processedBlobId = target.processedBlobId;
+            let finalProcessedUrl = processedDataUrl;
+            if (target.originalBlobId || target.processedBlobId) {
+              processedBlobId = await pageBlobStore.saveDataUrl(target.id, "processed", processedDataUrl);
+              finalProcessedUrl = "";
+            }
             setDocument((prev) => {
               const newPages = [...prev.pages];
               newPages[targetIdx] = {
                 ...newPages[targetIdx],
                 filters: { ...newFilters },
-                processedDataUrl,
-                thumbnailDataUrl: processedDataUrl,
+                processedBlobId,
+                processedDataUrl: finalProcessedUrl,
+                thumbnailDataUrl: thumb,
                 isModified: true,
                 lastModifiedAt: new Date().toISOString(),
               };
@@ -518,8 +543,12 @@ export function AppContent() {
           ? cachedSourceImageRef.current.image
           : null;
 
+      const sourceUrl =
+        page.originalDataUrl ||
+        (await pageBlobStore.resolvePageUrl(page, "original"));
+
       const result = await processImagePipeline(
-        page.originalDataUrl,
+        sourceUrl,
         filtersToRun,
         !isCommit,
         { sourceImage, maxPreviewDimension: isCommit ? undefined : 850 }
@@ -535,6 +564,18 @@ export function AppContent() {
         setActivePagePreviewUrl(result.processedDataUrl);
       } else {
         // Stage 2: Final quality commit - commit to document model and update thumbnails
+        let commitThumbnail = result.thumbnailDataUrl;
+        if (!commitThumbnail || commitThumbnail.length > 32768) {
+          commitThumbnail = (await pageBlobStore.generateThumbnail(result.processedDataUrl, 240)) || result.processedDataUrl;
+        }
+
+        let processedBlobId = page.processedBlobId;
+        let finalProcessedUrl = result.processedDataUrl;
+        if (page.originalBlobId || page.processedBlobId) {
+          processedBlobId = await pageBlobStore.saveDataUrl(targetPageId, "processed", result.processedDataUrl);
+          finalProcessedUrl = "";
+        }
+
         setDocument((prev) => {
           const newPages = [...prev.pages];
           const pageIdx = newPages.findIndex((p) => p.id === targetPageId);
@@ -544,8 +585,9 @@ export function AppContent() {
           newPages[pageIdx] = {
             ...newPages[pageIdx],
             filters: filtersToRun,
-            processedDataUrl: result.processedDataUrl,
-            thumbnailDataUrl: result.thumbnailDataUrl || result.processedDataUrl,
+            processedBlobId,
+            processedDataUrl: finalProcessedUrl,
+            thumbnailDataUrl: commitThumbnail,
             isModified: true,
             lastModifiedAt: new Date().toISOString(),
           };
@@ -848,17 +890,27 @@ export function AppContent() {
       setProcessingMessage("Calculating Radon/Hough Deskew Angle...");
 
       try {
-        const angle = await calculateRadonDeskewAngle(page.originalDataUrl);
+        const sourceUrl = page.originalDataUrl || (await pageBlobStore.resolvePageUrl(page, "original"));
+        const angle = await calculateRadonDeskewAngle(sourceUrl);
         const newFilters = { ...page.filters, deskewAngle: angle };
-        const { processedDataUrl } = await processImagePipeline(page.originalDataUrl, newFilters);
+        const { processedDataUrl } = await processImagePipeline(sourceUrl, newFilters);
+        const thumb = (await pageBlobStore.generateThumbnail(processedDataUrl, 240)) || processedDataUrl;
+
+        let processedBlobId = page.processedBlobId;
+        let finalProcessedUrl = processedDataUrl;
+        if (page.originalBlobId || page.processedBlobId) {
+          processedBlobId = await pageBlobStore.saveDataUrl(page.id, "processed", processedDataUrl);
+          finalProcessedUrl = "";
+        }
 
         setDocument((prev) => {
           const newPages = [...prev.pages];
           newPages[pageIdx] = {
             ...newPages[pageIdx],
             filters: newFilters,
-            processedDataUrl,
-            thumbnailDataUrl: processedDataUrl,
+            processedBlobId,
+            processedDataUrl: finalProcessedUrl,
+            thumbnailDataUrl: thumb,
             isModified: true,
           };
           return { ...prev, pages: newPages };
@@ -883,18 +935,28 @@ export function AppContent() {
       setProcessingMessage("Detecting Document Margins & Contours...");
 
       try {
-        const bbox = await detectDocumentBoundingBox(page.originalDataUrl);
+        const sourceUrl = page.originalDataUrl || (await pageBlobStore.resolvePageUrl(page, "original"));
+        const bbox = await detectDocumentBoundingBox(sourceUrl);
         // Apply whitening and crop-oriented enhancement
         const newFilters = { ...page.filters, backgroundWhiten: true, shadowRemoval: true };
-        const { processedDataUrl } = await processImagePipeline(page.originalDataUrl, newFilters);
+        const { processedDataUrl } = await processImagePipeline(sourceUrl, newFilters);
+        const thumb = (await pageBlobStore.generateThumbnail(processedDataUrl, 240)) || processedDataUrl;
+
+        let processedBlobId = page.processedBlobId;
+        let finalProcessedUrl = processedDataUrl;
+        if (page.originalBlobId || page.processedBlobId) {
+          processedBlobId = await pageBlobStore.saveDataUrl(page.id, "processed", processedDataUrl);
+          finalProcessedUrl = "";
+        }
 
         setDocument((prev) => {
           const newPages = [...prev.pages];
           newPages[pageIdx] = {
             ...newPages[pageIdx],
             filters: newFilters,
-            processedDataUrl,
-            thumbnailDataUrl: processedDataUrl,
+            processedBlobId,
+            processedDataUrl: finalProcessedUrl,
+            thumbnailDataUrl: thumb,
             isModified: true,
           };
           return { ...prev, pages: newPages };
@@ -983,6 +1045,91 @@ export function AppContent() {
       }
     },
     [document, activePageIndex, recordHistorySnapshot]
+  );
+
+  const handleApplyPerspectiveWarp = useCallback(
+    async (
+      quad: PerspectiveQuad,
+      preset: PerspectivePreset = "natural",
+      fineDeskew: boolean = false,
+      scope: "current" | "selected" | "all" = "current"
+    ) => {
+      recordHistorySnapshot(document);
+      setIsProcessing(true);
+      setProcessingMessage(
+        scope === "all"
+          ? `De-warping and flattening all ${document.pages.length} pages...`
+          : scope === "selected"
+          ? `De-warping ${selectedPageIds.length} selected pages...`
+          : `De-warping page ${activePageIndex + 1}...`
+      );
+
+      try {
+        let targetIndices: number[] = [];
+        if (scope === "all") {
+          targetIndices = document.pages.map((_, i) => i);
+        } else if (scope === "selected" && selectedPageIds.length > 0) {
+          targetIndices = document.pages
+            .map((p, i) => (selectedPageIds.includes(p.id) ? i : -1))
+            .filter((i) => i !== -1);
+          if (targetIndices.length === 0) targetIndices = [activePageIndex];
+        } else {
+          targetIndices = [activePageIndex];
+        }
+
+        const presetDef = PERSPECTIVE_PRESETS.find((p) => p.id === preset);
+        const targetAspectRatio = presetDef?.aspectRatio ?? null;
+
+        const newPages = [...document.pages];
+        for (const idx of targetIndices) {
+          const pageToWarp = newPages[idx];
+          if (pageToWarp) {
+            const warpedPage = await warpPagePerspective(pageToWarp, quad, {
+              targetAspectRatio,
+              targetPreset: preset,
+              fineDeskew,
+            });
+
+            try {
+              const classification = await classifyImageContent(
+                warpedPage.originalDataUrl || warpedPage.processedDataUrl
+              );
+              warpedPage.detectedContent = classification;
+              warpedPage.filters = {
+                ...warpedPage.filters,
+                ...classification.recommendedFilters,
+                rotation: warpedPage.filters.rotation,
+                deskewAngle: warpedPage.filters.deskewAngle,
+              };
+              warpedPage.filterSource = "auto-detected";
+              if (idx === activePageIndex) {
+                latestFiltersRef.current = { ...warpedPage.filters };
+              }
+            } catch (classErr) {
+              console.warn("Classification after perspective warp fallback:", classErr);
+            }
+            newPages[idx] = warpedPage;
+          }
+        }
+
+        setDocument((prev) => ({
+          ...prev,
+          pages: newPages,
+          updatedAt: new Date().toISOString(),
+          isDirty: true,
+        }));
+        setIsDirty(true);
+        setActiveTool("select");
+        toast.success("Document perspective successfully de-warped & flattened.");
+      } catch (err) {
+        console.error("Perspective warp error:", err);
+        toast.error("Failed to execute perspective warp.");
+      } finally {
+        setIsProcessing(false);
+        setProcessingMessage("");
+      }
+    },
+    [document, activePageIndex, selectedPageIds, recordHistorySnapshot]
   );
 
   // -------------------------------------------------------------
@@ -1201,7 +1348,7 @@ export function AppContent() {
     []
   );
 
-  const handleAddBlankPage = useCallback(() => {
+  const handleAddBlankPage = useCallback(async () => {
     const canvas = window.document.createElement("canvas");
     canvas.width = 1275;
     canvas.height = 1650;
@@ -1213,7 +1360,7 @@ export function AppContent() {
     const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
 
     const blankPageId = `blank-${Date.now()}`;
-    const blankPage: OmniPage = {
+    const unmigratedBlank: OmniPage = {
       id: blankPageId,
       pageNumber: document.pages.length + 1,
       originalDataUrl: dataUrl,
@@ -1233,6 +1380,8 @@ export function AppContent() {
       lastModifiedAt: new Date().toISOString(),
     };
 
+    const blankPage = await pageBlobStore.migratePageToBlobs(unmigratedBlank);
+
     setDocument((prev) => {
       const nextPages = [...prev.pages, blankPage];
       setActivePageIndex(nextPages.length - 1);
@@ -1246,9 +1395,9 @@ export function AppContent() {
     setIsDirty(true);
   }, [document.pages.length]);
 
-  const handleInsertPhotoPage = useCallback((dataUrl: string) => {
+  const handleInsertPhotoPage = useCallback(async (dataUrl: string) => {
     const photoPageId = `photo-${Date.now()}`;
-    const newPage: OmniPage = {
+    const unmigratedPhoto: OmniPage = {
       id: photoPageId,
       pageNumber: document.pages.length + 1,
       originalDataUrl: dataUrl,
@@ -1267,6 +1416,8 @@ export function AppContent() {
       isModified: true,
       lastModifiedAt: new Date().toISOString(),
     };
+
+    const newPage = await pageBlobStore.migratePageToBlobs(unmigratedPhoto);
 
     setDocument((prev) => {
       const nextPages = [...prev.pages, newPage];
@@ -1461,6 +1612,103 @@ export function AppContent() {
     }
   };
 
+  const handleImportImages = useCallback(
+    async (imgFiles: File[]) => {
+      if (imgFiles.length === 0) return;
+      setIsProcessing(true);
+      setProcessingMessage(`Importing ${imgFiles.length} image(s)...`);
+
+      const newPages: OmniPage[] = [];
+      for (let i = 0; i < imgFiles.length; i++) {
+        const file = imgFiles[i];
+        setProcessingMessage(`Importing & indexing image ${i + 1} of ${imgFiles.length}...`);
+
+        let dataUrl: string;
+        try {
+          const decoded = await decodeImageFile(file);
+          dataUrl = decoded.dataUrl;
+        } catch {
+          dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+        }
+
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((res) => (img.onload = res));
+
+        // Auto-classify content (Text Document vs Photo/ID Card vs Mixed Content)
+        let classification: ContentClassificationResult;
+        try {
+          classification = await classifyImageContent(dataUrl);
+        } catch {
+          classification = getFallbackClassification();
+        }
+
+        // Generate compact thumbnail (< 15KB)
+        const maxDim = 240;
+        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+        const tw = Math.max(1, Math.floor((img.width || 1) * scale));
+        const th = Math.max(1, Math.floor((img.height || 1) * scale));
+        const thumbCanvas = window.document.createElement("canvas");
+        thumbCanvas.width = tw;
+        thumbCanvas.height = th;
+        const ctx = thumbCanvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, tw, th);
+        }
+        const thumbDataUrl = thumbCanvas.toDataURL("image/jpeg", 0.7);
+
+        const unmigratedPage: OmniPage = {
+          id: `imp-${Date.now()}-${i}`,
+          pageNumber: document.pages.length + newPages.length + 1,
+          originalDataUrl: dataUrl,
+          processedDataUrl: dataUrl,
+          thumbnailDataUrl: thumbDataUrl,
+          width: img.width || 1200,
+          height: img.height || 1600,
+          dpi: 300,
+          sizeBytes: file.size,
+          isBlank: false,
+          blankScore: 0,
+          filters: { ...classification.recommendedFilters },
+          detectedContent: classification,
+          filterSource: "auto-detected",
+          annotations: [],
+          redactions: [],
+          formFields: [],
+          isModified: true,
+          lastModifiedAt: new Date().toISOString(),
+        };
+
+        // Automatically invoke pageBlobStore.migratePageToBlobs for that page BEFORE it is added to application state
+        const migratedPage = await pageBlobStore.migratePageToBlobs(unmigratedPage);
+        newPages.push(migratedPage);
+
+        // Cooperative yield every 5 images for responsive UI
+        if (i % 5 === 0 && i > 0) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
+
+      if (newPages.length > 0) {
+        recordHistorySnapshot(document);
+        setDocument((prev) => ({
+          ...prev,
+          pages: [...prev.pages, ...newPages],
+        }));
+        setActivePageIndex(document.pages.length);
+        setIsDirty(true);
+      }
+
+      setIsProcessing(false);
+      setProcessingMessage("");
+    },
+    [document, recordHistorySnapshot]
+  );
+
   const handleProcessFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
 
@@ -1509,7 +1757,7 @@ export function AppContent() {
               classification = getFallbackClassification();
             }
 
-            docPages.push({
+            const unmigratedDocPage: OmniPage = {
               id: `doc-${Date.now()}-${docFile.name}-${pIdx}`,
               pageNumber: document.pages.length + docPages.length + 1,
               originalDataUrl: parsed.dataUrl,
@@ -1529,7 +1777,9 @@ export function AppContent() {
               formFields: [],
               isModified: true,
               lastModifiedAt: new Date().toISOString(),
-            });
+            };
+            const migratedDocPage = await pageBlobStore.migratePageToBlobs(unmigratedDocPage);
+            docPages.push(migratedDocPage);
           }
         } catch (err) {
           console.error(`Error parsing document ${docFile.name}:`, err);
@@ -1552,71 +1802,7 @@ export function AppContent() {
 
     // 3. Handle Image files (JPG, PNG, WEBP, BMP, TIFF, GIF, SVG)
     if (imgFiles.length > 0) {
-      setIsProcessing(true);
-      setProcessingMessage(`Importing ${imgFiles.length} image(s)...`);
-
-      const newPages: OmniPage[] = [];
-      for (let i = 0; i < imgFiles.length; i++) {
-        const file = imgFiles[i];
-        let dataUrl: string;
-        try {
-          const decoded = await decodeImageFile(file);
-          dataUrl = decoded.dataUrl;
-        } catch {
-          dataUrl = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.readAsDataURL(file);
-          });
-        }
-
-        const img = new Image();
-        img.src = dataUrl;
-        await new Promise((res) => (img.onload = res));
-
-        // Auto-classify content (Text Document vs Photo/ID Card vs Mixed Content)
-        let classification: ContentClassificationResult;
-        try {
-          classification = await classifyImageContent(dataUrl);
-        } catch {
-          classification = getFallbackClassification();
-        }
-
-        newPages.push({
-          id: `imp-${Date.now()}-${i}`,
-          pageNumber: document.pages.length + newPages.length + 1,
-          originalDataUrl: dataUrl,
-          processedDataUrl: dataUrl,
-          thumbnailDataUrl: dataUrl,
-          width: img.width || 1200,
-          height: img.height || 1600,
-          dpi: 300,
-          sizeBytes: file.size,
-          isBlank: false,
-          blankScore: 0,
-          filters: { ...classification.recommendedFilters },
-          detectedContent: classification,
-          filterSource: "auto-detected",
-          annotations: [],
-          redactions: [],
-          formFields: [],
-          isModified: true,
-          lastModifiedAt: new Date().toISOString(),
-        });
-      }
-
-      if (newPages.length > 0) {
-        recordHistorySnapshot(document);
-        setDocument((prev) => ({
-          ...prev,
-          pages: [...prev.pages, ...newPages],
-        }));
-        setActivePageIndex(document.pages.length);
-        setIsDirty(true);
-      }
-
-      setIsProcessing(false);
-      setProcessingMessage("");
+      await handleImportImages(imgFiles);
     }
   };
 
@@ -2186,6 +2372,7 @@ export function AppContent() {
           onAddBlankPage={handleAddBlankPage}
           onOpenPhotoPrintStudio={() => setIsPhotoPrintStudioModalOpen(true)}
           onApplyPageCrop={handleApplyPageCrop}
+          onApplyPerspectiveWarp={handleApplyPerspectiveWarp}
         />
 
         {/* Right Inspector Panel */}

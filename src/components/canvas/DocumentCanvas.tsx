@@ -51,11 +51,22 @@ import {
 } from "lucide-react";
 import { PdfCropOverlay } from "../crop/PdfCropOverlay";
 import { PdfCropControlBar } from "../crop/PdfCropControlBar";
+import { PerspectiveWarpOverlay } from "../crop/PerspectiveWarpOverlay";
 import {
   NormalizedCropBox,
   CropUnit,
   StandardCropPreset,
 } from "../../engine/cropEngine";
+import {
+  PerspectiveQuad,
+  PerspectivePreset,
+  PerspectiveDetectionCandidate,
+} from "../../types";
+import {
+  detectDocumentPerspective,
+  renderFastPerspectivePreviewSync,
+} from "../../engine/perspectiveEngine";
+import { loadImage } from "../../engine/vision";
 import { OmniDocument } from "../../types";
 import { prioritizePdfThumbnailPages } from "../../engine/pdf";
 import { pageBlobStore } from "../../services/storage/PageBlobStore";
@@ -80,6 +91,12 @@ interface DocumentCanvasProps {
   onAddBlankPage?: () => void;
   onOpenPhotoPrintStudio?: () => void;
   onApplyPageCrop?: (cropBox: NormalizedCropBox, scope: "current" | "selected" | "all") => void;
+  onApplyPerspectiveWarp?: (
+    quad: PerspectiveQuad,
+    preset: PerspectivePreset,
+    fineDeskew: boolean,
+    scope: "current" | "selected" | "all"
+  ) => void | Promise<void>;
 }
 
 export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
@@ -102,6 +119,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   onAddBlankPage,
   onOpenPhotoPrintStudio,
   onApplyPageCrop,
+  onApplyPerspectiveWarp,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -238,6 +256,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   }, [onZoomChange, viewMode]);
 
   // Dedicated PDF Page Crop Mode State
+  const [cropMode, setCropMode] = useState<"rect" | "perspective">("rect");
   const [cropBox, setCropBox] = useState<NormalizedCropBox>({
     x: 0.05,
     y: 0.05,
@@ -249,6 +268,20 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const [cropAspectRatioLocked, setCropAspectRatioLocked] = useState<boolean>(false);
   const [cropTargetAspectRatio, setCropTargetAspectRatio] = useState<number | null>(null);
   const [cropScope, setCropScope] = useState<"current" | "selected" | "all">("current");
+
+  // Perspective Warp Mode State
+  const [perspectiveQuad, setPerspectiveQuad] = useState<PerspectiveQuad>({
+    topLeft: { x: 0.05, y: 0.05 },
+    topRight: { x: 0.95, y: 0.05 },
+    bottomRight: { x: 0.95, y: 0.95 },
+    bottomLeft: { x: 0.05, y: 0.95 },
+    preset: "natural",
+  });
+  const [perspectivePreset, setPerspectivePreset] = useState<PerspectivePreset>("natural");
+  const [fineDeskewEnabled, setFineDeskewEnabled] = useState<boolean>(false);
+  const [isDetectingPerspective, setIsDetectingPerspective] = useState<boolean>(false);
+  const [detectionCandidates, setDetectionCandidates] = useState<PerspectiveDetectionCandidate[]>([]);
+  const [perspectivePreviewUrl, setPerspectivePreviewUrl] = useState<string | null>(null);
 
   // Before/After Split Slider State (0 to 1)
   const [splitPos, setSplitPos] = useState<number>(0.5);
@@ -843,6 +876,142 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     onSetActiveTool("select");
   };
 
+  // Perspective Warp Handlers
+  const handleResetPerspectiveQuad = () => {
+    setPerspectiveQuad({
+      topLeft: { x: 0.05, y: 0.05 },
+      topRight: { x: 0.95, y: 0.05 },
+      bottomRight: { x: 0.95, y: 0.95 },
+      bottomLeft: { x: 0.05, y: 0.95 },
+      preset: perspectivePreset,
+    });
+  };
+
+  const handleAutoDetectPerspective = async () => {
+    if (!activePage) return;
+    setIsDetectingPerspective(true);
+    try {
+      // Guarantee a safe fallback quad is in place immediately so handles are visible without delay
+      setPerspectiveQuad((prev) => {
+        if (
+          prev &&
+          prev.topLeft &&
+          prev.topRight &&
+          prev.bottomRight &&
+          prev.bottomLeft
+        ) {
+          return prev;
+        }
+        return {
+          topLeft: { x: 0.05, y: 0.05 },
+          topRight: { x: 0.95, y: 0.05 },
+          bottomRight: { x: 0.95, y: 0.95 },
+          bottomLeft: { x: 0.05, y: 0.95 },
+          preset: perspectivePreset,
+        };
+      });
+
+      // Robustly resolve source image URL across blob store, memory data URLs, and previews
+      let src =
+        displayedPageUrl ||
+        resolvedActivePageUrl ||
+        activePage.processedDataUrl ||
+        activePage.originalDataUrl;
+
+      if (!src) {
+        src =
+          (await pageBlobStore.resolvePageUrl(activePage, "processed")) ||
+          (await pageBlobStore.resolvePageUrl(activePage, "original")) ||
+          activePage.thumbnailDataUrl ||
+          "";
+      }
+
+      if (!src) {
+        console.warn("Auto-detect perspective: no source image available");
+        return;
+      }
+
+      const result = await detectDocumentPerspective(src);
+      if (result && result.quad) {
+        setPerspectiveQuad(result.quad);
+        if (result.candidates && result.candidates.length > 0) {
+          setDetectionCandidates(result.candidates);
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-detect perspective error:", err);
+      // On failure, smoothly retain full-frame safe corners
+      setPerspectiveQuad({
+        topLeft: { x: 0.05, y: 0.05 },
+        topRight: { x: 0.95, y: 0.05 },
+        bottomRight: { x: 0.95, y: 0.95 },
+        bottomLeft: { x: 0.05, y: 0.95 },
+        preset: perspectivePreset,
+      });
+    } finally {
+      setIsDetectingPerspective(false);
+    }
+  };
+
+  // Safe mode switch handler ensuring handles and detection initialize cleanly
+  const handleCropModeChange = (newMode: "rect" | "perspective") => {
+    setCropMode(newMode);
+    if (newMode === "perspective") {
+      if (activePage?.perspectiveQuad) {
+        setPerspectiveQuad(activePage.perspectiveQuad);
+      } else {
+        setPerspectiveQuad({
+          topLeft: { x: 0.05, y: 0.05 },
+          topRight: { x: 0.95, y: 0.05 },
+          bottomRight: { x: 0.95, y: 0.95 },
+          bottomLeft: { x: 0.05, y: 0.95 },
+          preset: perspectivePreset,
+        });
+        handleAutoDetectPerspective();
+      }
+    }
+  };
+
+  const handleApplyPerspectiveWarp = async () => {
+    if (onApplyPerspectiveWarp) {
+      await onApplyPerspectiveWarp(
+        perspectiveQuad,
+        perspectivePreset,
+        fineDeskewEnabled,
+        cropScope
+      );
+    }
+  };
+
+  // Synchronize Live De-Warped Preview
+  useEffect(() => {
+    if (activeTool !== "crop" || cropMode !== "perspective" || !activePage) {
+      setPerspectivePreviewUrl(null);
+      return;
+    }
+
+    let isCancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const src = activePage.processedDataUrl || activePage.originalDataUrl;
+        if (!src) return;
+        const img = await loadImage(src);
+        if (isCancelled) return;
+        const previewDataUrl = renderFastPerspectivePreviewSync(img, perspectiveQuad, 360);
+        if (!isCancelled && previewDataUrl) {
+          setPerspectivePreviewUrl(previewDataUrl);
+        }
+      } catch {
+        // Non-blocking preview generation
+      }
+    }, 60);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeTool, cropMode, activePage, perspectiveQuad]);
+
   return (
     <main
       ref={containerRef}
@@ -878,6 +1047,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   },
                 }
           }
+          cropMode={cropMode}
+          onCropModeChange={handleCropModeChange}
           cropBox={cropBox}
           unit={cropUnit}
           preset={cropPreset}
@@ -895,6 +1066,19 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           onApplyCrop={handleApplyCrop}
           onCancelCrop={handleCancelCrop}
           onResetCrop={handleResetCrop}
+          perspectiveQuad={perspectiveQuad}
+          onPerspectiveQuadChange={setPerspectiveQuad}
+          perspectivePreset={perspectivePreset}
+          onPerspectivePresetChange={setPerspectivePreset}
+          isDetectingPerspective={isDetectingPerspective}
+          onAutoDetectPerspective={handleAutoDetectPerspective}
+          detectionCandidates={detectionCandidates}
+          fineDeskewEnabled={fineDeskewEnabled}
+          onFineDeskewToggle={setFineDeskewEnabled}
+          perspectivePreviewUrl={perspectivePreviewUrl}
+          resolvedImageUrl={displayedPageUrl || resolvedActivePageUrl}
+          onApplyPerspectiveWarp={handleApplyPerspectiveWarp}
+          onResetPerspectiveQuad={handleResetPerspectiveQuad}
         />
       )}
       {/* Floating Canvas Toolbar (Freely Draggable & Resizable) */}
@@ -1163,8 +1347,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             : "cursor-crosshair"
         }`}
       >
-        {/* Render Single Page Mode */}
-        {viewMode === "single" && activePage && (
+        {/* Render Single Page Mode (or Interactive Crop Focus) */}
+        {(viewMode === "single" || activeTool === "crop") && activePage && (
           <div
             ref={pageElementRef}
             style={{
@@ -1376,16 +1560,34 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   </div>
                 )}
 
-                {/* PDF Page Interactive 8-Point Crop Overlay */}
+                {/* PDF Page Interactive Crop / Perspective Warp Overlay */}
                 {activeTool === "crop" && (
-                  <PdfCropOverlay
-                    page={activePage}
-                    cropBox={cropBox}
-                    unit={cropUnit}
-                    aspectRatioLocked={cropAspectRatioLocked}
-                    targetAspectRatio={cropTargetAspectRatio}
-                    onCropBoxChange={setCropBox}
-                  />
+                  cropMode === "perspective" ? (
+                    <PerspectiveWarpOverlay
+                      page={activePage}
+                      quad={perspectiveQuad}
+                      onQuadChange={setPerspectiveQuad}
+                      imageUrl={displayedPageUrl || resolvedActivePageUrl || activePage.processedDataUrl || activePage.originalDataUrl}
+                      onCancel={handleCancelCrop}
+                    />
+                  ) : (
+                    <PdfCropOverlay
+                      page={activePage}
+                      cropBox={cropBox}
+                      unit={cropUnit}
+                      aspectRatioLocked={cropAspectRatioLocked}
+                      targetAspectRatio={cropTargetAspectRatio}
+                      onCropBoxChange={setCropBox}
+                    />
+                  )
+                )}
+
+                {/* Perspective Edge Detection Floating HUD Indicator */}
+                {activeTool === "crop" && cropMode === "perspective" && isDetectingPerspective && (
+                  <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-2 bg-neutral-900/95 text-sky-300 border border-sky-500/50 rounded-full px-3.5 py-1.5 shadow-2xl backdrop-blur-md animate-pulse pointer-events-none text-xs font-semibold">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                    <span>Detecting Document Boundaries...</span>
+                  </div>
                 )}
               </div>
             )}
@@ -1393,7 +1595,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         )}
 
         {/* Render Continuous Multi-Page Windowed Virtualized Vertical Scroll View */}
-        {viewMode === "continuous" && (
+        {viewMode === "continuous" && activeTool !== "crop" && (
           <div
             ref={continuousScrollContainerRef}
             onScroll={handleContinuousScroll}

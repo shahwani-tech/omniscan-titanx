@@ -28,16 +28,27 @@ export const DiagnosticsModal: React.FC<DiagnosticsModalProps> = ({
   document,
   onClose,
 }) => {
+  const blobPagesCount = document.pages.filter((p) => p.originalBlobId || p.processedBlobId).length;
+  const legacyPagesCount = document.pages.length - blobPagesCount;
+  const estMemoryMB = (20.5 + blobPagesCount * 0.035 + legacyPagesCount * 3.8).toFixed(1);
+
   const [telemetry, setTelemetry] = useState({
     webGlSupported: true,
     canvas2DMaxDim: 16384,
     wasmWorkerStatus: "Active / Hot (Ready)",
-    memoryEstimateMB: (document.pages.length * 3.8 + 24.5).toFixed(1),
+    memoryEstimateMB: estMemoryMB,
     tesseractStatus: "Loaded (Worker pool standby)",
     pdfJsStatus: "Operational v3.11",
     geminiServerStatus: "Connected (/api/intelligence)",
     renderFPS: 60,
   });
+
+  useEffect(() => {
+    setTelemetry((prev) => ({
+      ...prev,
+      memoryEstimateMB: estMemoryMB,
+    }));
+  }, [estMemoryMB]);
 
   useEffect(() => {
     // Check WebGL

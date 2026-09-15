@@ -5,6 +5,7 @@
 
 import JSZip from "jszip";
 import { OmniDocument, OmniPage } from "../types";
+import { pageBlobStore } from "../services/storage/PageBlobStore";
 
 const RECOVERY_STORAGE_KEY = "titan_x_autosave_session";
 
@@ -56,12 +57,16 @@ export async function exportTitanProject(
       `Archiving lossless source image for Page ${i + 1}...`
     );
 
+    // Resolve full resolution source image (supports both memory strings and IndexedDB Blobs)
+    const origDataUrl = p.originalDataUrl || (await pageBlobStore.loadPageDataUrl(p, "original"));
+    const procDataUrl = p.processedDataUrl || (await pageBlobStore.loadPageDataUrl(p, "processed"));
+
     // Save original lossless source
-    const origBase64 = p.originalDataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const origBase64 = (origDataUrl || p.thumbnailDataUrl || "").replace(/^data:image\/\w+;base64,/, "");
     pagesFolder?.file(`page_${p.pageNumber}_orig.jpg`, origBase64, { base64: true });
 
     // Save processed render
-    const procBase64 = p.processedDataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const procBase64 = (procDataUrl || origDataUrl || p.thumbnailDataUrl || "").replace(/^data:image\/\w+;base64,/, "");
     pagesFolder?.file(`page_${p.pageNumber}_proc.jpg`, procBase64, { base64: true });
   }
 
@@ -101,7 +106,7 @@ export async function importTitanProject(
     const meta = manifest.pagesMetadata[i];
     onProgress?.(
       0.15 + (i / total) * 0.75,
-      `Unpacking Page ${meta.pageNumber} images...`
+      `Unpacking & indexing Page ${meta.pageNumber} to Blob storage...`
     );
 
     const origFile = zip.file(`pages/page_${meta.pageNumber}_orig.jpg`);
@@ -121,7 +126,7 @@ export async function importTitanProject(
       procUrl = origUrl;
     }
 
-    pages.push({
+    const rawPage: OmniPage = {
       id: meta.id,
       pageNumber: meta.pageNumber,
       originalDataUrl: origUrl,
@@ -141,7 +146,16 @@ export async function importTitanProject(
       intelligence: meta.intelligence,
       isModified: false,
       lastModifiedAt: new Date().toISOString(),
-    });
+    };
+
+    // Automatically run migratePageToBlobs for every restored page before adding to state
+    const migratedPage = await pageBlobStore.migratePageToBlobs(rawPage);
+    pages.push(migratedPage);
+
+    // Yield cooperatively to keep UI 60fps responsive during large project restoration
+    if (i % 6 === 0 && i > 0) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
   }
 
   onProgress?.(1.0, "Project Restored!");
@@ -189,10 +203,12 @@ export function saveAutosaveSnapshot(doc: OmniDocument): void {
         redactions: p.redactions,
         formFields: p.formFields,
         intelligence: p.intelligence,
-        // Include thumbnail data
+        // Include thumbnail data and blob IDs
+        originalBlobId: p.originalBlobId,
+        processedBlobId: p.processedBlobId,
         thumbnailDataUrl: p.thumbnailDataUrl,
-        processedDataUrl: p.processedDataUrl.length < 500000 ? p.processedDataUrl : p.thumbnailDataUrl,
-        originalDataUrl: p.originalDataUrl.length < 500000 ? p.originalDataUrl : p.thumbnailDataUrl,
+        processedDataUrl: (p.processedDataUrl && p.processedDataUrl.length < 500000) ? p.processedDataUrl : (p.thumbnailDataUrl || ""),
+        originalDataUrl: (p.originalDataUrl && p.originalDataUrl.length < 500000) ? p.originalDataUrl : (p.thumbnailDataUrl || ""),
       })),
     };
     localStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(summary));

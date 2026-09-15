@@ -65,6 +65,7 @@ import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
 import { UniversalNumericInput } from "../common/UniversalNumericInput";
 import { A6HalfCardCropModal, A6CropState } from "./A6HalfCardCropModal";
 import { A6PdfPagePickerModal } from "./A6PdfPagePickerModal";
+import { A6DuplexFlipPreview } from "./A6DuplexFlipPreview";
 import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
 import { BackgroundStudioState } from "../../engine/background/types";
 import { OmniPage } from "../../types";
@@ -159,6 +160,10 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
   const [bgStudioTargetSide, setBgStudioTargetSide] = useState<"front" | "back">("front");
   const [frontBgState, setFrontBgState] = useState<BackgroundStudioState | null>(null);
   const [backBgState, setBackBgState] = useState<BackgroundStudioState | null>(null);
+
+  // Duplex Printing Flip Axis & 3D Preview State
+  const [duplexBinding, setDuplexBinding] = useState<"long-edge" | "short-edge">("long-edge");
+  const [show3dDuplexDock, setShow3dDuplexDock] = useState<boolean>(false);
 
   // Refs
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -1548,6 +1553,22 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               </div>
             </div>
 
+            {/* Duplex 3D Print Flip Preview (Interactive Physical Sheet Verification) */}
+            <div className="pt-2 border-t border-neutral-800">
+              <A6DuplexFlipPreview
+                frontImage={frontImage}
+                backImage={backImage}
+                frontAdjustment={config.front}
+                backAdjustment={config.back}
+                orientation={config.orientation}
+                duplexBinding={duplexBinding}
+                onBindingChange={setDuplexBinding}
+                activeSide={activeSideTab}
+                onSideChange={(side) => setActiveSideTab(side)}
+                compact={true}
+              />
+            </div>
+
             {/* 2. Layout Mode Selection (Modes A, B, C, D, E) */}
             <div className="space-y-2 border-t border-neutral-800 pt-3">
               <span className="font-bold text-neutral-200 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
@@ -2451,6 +2472,22 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
 
               {/* Preview Mode Tool & Center-Based Zoom Controls */}
               <div className="flex items-center space-x-2">
+                {/* 3D Duplex Flip Preview Dock Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShow3dDuplexDock((p) => !p)}
+                  className={`px-2 py-1 rounded text-[11px] font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer mr-1 ${
+                    show3dDuplexDock
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-800"
+                  }`}
+                  title="Toggle 3D Duplex Flip Preview Floating Dock"
+                  aria-label="Toggle 3D Duplex Flip Preview"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>3D Flip</span>
+                </button>
+
                 {/* Tool Selector: Select vs Hand/Pan */}
                 <div className="flex items-center bg-neutral-900 border border-neutral-800 rounded p-0.5 mr-1">
                   <button
@@ -2560,6 +2597,35 @@ export const A6HalfCardStudioModal: React.FC<A6HalfCardStudioModalProps> = ({
               >
                 <canvas ref={previewCanvasRef} className="block pointer-events-none" />
               </div>
+
+              {/* Floating 3D Duplex Flip Dock */}
+              {show3dDuplexDock && (
+                <div className="absolute bottom-4 right-4 z-30 shadow-2xl w-80 animate-fadeIn">
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShow3dDuplexDock(false)}
+                      className="absolute top-2 right-2 z-40 p-1 rounded-full bg-neutral-900/90 hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer"
+                      title="Close 3D Preview Dock"
+                      aria-label="Close 3D Preview Dock"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                    <A6DuplexFlipPreview
+                      frontImage={frontImage}
+                      backImage={backImage}
+                      frontAdjustment={config.front}
+                      backAdjustment={config.back}
+                      orientation={config.orientation}
+                      duplexBinding={duplexBinding}
+                      onBindingChange={setDuplexBinding}
+                      activeSide={activeSideTab}
+                      onSideChange={(side) => setActiveSideTab(side)}
+                      compact={false}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bottom Status & Measurement Ruler Bar */}

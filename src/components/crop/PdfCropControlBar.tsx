@@ -19,7 +19,19 @@ import {
   marginsFromCropBox,
   detectAutoCropBounds,
 } from "../../engine/cropEngine";
-import { OmniPage, OmniDocument } from "../../types";
+import {
+  OmniPage,
+  OmniDocument,
+  PerspectiveQuad,
+  PerspectivePreset,
+  PerspectiveDetectionCandidate,
+} from "../../types";
+import {
+  PERSPECTIVE_PRESETS,
+  calculateTargetDimensions,
+  renderFastPerspectivePreviewSync,
+} from "../../engine/perspectiveEngine";
+import { CropLivePreviewCard } from "./CropLivePreviewCard";
 import { useShortcuts } from "../../commands/ShortcutContext";
 import {
   Crop,
@@ -43,6 +55,7 @@ import {
   Move,
   MoreHorizontal,
   Crosshair,
+  RefreshCw,
 } from "lucide-react";
 
 export interface PdfCropControlBarProps {
@@ -62,6 +75,23 @@ export interface PdfCropControlBarProps {
   onApplyCrop: () => void;
   onCancelCrop: () => void;
   onResetCrop: () => void;
+
+  // Perspective Warp Mode Additions
+  cropMode?: "rect" | "perspective";
+  perspectiveQuad?: PerspectiveQuad;
+  perspectivePreset?: PerspectivePreset;
+  fineDeskewEnabled?: boolean;
+  onCropModeChange?: (mode: "rect" | "perspective") => void;
+  onPerspectiveQuadChange?: (quad: PerspectiveQuad) => void;
+  onPerspectivePresetChange?: (preset: PerspectivePreset) => void;
+  onFineDeskewToggle?: (enabled: boolean) => void;
+  onAutoDetectPerspective?: () => void;
+  isDetectingPerspective?: boolean;
+  onApplyPerspectiveWarp?: () => void;
+  detectionCandidates?: PerspectiveDetectionCandidate[];
+  onResetPerspectiveQuad?: () => void;
+  perspectivePreviewUrl?: string | null;
+  resolvedImageUrl?: string;
 }
 
 // -------------------------------------------------------------
@@ -89,7 +119,7 @@ try {
   // Ignore in restricted environments
 }
 
-type ActivePopoverType = "preset" | "ratio" | "coords" | "margins" | "overflow" | null;
+type ActivePopoverType = "preset" | "ratio" | "coords" | "margins" | "overflow" | "perspective-preset" | null;
 
 export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   activePage,
@@ -108,6 +138,21 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   onApplyCrop,
   onCancelCrop,
   onResetCrop,
+  cropMode = "rect",
+  perspectiveQuad,
+  perspectivePreset = "natural",
+  fineDeskewEnabled = true,
+  onCropModeChange,
+  onPerspectiveQuadChange,
+  onPerspectivePresetChange,
+  onFineDeskewToggle,
+  onAutoDetectPerspective,
+  isDetectingPerspective = false,
+  onApplyPerspectiveWarp,
+  detectionCandidates = [],
+  onResetPerspectiveQuad,
+  perspectivePreviewUrl: propPerspectivePreviewUrl,
+  resolvedImageUrl,
 }) => {
   // Collapsed / Expanded state (persists across tool use, defaults to expanded)
   const [isCropPanelCollapsed, setIsCropPanelCollapsed] = useState(false);
@@ -140,7 +185,15 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
       });
     };
 
-    const unregApply = registerAction("crop.apply", onApplyCrop);
+    const handleApply = () => {
+      if (cropMode === "perspective" && onApplyPerspectiveWarp) {
+        onApplyPerspectiveWarp();
+      } else {
+        onApplyCrop();
+      }
+    };
+    const unregApply = registerAction("crop.apply", handleApply);
+
     const unregCancel = registerAction("crop.cancel", () => {
       if (activePopover) {
         setActivePopover(null);
@@ -148,7 +201,15 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
         onCancelCrop();
       }
     });
-    const unregReset = registerAction("crop.reset", onResetCrop);
+
+    const handleReset = () => {
+      if (cropMode === "perspective" && onResetPerspectiveQuad) {
+        onResetPerspectiveQuad();
+      } else {
+        onResetCrop();
+      }
+    };
+    const unregReset = registerAction("crop.reset", handleReset);
     const unregUp = registerAction("crop.nudgeUp", () => nudge(0, -0.01));
     const unregDown = registerAction("crop.nudgeDown", () => nudge(0, 0.01));
     const unregLeft = registerAction("crop.nudgeLeft", () => nudge(-0.01, 0));
@@ -423,6 +484,23 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
     [preset]
   );
 
+  const activePerspectivePresetDef = useMemo(() => {
+    return (
+      PERSPECTIVE_PRESETS.find((p) => p.id === perspectivePreset) ||
+      PERSPECTIVE_PRESETS[0]
+    );
+  }, [perspectivePreset]);
+
+  const perspectiveDims = useMemo(() => {
+    if (!perspectiveQuad) return null;
+    return calculateTargetDimensions(
+      pageWidth,
+      pageHeight,
+      perspectiveQuad,
+      perspectiveQuad.targetAspectRatio
+    );
+  }, [pageWidth, pageHeight, perspectiveQuad]);
+
   const handlePresetSelect = (p: StandardCropPreset) => {
     onPresetChange(p);
     setActivePopover(null);
@@ -610,22 +688,41 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
           </button>
         )}
 
-        {/* Crop Status Pill */}
-        <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 font-bold border border-sky-500/30">
-          <Crop className="w-3.5 h-3.5" />
-          <span className="text-[11px] uppercase tracking-wider font-semibold">Crop</span>
-        </div>
+        {/* Mode Status Pill */}
+        {cropMode === "perspective" ? (
+          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/25 to-orange-500/25 text-amber-300 font-bold border border-amber-500/40">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-[11px] uppercase tracking-wider font-semibold">Warp</span>
+          </div>
+        ) : (
+          <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 font-bold border border-sky-500/30">
+            <Crop className="w-3.5 h-3.5" />
+            <span className="text-[11px] uppercase tracking-wider font-semibold">Crop</span>
+          </div>
+        )}
 
         {/* Live Dimension Badge */}
-        <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
-          {realWidth} × {realHeight} {unit}
-        </span>
-
-        {/* Preset Name if not free */}
-        {preset !== "free" && (
-          <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-sky-300 bg-sky-950/80 px-2 py-0.5 rounded-full border border-sky-750/60">
-            {activePresetDef.name}
+        {cropMode === "perspective" && perspectiveDims ? (
+          <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
+            {perspectiveDims.targetW} × {perspectiveDims.targetH} px
           </span>
+        ) : (
+          <span className="text-[11px] font-mono text-neutral-200 bg-neutral-800/90 px-2 py-0.5 rounded-full border border-neutral-700/80">
+            {realWidth} × {realHeight} {unit}
+          </span>
+        )}
+
+        {/* Preset Name */}
+        {cropMode === "perspective" ? (
+          <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded-full border border-amber-750/60">
+            {activePerspectivePresetDef.name}
+          </span>
+        ) : (
+          preset !== "free" && (
+            <span className="hidden sm:inline-block text-[10px] uppercase font-bold text-sky-300 bg-sky-950/80 px-2 py-0.5 rounded-full border border-sky-750/60">
+              {activePresetDef.name}
+            </span>
+          )
         )}
 
         {/* Scope Dropdown */}
@@ -646,9 +743,9 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
 
         {/* Reset */}
         <button
-          onClick={onResetCrop}
+          onClick={cropMode === "perspective" ? onResetPerspectiveQuad : onResetCrop}
           className="p-1 rounded-full text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-          title="Reset Crop to Full Page (R)"
+          title={cropMode === "perspective" ? "Reset Corner Pins (R)" : "Reset Crop to Full Page (R)"}
         >
           <RotateCcw className="w-3.5 h-3.5" />
         </button>
@@ -657,19 +754,23 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
         <button
           onClick={onCancelCrop}
           className="p-1 rounded-full text-neutral-400 hover:text-rose-300 hover:bg-neutral-800 transition-colors"
-          title="Cancel & Exit Crop (Esc)"
+          title="Cancel & Exit (Esc)"
         >
           <X className="w-3.5 h-3.5" />
         </button>
 
         {/* Primary Apply Button */}
         <button
-          onClick={onApplyCrop}
-          className="flex items-center space-x-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold text-[11px] shadow-md shadow-sky-950/60 transition-all active:scale-95"
-          title="Apply Crop (Enter)"
+          onClick={cropMode === "perspective" ? onApplyPerspectiveWarp : onApplyCrop}
+          className={`flex items-center space-x-1.5 px-3 py-1 rounded-full font-bold text-[11px] shadow-md transition-all active:scale-95 ${
+            cropMode === "perspective"
+              ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-neutral-950 shadow-amber-950/60"
+              : "bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sky-950/60"
+          }`}
+          title={cropMode === "perspective" ? "Apply Perspective Warp (Enter)" : "Apply Crop (Enter)"}
         >
           <Check className="w-3.5 h-3.5" />
-          <span>Apply</span>
+          <span>{cropMode === "perspective" ? "Warp" : "Apply"}</span>
         </button>
 
         <div className="h-3.5 w-px bg-neutral-750 mx-0.5" />
@@ -709,7 +810,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
       style={floatingStyle}
       onMouseDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
-      className={`pdf-crop-bar absolute z-40 bg-neutral-900/98 backdrop-blur-2xl rounded-2xl border border-neutral-750/90 shadow-[0_16px_48px_rgba(0,0,0,0.65)] px-3 py-1.5 flex flex-col space-y-1.5 text-xs select-none max-w-[98vw] transition-all duration-150 ${
+      className={`pdf-crop-bar absolute z-40 bg-neutral-900/98 backdrop-blur-2xl rounded-2xl border border-neutral-750/90 shadow-[0_16px_48px_rgba(0,0,0,0.65)] px-3 py-2 flex flex-col space-y-2 text-xs select-none min-w-[720px] max-w-[96vw] transition-all duration-150 ${
         isDraggingBar
           ? "ring-2 ring-sky-500/70 shadow-2xl scale-[1.01] cursor-grabbing"
           : isResizingBar
@@ -717,10 +818,13 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
           : "hover:border-neutral-650"
       }`}
     >
-      {/* Sleek Primary Single-Row Control Strip */}
-      <div className="flex items-center space-x-2">
-        {/* Drag Handle & Snap Reset */}
-        <div className="flex items-center space-x-1 flex-shrink-0">
+      {/* ========================================================= */}
+      {/* ROW 1: PRIMARY MAIN CROPBAR (ALWAYS STABLE ACROSS MODES)  */}
+      {/* ========================================================= */}
+      <div className="flex items-center justify-between space-x-2.5 h-8 select-none">
+        {/* Left: Drag Handle, Mode Switcher, Scope, Preview */}
+        <div className="flex items-center space-x-2 flex-shrink-0">
+          {/* Drag Handle & Snap Reset */}
           <div
             onMouseDown={handleBarDragStart}
             onTouchStart={handleBarDragStart}
@@ -747,450 +851,126 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
             </button>
           )}
 
-          <div className="flex items-center space-x-1.5 px-2 py-1 rounded-lg bg-sky-500/15 text-sky-400 font-bold border border-sky-500/30 flex-shrink-0">
-            <Crop className="w-3.5 h-3.5" />
-            <span className="tracking-wide uppercase text-[11px] font-semibold">Crop</span>
-          </div>
-        </div>
-
-        {/* Divider */}
-        <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
-
-        {/* GROUP 1: Presets Popover Dropdown */}
-        <div className="relative flex-shrink-0">
-          <button
-            onClick={() => setActivePopover(activePopover === "preset" ? null : "preset")}
-            className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors ${
-              activePopover === "preset"
-                ? "bg-sky-600 text-white border-sky-400 shadow-sm"
-                : preset !== "free"
-                ? "bg-sky-950/60 text-sky-300 border-sky-700/60 hover:bg-sky-900/60"
-                : "bg-neutral-800 text-neutral-200 border-neutral-700 hover:bg-neutral-750"
-            }`}
-            title="Choose standard document crop preset"
-          >
-            <span className="font-semibold">{activePresetDef.name}</span>
-            <ChevronDown className="w-3 h-3 text-neutral-400" />
-          </button>
-
-          {activePopover === "preset" && (
-            <div className="absolute top-full left-0 mt-1.5 w-60 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-1.5 z-50 flex flex-col space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                Crop Presets & Formats
-              </div>
-              <div className="max-h-64 overflow-y-auto custom-scrollbar py-1 space-y-0.5">
-                {CROP_PRESETS.map((p) => {
-                  const isSelected = preset === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => handlePresetSelect(p.id)}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
-                        isSelected
-                          ? "bg-sky-600 text-white font-bold"
-                          : "text-neutral-200 hover:bg-neutral-800 hover:text-white"
-                      }`}
-                    >
-                      <div className="flex flex-col text-left">
-                        <span className="font-medium">{p.name}</span>
-                        <span className={`text-[9px] ${isSelected ? "text-sky-100" : "text-neutral-400"}`}>
-                          {p.description}
-                        </span>
-                      </div>
-                      {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* GROUP 2: Aspect Ratio Lock & Presets Popover */}
-        <div className="relative flex items-center space-x-1 flex-shrink-0">
-          <button
-            onClick={() => {
-              if (aspectRatioLocked) {
-                onAspectRatioLockChange(false, null);
-              } else {
-                const currentRatio = (cropBox.width * pageWidth) / (cropBox.height * pageHeight);
-                onAspectRatioLockChange(true, currentRatio);
-              }
-            }}
-            className={`flex items-center space-x-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors ${
-              aspectRatioLocked
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold"
-                : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
-            }`}
-            title="Lock Current Aspect Ratio (L)"
-          >
-            {aspectRatioLocked ? <Lock className="w-3 h-3 text-amber-400" /> : <Unlock className="w-3 h-3 text-neutral-400" />}
-            <span className="hidden sm:inline">{aspectRatioLocked ? "Locked" : "Ratio"}</span>
-          </button>
-
-          {/* Quick Ratio Popover Button */}
-          <button
-            onClick={() => setActivePopover(activePopover === "ratio" ? null : "ratio")}
-            className={`p-1 rounded-lg border text-[11px] transition-colors ${
-              activePopover === "ratio"
-                ? "bg-sky-600 text-white border-sky-400"
-                : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
-            }`}
-            title="Select predefined aspect ratio"
-          >
-            <ChevronDown className="w-3 h-3 text-neutral-400" />
-          </button>
-
-          {activePopover === "ratio" && (
-            <div className="absolute top-full left-0 mt-1.5 w-48 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-1.5 z-50 flex flex-col space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
-                Aspect Ratios
-              </div>
-              <div className="py-1 space-y-0.5">
-                {ratioPresets.map((r) => {
-                  const isSelected =
-                    aspectRatioLocked &&
-                    targetAspectRatio !== null &&
-                    r.ratio !== null &&
-                    Math.abs(targetAspectRatio - r.ratio) < 0.01;
-                  const isFreeSelected = !aspectRatioLocked && r.ratio === null;
-
-                  return (
-                    <button
-                      key={r.label}
-                      onClick={() => {
-                        setActivePopover(null);
-                        if (r.ratio === null) {
-                          onAspectRatioLockChange(false, null);
-                        } else {
-                          onAspectRatioLockChange(true, r.ratio);
-                          const fitted = fitAspectRatioInPage(r.ratio, pageWidth, pageHeight);
-                          onCropBoxChange(fitted);
-                        }
-                      }}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
-                        isSelected || isFreeSelected
-                          ? "bg-sky-600 text-white font-bold"
-                          : "text-neutral-200 hover:bg-neutral-800 hover:text-white"
-                      }`}
-                    >
-                      <div className="flex flex-col text-left">
-                        <span className="font-mono">{r.label}</span>
-                        <span className={`text-[9px] ${isSelected || isFreeSelected ? "text-sky-100" : "text-neutral-400"}`}>
-                          {r.desc}
-                        </span>
-                      </div>
-                      {(isSelected || isFreeSelected) && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Divider */}
-        <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
-
-        {/* GROUP 3: Exact Dimensions & Coordinates (W, H, Units, Position Popover) */}
-        <div className="flex items-center space-x-1.5 flex-shrink-0">
-          {/* Width */}
-          <div className="flex items-center space-x-1 bg-neutral-800/90 px-1.5 py-0.5 rounded-lg border border-neutral-700/90">
-            <span className="text-[10px] font-mono text-neutral-400">W:</span>
-            <input
-              type="number"
-              step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
-              min="1"
-              value={realWidth}
-              onChange={(e) => handleWidthInputChange(parseFloat(e.target.value))}
-              className="w-13 bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-              title="Crop box width in active unit"
-            />
-          </div>
-
-          {/* Height */}
-          <div className="flex items-center space-x-1 bg-neutral-800/90 px-1.5 py-0.5 rounded-lg border border-neutral-700/90">
-            <span className="text-[10px] font-mono text-neutral-400">H:</span>
-            <input
-              type="number"
-              step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
-              min="1"
-              value={realHeight}
-              onChange={(e) => handleHeightInputChange(parseFloat(e.target.value))}
-              className="w-13 bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-              title="Crop box height in active unit"
-            />
-          </div>
-
-          {/* Unit Selector */}
-          <select
-            value={unit}
-            onChange={(e) => onUnitChange(e.target.value as CropUnit)}
-            className="bg-neutral-800/90 text-neutral-200 text-[11px] font-mono px-1.5 py-1 rounded-lg border border-neutral-700/90 focus:outline-none cursor-pointer"
-            title="Measurement unit"
-          >
-            <option value="mm">mm</option>
-            <option value="cm">cm</option>
-            <option value="inch">in</option>
-            <option value="px">px</option>
-            <option value="pt">pt</option>
-          </select>
-
-          {/* Coordinates & Alignment Popover Button */}
-          <div className="relative">
+          {/* Mode Switcher Pill (Fixed dimensions: zero reflow or jump on toggle) */}
+          <div className="w-[236px] h-[30px] bg-neutral-950/90 p-0.5 rounded-lg border border-neutral-750/90 grid grid-cols-2 gap-1 flex-shrink-0">
             <button
-              onClick={() => setActivePopover(activePopover === "coords" ? null : "coords")}
-              className={`p-1 rounded-lg border transition-colors ${
-                activePopover === "coords"
-                  ? "bg-sky-600 text-white border-sky-400"
-                  : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCropModeChange?.("rect");
+              }}
+              className={`flex items-center justify-center space-x-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all ${
+                cropMode === "rect"
+                  ? "bg-sky-600 text-white font-bold shadow-sm"
+                  : "text-neutral-400 hover:text-white"
               }`}
-              title="Position coordinates (X/Y) & Alignment"
+              title="Standard 8-Point Axis-Aligned Rectangular Crop (R)"
             >
-              <Move className="w-3.5 h-3.5" />
+              <Crop className="w-3.5 h-3.5" />
+              <span>Rectangular</span>
             </button>
-
-            {activePopover === "coords" && (
-              <div className="absolute top-full left-0 mt-1.5 w-56 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-2.5 z-50 flex flex-col space-y-2 animate-in fade-in zoom-in-95 duration-100">
-                <div className="flex items-center justify-between border-b border-neutral-800 pb-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
-                    Crop Coordinates & Alignment
-                  </span>
-                  <span className="text-[10px] font-mono text-sky-400">{unit}</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
-                    <span className="text-[10px] font-mono text-neutral-400">X:</span>
-                    <input
-                      type="number"
-                      step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
-                      min="0"
-                      value={realX}
-                      onChange={(e) => handleXInputChange(parseFloat(e.target.value))}
-                      className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-                    />
-                  </div>
-
-                  <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
-                    <span className="text-[10px] font-mono text-neutral-400">Y:</span>
-                    <input
-                      type="number"
-                      step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
-                      min="0"
-                      value={realY}
-                      onChange={(e) => handleYInputChange(parseFloat(e.target.value))}
-                      className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5 pt-1">
-                  <button
-                    onClick={handleCenterCropBox}
-                    className="flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-[10px] border border-neutral-700 transition-colors"
-                    title="Center cropbox horizontally & vertically"
-                  >
-                    <Crosshair className="w-3 h-3 text-sky-400" />
-                    <span>Center</span>
-                  </button>
-
-                  <button
-                    onClick={handleMaximizeCropBox}
-                    className="flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-[10px] border border-neutral-700 transition-colors"
-                    title="Maximize cropbox to entire page"
-                  >
-                    <Maximize2 className="w-3 h-3 text-emerald-400" />
-                    <span>Maximize</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Divider */}
-        <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
-
-        {/* GROUP 4: Auto Detect & Margins & Live Preview (Compact Tool Icons) */}
-        <div className="flex items-center space-x-1 flex-shrink-0">
-          {/* Auto-Detect Sparkles */}
-          <button
-            onClick={handleAutoDetect}
-            disabled={isAutoDetecting}
-            className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-gradient-to-r from-amber-950/40 to-yellow-950/40 hover:from-amber-900/60 hover:to-yellow-900/60 text-amber-300 border border-amber-600/40 font-medium text-[11px] transition-all disabled:opacity-50"
-            title="Auto-detect content bounds using optical CV analysis"
-          >
-            <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${isAutoDetecting ? "animate-spin" : ""}`} />
-            <span className="hidden md:inline">{isAutoDetecting ? "Detecting..." : "Auto"}</span>
-          </button>
-
-          {/* Margins Popover Button */}
-          <div className="relative">
             <button
-              onClick={() => setActivePopover(activePopover === "margins" ? null : "margins")}
-              className={`flex items-center space-x-1 px-2 py-1 rounded-lg border text-[11px] transition-colors ${
-                activePopover === "margins"
-                  ? "bg-neutral-700 text-white border-neutral-500"
-                  : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCropModeChange?.("perspective");
+              }}
+              className={`flex items-center justify-center space-x-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all ${
+                cropMode === "perspective"
+                  ? "bg-gradient-to-r from-amber-500 to-orange-500 text-neutral-950 font-bold shadow-sm"
+                  : "text-neutral-400 hover:text-white"
               }`}
-              title="Configure crop margins from page edges"
+              title="CamScanner-Grade 4-Corner Perspective Warp & Keystone Flattening"
             >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden lg:inline">Margins</span>
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Perspective</span>
             </button>
+          </div>
 
-            {activePopover === "margins" && (
-              <div className="absolute top-full right-0 mt-1.5 w-72 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-3 z-50 flex flex-col space-y-2.5 animate-in fade-in zoom-in-95 duration-100">
-                <div className="flex items-center justify-between border-b border-neutral-800 pb-1">
-                  <span className="text-[11px] font-bold text-neutral-200">Page Crop Margins</span>
-                  <button
-                    onClick={() => setEqualMargins(!equalMargins)}
-                    className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
-                      equalMargins
-                        ? "bg-sky-500/20 text-sky-400 border-sky-500/40 font-bold"
-                        : "bg-neutral-800 text-neutral-400 border-neutral-700"
-                    }`}
-                    title="Toggle linked equal margins across all 4 sides"
-                  >
-                    {equalMargins ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}
-                    <span>{equalMargins ? "Equal" : "Independent"}</span>
-                  </button>
-                </div>
+          {/* Divider */}
+          <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
 
-                <div className="grid grid-cols-2 gap-2 text-[10px]">
-                  {/* Top Margin */}
-                  <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
-                    <span className="text-neutral-400 w-10">Top:</span>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={margins.top}
-                      onChange={(e) => handleMarginChange("top", parseFloat(e.target.value))}
-                      className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-                    />
-                    <span className="text-neutral-400 font-mono">{unit}</span>
-                  </div>
-
-                  {/* Bottom Margin */}
-                  <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
-                    <span className="text-neutral-400 w-10">Btm:</span>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={margins.bottom}
-                      onChange={(e) => handleMarginChange("bottom", parseFloat(e.target.value))}
-                      className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-                    />
-                    <span className="text-neutral-400 font-mono">{unit}</span>
-                  </div>
-
-                  {/* Left Margin */}
-                  <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
-                    <span className="text-neutral-400 w-10">Left:</span>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={margins.left}
-                      onChange={(e) => handleMarginChange("left", parseFloat(e.target.value))}
-                      className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-                    />
-                    <span className="text-neutral-400 font-mono">{unit}</span>
-                  </div>
-
-                  {/* Right Margin */}
-                  <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
-                    <span className="text-neutral-400 w-10">Right:</span>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={margins.right}
-                      onChange={(e) => handleMarginChange("right", parseFloat(e.target.value))}
-                      className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
-                    />
-                    <span className="text-neutral-400 font-mono">{unit}</span>
-                  </div>
-                </div>
-              </div>
-            )}
+          {/* Target Scope Selector */}
+          <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-750/90 flex-shrink-0 h-[28px]">
+            <Layers className="w-3 h-3 text-neutral-400" />
+            <select
+              value={cropScope}
+              onChange={(e) => onCropScopeChange(e.target.value as any)}
+              className="bg-transparent text-neutral-200 text-[11px] focus:outline-none cursor-pointer"
+              title="Target pages for crop/warp"
+            >
+              <option value="current">Page {activePage.pageNumber}</option>
+              {(document?.selectedPageIds?.length ?? 0) > 1 && (
+                <option value="selected">Selected ({document?.selectedPageIds?.length ?? 0})</option>
+              )}
+              <option value="all">All ({document?.pages?.length ?? 1})</option>
+            </select>
           </div>
 
           {/* Live Preview Toggle Button */}
           <button
             onClick={() => setShowLivePreview(!showLivePreview)}
-            className={`p-1 rounded-lg border transition-colors ${
+            className={`px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors flex items-center space-x-1 h-[28px] ${
               showLivePreview
-                ? "bg-emerald-950/60 text-emerald-300 border-emerald-500/50"
+                ? cropMode === "perspective"
+                  ? "bg-amber-500/25 text-amber-300 border-amber-500/50"
+                  : "bg-sky-500/25 text-sky-300 border-sky-500/50"
                 : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
             }`}
-            title="Toggle live cropped preview card"
+            title="Toggle live preview card"
           >
-            {showLivePreview ? <Eye className="w-3.5 h-3.5 text-emerald-400" /> : <EyeOff className="w-3.5 h-3.5 text-neutral-400" />}
+            {showLivePreview ? (
+              <Eye className={`w-3.5 h-3.5 ${cropMode === "perspective" ? "text-amber-400" : "text-sky-400"}`} />
+            ) : (
+              <EyeOff className="w-3.5 h-3.5 text-neutral-400" />
+            )}
+            <span className="hidden sm:inline">Preview</span>
           </button>
         </div>
 
-        {/* Divider */}
-        <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
-
-        {/* GROUP 5: Target Scope */}
-        <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700/90 flex-shrink-0">
-          <Layers className="w-3 h-3 text-neutral-400" />
-          <select
-            value={cropScope}
-            onChange={(e) => onCropScopeChange(e.target.value as any)}
-            className="bg-transparent text-neutral-200 text-[11px] focus:outline-none cursor-pointer"
-            title="Target pages to crop"
-          >
-            <option value="current">Page {activePage.pageNumber}</option>
-            {(document?.selectedPageIds?.length ?? 0) > 1 && (
-              <option value="selected">Selected ({document?.selectedPageIds?.length ?? 0})</option>
-            )}
-            <option value="all">All ({document?.pages?.length ?? 1})</option>
-          </select>
-        </div>
-
-        {/* Divider */}
-        <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
-
-        {/* GROUP 6: Actions (Hierarchy: Reset, Cancel, Apply) */}
+        {/* Right: Actions (Reset, Cancel, Primary Apply, Collapse, Scale Grip) */}
         <div className="flex items-center space-x-1.5 flex-shrink-0">
           <button
-            onClick={onResetCrop}
-            className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/90 transition-colors text-[11px]"
-            title="Reset crop box to full page (R)"
+            onClick={cropMode === "perspective" ? onResetPerspectiveQuad : onResetCrop}
+            className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/90 transition-colors text-[11px] h-[28px]"
+            title={cropMode === "perspective" ? "Reset corner points to entire document frame" : "Reset crop box to full page (R)"}
           >
             <RotateCcw className="w-3 h-3" />
-            <span className="hidden sm:inline">Reset</span>
+            <span>Reset</span>
           </button>
 
           <button
             onClick={onCancelCrop}
-            className="flex items-center space-x-1 px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 hover:text-rose-300 border border-neutral-700/90 transition-colors text-[11px]"
-            title="Exit crop mode without saving (Esc)"
+            className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 hover:text-rose-300 border border-neutral-700/90 transition-colors text-[11px] h-[28px]"
+            title="Exit crop mode (Esc)"
           >
             <X className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Cancel</span>
+            <span>Cancel</span>
           </button>
 
-          {/* Primary Action */}
+          {/* Primary Apply Action Button with Stable Width */}
           <button
-            onClick={onApplyCrop}
-            className="flex items-center space-x-1.5 px-3.5 py-1 rounded-lg bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white font-bold shadow-md shadow-sky-950/60 transition-all active:scale-95 text-[11px]"
-            title="Permanently crop PDF page (Enter)"
+            onClick={cropMode === "perspective" ? onApplyPerspectiveWarp : onApplyCrop}
+            className={`flex items-center justify-center space-x-1.5 px-3 py-1 rounded-lg font-bold shadow-md transition-all active:scale-95 text-[11px] h-[28px] min-w-[125px] ${
+              cropMode === "perspective"
+                ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-neutral-950 shadow-amber-950/60"
+                : "bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sky-950/60"
+            }`}
+            title={cropMode === "perspective" ? "Flatten document and correct perspective (Enter)" : "Apply crop box to page (Enter)"}
           >
             <Check className="w-3.5 h-3.5" />
-            <span>Apply Crop</span>
+            <span>{cropMode === "perspective" ? "Apply Warp" : "Apply Crop"}</span>
           </button>
+
+          <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
 
           {/* Collapse Button */}
           <button
             onClick={() => setIsCropPanelCollapsed(true)}
             className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-            title="Collapse Crop Bar to compact capsule"
+            title="Collapse Crop Bar"
           >
             <ChevronUp className="w-3.5 h-3.5" />
           </button>
@@ -1210,46 +990,526 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
         </div>
       </div>
 
-      {/* Floating Live Crop Preview Card (Docked directly under bar) */}
+      {/* ========================================================= */}
+      {/* ROW 2: DEDICATED MODE-SPECIFIC SUB-PANEL (BELOW MAIN BAR) */}
+      {/* ========================================================= */}
+      <div className="border-t border-neutral-800/80 pt-1.5 flex items-center justify-between min-h-[34px] overflow-visible transition-all duration-150">
+        {cropMode === "perspective" ? (
+          /* PERSPECTIVE SUB-PANEL */
+          <div className="w-full flex items-center justify-between space-x-2">
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              {/* Format Presets Dropdown */}
+              <div className="relative flex-shrink-0">
+                <button
+                  onClick={() => setActivePopover(activePopover === "perspective-preset" ? null : "perspective-preset")}
+                  className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors h-[28px] ${
+                    activePopover === "perspective-preset"
+                      ? "bg-amber-500 text-neutral-950 border-amber-400 font-bold shadow-sm"
+                      : perspectivePreset !== "natural"
+                      ? "bg-amber-950/60 text-amber-300 border-amber-700/60 hover:bg-amber-900/60"
+                      : "bg-neutral-800 text-neutral-200 border-neutral-700 hover:bg-neutral-750"
+                  }`}
+                  title="Target aspect ratio / standard document dimensions"
+                >
+                  <span className="font-semibold">{activePerspectivePresetDef.name}</span>
+                  <ChevronDown className="w-3 h-3 text-neutral-400" />
+                </button>
+
+                {activePopover === "perspective-preset" && (
+                  <div className="absolute top-full left-0 mt-1.5 w-64 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-1.5 z-50 flex flex-col space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
+                      Output Format & Dimensions
+                    </div>
+                    <div className="max-h-64 overflow-y-auto custom-scrollbar py-1 space-y-0.5">
+                      {PERSPECTIVE_PRESETS.map((p) => {
+                        const isSelected = perspectivePreset === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => {
+                              onPerspectivePresetChange?.(p.id);
+                              setActivePopover(null);
+                            }}
+                            className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
+                              isSelected
+                                ? "bg-amber-500 text-neutral-950 font-bold"
+                                : "text-neutral-200 hover:bg-neutral-800 hover:text-white"
+                            }`}
+                          >
+                            <div className="flex flex-col text-left">
+                              <span className="font-medium">{p.name}</span>
+                              <span className={`text-[9px] ${isSelected ? "text-neutral-900" : "text-neutral-400"}`}>
+                                {p.description}
+                              </span>
+                            </div>
+                            {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Auto-Detect Document Boundaries Button */}
+              <button
+                onClick={onAutoDetectPerspective}
+                disabled={isDetectingPerspective}
+                className="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[11px] font-semibold transition-all disabled:opacity-50 flex-shrink-0 h-[28px]"
+                title="Computer Vision Gradient & Contour detection to snap 4 corners to document edges"
+              >
+                {isDetectingPerspective ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                )}
+                <span>{isDetectingPerspective ? "Detecting Edges..." : "Auto-Detect Edges"}</span>
+              </button>
+
+              {/* Candidate Selector */}
+              {detectionCandidates && detectionCandidates.length > 1 && (
+                <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700/90 flex-shrink-0 h-[28px]">
+                  <span className="text-[10px] text-amber-400 font-mono font-bold">Candidates:</span>
+                  <select
+                    onChange={(e) => {
+                      const idx = parseInt(e.target.value, 10);
+                      const chosen = detectionCandidates[idx];
+                      if (chosen && onPerspectiveQuadChange) {
+                        onPerspectiveQuadChange(chosen.quad);
+                      }
+                    }}
+                    className="bg-transparent text-neutral-200 text-[11px] font-mono focus:outline-none cursor-pointer"
+                    title="Switch between alternative detected document contours"
+                  >
+                    {detectionCandidates.map((c, idx) => (
+                      <option key={idx} value={idx} className="bg-neutral-900 text-neutral-200">
+                        {c.label || `Contour #${idx + 1}`} ({Math.round(c.confidence * 100)}%)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Fine Deskew Residual Angle Toggle */}
+              <button
+                onClick={() => onFineDeskewToggle?.(!fineDeskewEnabled)}
+                className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors flex-shrink-0 h-[28px] ${
+                  fineDeskewEnabled
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold"
+                    : "bg-neutral-800 text-neutral-400 border-neutral-700 hover:bg-neutral-750"
+                }`}
+                title="Automatically calculate sub-degree text deskew on the de-warped result"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Fine Deskew: {fineDeskewEnabled ? "ON" : "OFF"}</span>
+              </button>
+            </div>
+
+            {/* Right side: Dimensions badge and corner count */}
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              {/* Computed Keystone Dimensions Badge */}
+              {perspectiveDims && (
+                <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700/90 h-[28px]">
+                  <span className="text-[10px] font-mono text-neutral-400">Target:</span>
+                  <span className="text-[11px] font-mono text-neutral-200 font-medium">
+                    {perspectiveDims.targetW} × {perspectiveDims.targetH} px
+                  </span>
+                </div>
+              )}
+
+              {/* 4 Corner Status Badge */}
+              <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2.5 py-1 rounded-lg border border-neutral-700/90 h-[28px]">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[11px] font-medium text-neutral-300">4 Corners Pinned</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* RECTANGULAR SUB-PANEL */
+          <div className="w-full flex items-center justify-between space-x-2">
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              {/* Presets Popover Dropdown */}
+              <div className="relative flex-shrink-0">
+                <button
+                  onClick={() => setActivePopover(activePopover === "preset" ? null : "preset")}
+                  className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium transition-colors h-[28px] ${
+                    activePopover === "preset"
+                      ? "bg-sky-600 text-white border-sky-400 shadow-sm"
+                      : preset !== "free"
+                      ? "bg-sky-950/60 text-sky-300 border-sky-700/60 hover:bg-sky-900/60"
+                      : "bg-neutral-800 text-neutral-200 border-neutral-700 hover:bg-neutral-750"
+                  }`}
+                  title="Choose standard document crop preset"
+                >
+                  <span className="font-semibold">{activePresetDef.name}</span>
+                  <ChevronDown className="w-3 h-3 text-neutral-400" />
+                </button>
+
+                {activePopover === "preset" && (
+                  <div className="absolute top-full left-0 mt-1.5 w-60 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-1.5 z-50 flex flex-col space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
+                      Crop Presets & Formats
+                    </div>
+                    <div className="max-h-64 overflow-y-auto custom-scrollbar py-1 space-y-0.5">
+                      {CROP_PRESETS.map((p) => {
+                        const isSelected = preset === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => handlePresetSelect(p.id)}
+                            className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
+                              isSelected
+                                ? "bg-sky-600 text-white font-bold"
+                                : "text-neutral-200 hover:bg-neutral-800 hover:text-white"
+                            }`}
+                          >
+                            <div className="flex flex-col text-left">
+                              <span className="font-medium">{p.name}</span>
+                              <span className={`text-[9px] ${isSelected ? "text-sky-100" : "text-neutral-400"}`}>
+                                {p.description}
+                              </span>
+                            </div>
+                            {isSelected && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Aspect Ratio Lock & Presets Popover */}
+              <div className="relative flex items-center space-x-1 flex-shrink-0">
+                <button
+                  onClick={() => {
+                    if (aspectRatioLocked) {
+                      onAspectRatioLockChange(false, null);
+                    } else {
+                      const currentRatio = (cropBox.width * pageWidth) / (cropBox.height * pageHeight);
+                      onAspectRatioLockChange(true, currentRatio);
+                    }
+                  }}
+                  className={`flex items-center space-x-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors h-[28px] ${
+                    aspectRatioLocked
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold"
+                      : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
+                  }`}
+                  title="Lock Current Aspect Ratio (L)"
+                >
+                  {aspectRatioLocked ? <Lock className="w-3 h-3 text-amber-400" /> : <Unlock className="w-3 h-3 text-neutral-400" />}
+                  <span className="hidden sm:inline">{aspectRatioLocked ? "Locked" : "Ratio"}</span>
+                </button>
+
+                {/* Quick Ratio Popover Button */}
+                <button
+                  onClick={() => setActivePopover(activePopover === "ratio" ? null : "ratio")}
+                  className={`p-1 rounded-lg border text-[11px] transition-colors h-[28px] ${
+                    activePopover === "ratio"
+                      ? "bg-sky-600 text-white border-sky-400"
+                      : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
+                  }`}
+                  title="Select predefined aspect ratio"
+                >
+                  <ChevronDown className="w-3 h-3 text-neutral-400" />
+                </button>
+
+                {activePopover === "ratio" && (
+                  <div className="absolute top-full left-0 mt-1.5 w-48 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-1.5 z-50 flex flex-col space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-neutral-400 border-b border-neutral-800">
+                      Aspect Ratios
+                    </div>
+                    <div className="py-1 space-y-0.5">
+                      {ratioPresets.map((r) => {
+                        const isSelected =
+                          aspectRatioLocked &&
+                          targetAspectRatio !== null &&
+                          r.ratio !== null &&
+                          Math.abs(targetAspectRatio - r.ratio) < 0.01;
+                        const isFreeSelected = !aspectRatioLocked && r.ratio === null;
+
+                        return (
+                          <button
+                            key={r.label}
+                            onClick={() => {
+                              setActivePopover(null);
+                              if (r.ratio === null) {
+                                onAspectRatioLockChange(false, null);
+                              } else {
+                                onAspectRatioLockChange(true, r.ratio);
+                                const fitted = fitAspectRatioInPage(r.ratio, pageWidth, pageHeight);
+                                onCropBoxChange(fitted);
+                              }
+                            }}
+                            className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-[11px] transition-colors ${
+                              isSelected || isFreeSelected
+                                ? "bg-sky-600 text-white font-bold"
+                                : "text-neutral-200 hover:bg-neutral-800 hover:text-white"
+                            }`}
+                          >
+                            <div className="flex flex-col text-left">
+                              <span className="font-mono">{r.label}</span>
+                              <span className={`text-[9px] ${isSelected || isFreeSelected ? "text-sky-100" : "text-neutral-400"}`}>
+                                {r.desc}
+                              </span>
+                            </div>
+                            {(isSelected || isFreeSelected) && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
+
+              {/* Precision Dimensions & Coordinates */}
+              <div className="flex items-center space-x-1.5 flex-shrink-0">
+                {/* Width */}
+                <div className="flex items-center space-x-1 bg-neutral-800/90 px-1.5 py-0.5 rounded-lg border border-neutral-700/90 h-[28px]">
+                  <span className="text-[10px] font-mono text-neutral-400">W:</span>
+                  <input
+                    type="number"
+                    step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
+                    min="1"
+                    value={realWidth}
+                    onChange={(e) => handleWidthInputChange(parseFloat(e.target.value))}
+                    className="w-13 bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                    title="Crop box width in active unit"
+                  />
+                </div>
+
+                {/* Height */}
+                <div className="flex items-center space-x-1 bg-neutral-800/90 px-1.5 py-0.5 rounded-lg border border-neutral-700/90 h-[28px]">
+                  <span className="text-[10px] font-mono text-neutral-400">H:</span>
+                  <input
+                    type="number"
+                    step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
+                    min="1"
+                    value={realHeight}
+                    onChange={(e) => handleHeightInputChange(parseFloat(e.target.value))}
+                    className="w-13 bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                    title="Crop box height in active unit"
+                  />
+                </div>
+
+                {/* Unit Selector */}
+                <select
+                  value={unit}
+                  onChange={(e) => onUnitChange(e.target.value as CropUnit)}
+                  className="bg-neutral-800/90 text-neutral-200 text-[11px] font-mono px-1.5 py-1 rounded-lg border border-neutral-700/90 focus:outline-none cursor-pointer h-[28px]"
+                  title="Measurement unit"
+                >
+                  <option value="mm">mm</option>
+                  <option value="cm">cm</option>
+                  <option value="inch">in</option>
+                  <option value="px">px</option>
+                  <option value="pt">pt</option>
+                </select>
+
+                {/* Coordinates Popover Button */}
+                <div className="relative">
+                  <button
+                    onClick={() => setActivePopover(activePopover === "coords" ? null : "coords")}
+                    className={`p-1 rounded-lg border transition-colors h-[28px] flex items-center justify-center ${
+                      activePopover === "coords"
+                        ? "bg-sky-600 text-white border-sky-400"
+                        : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
+                    }`}
+                    title="Position coordinates (X/Y) & Alignment"
+                  >
+                    <Move className="w-3.5 h-3.5" />
+                  </button>
+
+                  {activePopover === "coords" && (
+                    <div className="absolute top-full left-0 mt-1.5 w-56 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-2.5 z-50 flex flex-col space-y-2 animate-in fade-in zoom-in-95 duration-100">
+                      <div className="flex items-center justify-between border-b border-neutral-800 pb-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                          Crop Coordinates & Alignment
+                        </span>
+                        <span className="text-[10px] font-mono text-sky-400">{unit}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
+                          <span className="text-[10px] font-mono text-neutral-400">X:</span>
+                          <input
+                            type="number"
+                            step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
+                            min="0"
+                            value={realX}
+                            onChange={(e) => handleXInputChange(parseFloat(e.target.value))}
+                            className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                          />
+                        </div>
+
+                        <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
+                          <span className="text-[10px] font-mono text-neutral-400">Y:</span>
+                          <input
+                            type="number"
+                            step={unit === "inch" || unit === "cm" ? "0.1" : "1"}
+                            min="0"
+                            value={realY}
+                            onChange={(e) => handleYInputChange(parseFloat(e.target.value))}
+                            className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        <button
+                          onClick={handleCenterCropBox}
+                          className="flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-[10px] border border-neutral-700 transition-colors"
+                          title="Center cropbox horizontally & vertically"
+                        >
+                          <Crosshair className="w-3 h-3 text-sky-400" />
+                          <span>Center</span>
+                        </button>
+
+                        <button
+                          onClick={handleMaximizeCropBox}
+                          className="flex items-center justify-center space-x-1 px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 text-[10px] border border-neutral-700 transition-colors"
+                          title="Maximize cropbox to entire page"
+                        >
+                          <Maximize2 className="w-3 h-3 text-emerald-400" />
+                          <span>Maximize</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Margins and Auto-detect */}
+            <div className="flex items-center space-x-1.5 flex-shrink-0">
+              {/* Auto-Detect */}
+              <button
+                onClick={handleAutoDetect}
+                disabled={isAutoDetecting}
+                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-950/40 to-yellow-950/40 hover:from-amber-900/60 hover:to-yellow-900/60 text-amber-300 border border-amber-600/40 font-medium text-[11px] transition-all disabled:opacity-50 h-[28px]"
+                title="Auto-detect content bounds using optical CV analysis"
+              >
+                <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${isAutoDetecting ? "animate-spin" : ""}`} />
+                <span>{isAutoDetecting ? "Detecting..." : "Auto Bounds"}</span>
+              </button>
+
+              {/* Margins Popover Button */}
+              <div className="relative">
+                <button
+                  onClick={() => setActivePopover(activePopover === "margins" ? null : "margins")}
+                  className={`flex items-center space-x-1 px-2.5 py-1 rounded-lg border text-[11px] transition-colors h-[28px] ${
+                    activePopover === "margins"
+                      ? "bg-neutral-700 text-white border-neutral-500"
+                      : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
+                  }`}
+                  title="Configure crop margins from page edges"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Margins</span>
+                </button>
+
+                {activePopover === "margins" && (
+                  <div className="absolute top-full right-0 mt-1.5 w-72 bg-neutral-900/98 backdrop-blur-2xl border border-neutral-750 shadow-2xl rounded-xl p-3 z-50 flex flex-col space-y-2.5 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="flex items-center justify-between border-b border-neutral-800 pb-1">
+                      <span className="text-[11px] font-bold text-neutral-200">Page Crop Margins</span>
+                      <button
+                        onClick={() => setEqualMargins(!equalMargins)}
+                        className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] border transition-colors ${
+                          equalMargins
+                            ? "bg-sky-500/20 text-sky-400 border-sky-500/40 font-bold"
+                            : "bg-neutral-800 text-neutral-400 border-neutral-700"
+                        }`}
+                        title="Toggle linked equal margins across all 4 sides"
+                      >
+                        {equalMargins ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}
+                        <span>{equalMargins ? "Equal" : "Independent"}</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      {/* Top Margin */}
+                      <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
+                        <span className="text-neutral-400 w-10">Top:</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={margins.top}
+                          onChange={(e) => handleMarginChange("top", parseFloat(e.target.value))}
+                          className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                        />
+                        <span className="text-neutral-400 font-mono">{unit}</span>
+                      </div>
+
+                      {/* Bottom Margin */}
+                      <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
+                        <span className="text-neutral-400 w-10">Btm:</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={margins.bottom}
+                          onChange={(e) => handleMarginChange("bottom", parseFloat(e.target.value))}
+                          className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                        />
+                        <span className="text-neutral-400 font-mono">{unit}</span>
+                      </div>
+
+                      {/* Left Margin */}
+                      <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
+                        <span className="text-neutral-400 w-10">Left:</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={margins.left}
+                          onChange={(e) => handleMarginChange("left", parseFloat(e.target.value))}
+                          className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                        />
+                        <span className="text-neutral-400 font-mono">{unit}</span>
+                      </div>
+
+                      {/* Right Margin */}
+                      <div className="flex items-center space-x-1 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700">
+                        <span className="text-neutral-400 w-10">Right:</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={margins.right}
+                          onChange={(e) => handleMarginChange("right", parseFloat(e.target.value))}
+                          className="w-full bg-neutral-900 text-neutral-100 font-mono text-[11px] px-1 py-0.5 rounded border border-neutral-750 focus:outline-none focus:border-sky-500 text-right"
+                        />
+                        <span className="text-neutral-400 font-mono">{unit}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Floating Live Crop & Perspective Preview Card (DPI-aware, Split Comparison, Zoom & Fullscreen) */}
       {showLivePreview && (
-        <div className="absolute top-full right-2 mt-2 w-64 bg-neutral-900/98 backdrop-blur-2xl border border-sky-500/40 rounded-xl p-2.5 shadow-2xl z-50 flex flex-col space-y-2 animate-in fade-in zoom-in-95 duration-150">
-          <div className="flex items-center justify-between pb-1 border-b border-neutral-800">
-            <span className="font-bold text-sky-300 text-[11px] flex items-center gap-1.5">
-              <Eye className="w-3 h-3" />
-              <span>Live Cropped Preview</span>
-            </span>
-            <button
-              onClick={() => setShowLivePreview(false)}
-              className="p-0.5 rounded text-neutral-400 hover:text-white hover:bg-neutral-800"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {/* Cropped Region Simulation Preview Container */}
-          <div className="relative w-full h-40 bg-neutral-950 rounded-lg overflow-hidden border border-neutral-800 flex items-center justify-center p-1.5">
-            <div
-              style={{
-                width: "100%",
-                height: "100%",
-                backgroundImage: `url(${activePage.processedDataUrl || activePage.originalDataUrl})`,
-                backgroundPosition: `${(cropBox.x / (1 - cropBox.width || 1)) * 100}% ${(cropBox.y / (1 - cropBox.height || 1)) * 100}%`,
-                backgroundSize: `${(1 / cropBox.width) * 100}% ${(1 / cropBox.height) * 100}%`,
-                backgroundRepeat: "no-repeat",
-              }}
-              className="rounded shadow"
-            />
-          </div>
-
-          <div className="text-[10px] text-neutral-300 flex items-center justify-between font-mono bg-neutral-850 px-2 py-1 rounded border border-neutral-750">
-            <span>
-              {realWidth} × {realHeight} {unit}
-            </span>
-            <span className="text-sky-400 font-bold">
-              {Math.round(cropBox.width * pageWidth)} × {Math.round(cropBox.height * pageHeight)} px
-            </span>
-          </div>
-        </div>
+        <CropLivePreviewCard
+          activePage={activePage}
+          cropMode={cropMode}
+          cropBox={cropBox}
+          perspectiveQuad={perspectiveQuad}
+          perspectivePreset={perspectivePreset}
+          fineDeskewEnabled={fineDeskewEnabled}
+          pageWidth={pageWidth}
+          pageHeight={pageHeight}
+          unit={unit}
+          realWidth={realWidth}
+          realHeight={realHeight}
+          onClose={() => setShowLivePreview(false)}
+          resolvedImageUrl={resolvedImageUrl}
+        />
       )}
     </div>
   );

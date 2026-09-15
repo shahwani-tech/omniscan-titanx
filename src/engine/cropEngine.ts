@@ -5,6 +5,7 @@
 
 import { OmniPage, Point } from "../types";
 import { loadImage } from "./vision";
+import { pageBlobStore } from "../services/storage/PageBlobStore";
 
 export type CropUnit = "mm" | "cm" | "inch" | "px" | "pt";
 
@@ -298,7 +299,13 @@ export async function executePhysicalPageCrop(
   page: OmniPage,
   cropBox: NormalizedCropBox
 ): Promise<OmniPage> {
-  const sourceImage = await loadImage(page.processedDataUrl || page.originalDataUrl);
+  const sourceUrl =
+    page.processedDataUrl ||
+    page.originalDataUrl ||
+    (await pageBlobStore.resolvePageUrl(page, "processed")) ||
+    (await pageBlobStore.resolvePageUrl(page, "original"));
+
+  const sourceImage = await loadImage(sourceUrl);
 
   const srcW = sourceImage.width;
   const srcH = sourceImage.height;
@@ -377,7 +384,7 @@ export async function executePhysicalPageCrop(
     })
     .filter((r): r is NonNullable<typeof r> => r !== null);
 
-  return {
+  const croppedPage: OmniPage = {
     ...page,
     width: cropW,
     height: cropH,
@@ -394,4 +401,10 @@ export async function executePhysicalPageCrop(
     isModified: true,
     lastModifiedAt: new Date().toISOString(),
   };
+
+  if (page.originalBlobId || page.processedBlobId) {
+    return await pageBlobStore.migratePageToBlobs(croppedPage);
+  }
+
+  return croppedPage;
 }

@@ -54,48 +54,52 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const heightIn = activePage ? (activePage.height / dpi).toFixed(2) : "11.00";
 
   return (
-    <footer className="flex items-center justify-between px-3 py-1 bg-neutral-900 border-t border-neutral-800 text-[11px] text-neutral-400 select-none z-30 shrink-0">
+    <footer
+      role="status"
+      aria-label="Document status and zoom controls"
+      className="flex items-center justify-between px-3 py-1 bg-neutral-900 border-t border-neutral-800 text-xs text-neutral-300 select-none z-30 shrink-0"
+    >
       {/* Left: Engine Status & Active Page Info */}
       <div className="flex items-center space-x-3">
         {/* Status Indicator */}
         <div className="flex items-center space-x-1.5">
           {isProcessing ? (
             <div className="flex items-center space-x-1.5 text-amber-400">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" aria-hidden="true" />
               <span className="font-medium">{processingMessage || t("status.processing", language)}</span>
             </div>
           ) : (
             <div className="flex items-center space-x-1.5 text-emerald-400">
-              <CheckCircle2 className="w-3.5 h-3.5" />
+              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
               <span className="font-medium">{t("status.ready", language)}</span>
             </div>
           )}
         </div>
 
-        <span className="text-neutral-700">|</span>
+        <span className="text-neutral-600 select-none" aria-hidden="true">|</span>
 
         {/* Page Counter */}
-        <div className="font-mono text-neutral-200">
+        <div className="font-mono text-neutral-200 text-xs">
           Page <span className="font-bold text-sky-400">{totalPages > 0 ? activePageIndex + 1 : 0}</span> of{" "}
           <span className="font-bold">{totalPages}</span>
         </div>
 
-        <span className="text-neutral-700">|</span>
+        <span className="text-neutral-600 select-none" aria-hidden="true">|</span>
 
         {/* Paper Dimensions in Metric and Imperial */}
         {activePage && (
-          <div className="hidden md:flex items-center space-x-1 font-mono text-neutral-400">
+          <div className="hidden md:flex items-center space-x-1 font-mono text-xs text-neutral-300">
             <span>
               {widthMm} × {heightMm} mm
             </span>
-            <span className="text-neutral-600">({widthIn} × {heightIn} in)</span>
+            <span className="text-neutral-400">({widthIn} × {heightIn} in)</span>
           </div>
         )}
 
         {/* DPI & Color Depth */}
         {activePage && (
-          <div className="hidden lg:flex items-center space-x-1 font-mono text-neutral-400">
-            <span className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300 font-semibold text-[10px]">
+          <div className="hidden lg:flex items-center space-x-1 font-mono text-xs text-neutral-300">
+            <span className="px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-200 font-semibold text-xs">
               {activePage.dpi || 300} DPI
             </span>
             <span className="capitalize">{activePage.filters?.colorMode || "color"}</span>
@@ -104,8 +108,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
         {/* Blank warning */}
         {activePage?.isBlank && (
-          <div className="flex items-center space-x-1 text-amber-400 bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-800/40">
-            <AlertTriangle className="w-3 h-3" />
+          <div className="flex items-center space-x-1 text-amber-400 bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-800/40 text-xs">
+            <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
             <span>{t("status.blankDetected", language)}</span>
           </div>
         )}
@@ -114,32 +118,35 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       {/* Right: Zoom Controls & Engine Metrics */}
       <div className="flex items-center space-x-2">
         {/* Memory telemetry */}
-        <div className="hidden xl:flex items-center space-x-1 text-neutral-500 font-mono text-[10px]">
-          <HardDrive className="w-3 h-3" />
+        <div className="hidden xl:flex items-center space-x-1 text-neutral-300 font-mono text-xs">
+          <HardDrive className="w-3.5 h-3.5 text-neutral-400" aria-hidden="true" />
           <span>RAM: ~{(totalPages * 3.4 + 18).toFixed(1)} MB</span>
         </div>
 
-        <span className="hidden xl:inline text-neutral-700">|</span>
+        <span className="hidden xl:inline text-neutral-600 select-none" aria-hidden="true">|</span>
 
         {/* Fit Width / Fit Page Buttons */}
         <button
           onClick={onFitWidth}
-          className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+          className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors text-xs font-medium"
           title="Fit Width"
+          aria-label="Fit to Width"
         >
           Fit Width
         </button>
         <button
           onClick={onFitPage}
-          className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+          className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors text-xs font-medium"
           title="Fit Entire Page"
+          aria-label="Fit Entire Page"
         >
           Fit Page
         </button>
         <button
           onClick={onActualSize}
-          className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors"
+          className="px-1.5 py-0.5 rounded hover:bg-neutral-800 text-neutral-300 hover:text-white transition-colors text-xs font-medium"
           title="100% Actual Size"
+          aria-label="Set zoom to 100% actual size"
         >
           100%
         </button>
@@ -148,10 +155,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <div className="flex items-center space-x-1.5 bg-neutral-850 px-2 py-0.5 rounded border border-neutral-800">
           <button
             onClick={() => onZoomChange(Math.max(0.1, zoom - 0.15))}
-            className="p-0.5 rounded hover:bg-neutral-750 text-neutral-400 hover:text-white"
+            className="p-1 rounded hover:bg-neutral-750 text-neutral-300 hover:text-white transition-colors"
             title="Zoom Out"
+            aria-label="Zoom Out"
           >
-            <ZoomOut className="w-3.5 h-3.5" />
+            <ZoomOut className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
 
           <input
@@ -164,14 +172,16 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             onChange={(e) => onZoomChange(parseFloat(e.target.value))}
             className="w-20 accent-sky-500 cursor-pointer h-1.5 bg-neutral-700 rounded-lg appearance-none"
             title={`Zoom (${Math.round(zoom * 100)}%)`}
+            aria-label={`Zoom level (${Math.round(zoom * 100)}%)`}
           />
 
           <button
             onClick={() => onZoomChange(Math.min(5.0, zoom + 0.15))}
-            className="p-0.5 rounded hover:bg-neutral-750 text-neutral-400 hover:text-white"
+            className="p-1 rounded hover:bg-neutral-750 text-neutral-300 hover:text-white transition-colors"
             title="Zoom In"
+            aria-label="Zoom In"
           >
-            <ZoomIn className="w-3.5 h-3.5" />
+            <ZoomIn className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
 
           <UniversalNumericInput
@@ -182,7 +192,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             step={5}
             precision={0}
             unit="%"
-            className="w-11"
+            className="w-11 text-xs"
             ariaLabel="Zoom percentage"
             onChange={(val) => {
               const clamped = Math.max(0.1, Math.min(5.0, val / 100));

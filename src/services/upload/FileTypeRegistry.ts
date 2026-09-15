@@ -122,22 +122,6 @@ export const ACCEPT_IMAGES_ONLY = [
 // PDF only
 export const ACCEPT_PDF_ONLY = ".pdf,application/pdf";
 
-// Vector & Design Studio (SVG, CDR, PDF, Images)
-export const ACCEPT_CARD_DESIGNER_INPUTS = [
-  ".svg",
-  ".pdf",
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".webp",
-  ".bmp",
-  ".tiff",
-  ".cdr",
-  "image/svg+xml",
-  "application/pdf",
-  "image/*",
-].join(",");
-
 // Titan Project Archives
 export const ACCEPT_PROJECT_ARCHIVES = ".titanproj,.zip,application/zip,application/x-zip-compressed";
 
