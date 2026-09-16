@@ -11,6 +11,7 @@ import {
   computeBlanknessFromBuffer,
   executePerspectiveWarpBuffer,
   detectDocumentQuadFromBuffer,
+  detectPageOrientationFromBuffer,
 } from "../engine/pixelCore";
 
 interface PendingTask {
@@ -61,7 +62,11 @@ class FilterWorkerPool {
             task.resolve(buffer);
           } else if (type === "CALCULATE_DESKEW_SUCCESS") {
             task.resolve(angle);
-          } else if (type === "ANALYZE_BLANKNESS_SUCCESS" || type === "DETECT_DOCUMENT_QUAD_SUCCESS") {
+          } else if (
+            type === "ANALYZE_BLANKNESS_SUCCESS" ||
+            type === "DETECT_DOCUMENT_QUAD_SUCCESS" ||
+            type === "DETECT_ORIENTATION_SUCCESS"
+          ) {
             task.resolve(result);
           } else {
             task.resolve(e.data);
@@ -396,6 +401,63 @@ class FilterWorkerPool {
   }
 
   /**
+   * Run enterprise orientation detection in worker thread
+   */
+  async detectOrientation(
+    data: Uint8ClampedArray,
+    width: number,
+    height: number
+  ): Promise<{ rotation: 0 | 90 | 180 | 270; confidence: number; reason: string }> {
+    const worker = this.getNextWorker();
+
+    if (!worker) {
+      return detectPageOrientationFromBuffer(data, width, height);
+    }
+
+    return new Promise((resolve) => {
+      const id = "task_orient_" + Math.random().toString(36).slice(2, 11);
+      const buffer = data.buffer.slice(0);
+
+      const timer = setTimeout(() => {
+        if (this.pendingTasks.has(id)) {
+          this.pendingTasks.delete(id);
+          console.warn("Worker timed out for orientation detection, falling back to main thread");
+          resolve(detectPageOrientationFromBuffer(data, width, height));
+        }
+      }, 4000);
+
+      this.pendingTasks.set(id, {
+        id,
+        resolve: (result) => {
+          resolve(result);
+        },
+        reject: (err) => {
+          console.warn("Worker orientation error, executing on main thread:", err);
+          resolve(detectPageOrientationFromBuffer(data, width, height));
+        },
+        timer,
+      });
+
+      try {
+        worker.postMessage(
+          {
+            id,
+            type: "DETECT_ORIENTATION",
+            buffer,
+            width,
+            height,
+          },
+          [buffer]
+        );
+      } catch {
+        clearTimeout(timer);
+        this.pendingTasks.delete(id);
+        resolve(detectPageOrientationFromBuffer(data, width, height));
+      }
+    });
+  }
+
+  /**
    * Clean up all worker threads
    */
   terminate(): void {
@@ -444,3 +506,9 @@ export const detectDocumentQuadAsync = (
   width: number,
   height: number
 ) => globalWorkerPool.detectDocumentQuad(data, width, height);
+
+export const detectOrientationAsync = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number
+) => globalWorkerPool.detectOrientation(data, width, height);

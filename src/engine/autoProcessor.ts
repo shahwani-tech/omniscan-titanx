@@ -17,6 +17,12 @@ import {
 } from "../types";
 import { DEFAULT_FILTERS, loadImage } from "./vision";
 import { executeFilterPipeline } from "./filters";
+import {
+  computeEnsembleDeskewFromBuffer,
+  detectPageOrientationFromBuffer,
+  computeBlanknessFromBuffer,
+  detectDocumentQuadFromBuffer,
+} from "./pixelCore";
 
 export interface AdaptiveProcessingOptions {
   isFastPreview?: boolean;
@@ -24,6 +30,7 @@ export interface AdaptiveProcessingOptions {
   maxDimension?: number;
   skipDeskew?: boolean;
   skipCrop?: boolean;
+  skipRotate?: boolean;
   forcePreset?: CamScannerPresetId;
   onProgress?: (stage: string, percent: number) => void;
 }
@@ -209,34 +216,61 @@ export async function diagnoseDocumentDefects(
     chromaticVariance,
   };
 
-  // 3. Fast Skew Diagnostics (Radon / Hough Line Scanning)
-  const { angle: skewAngle, confidence: skewConfidence } = detectSkewFast(data, sampleSize);
-  const isSkewSignificant = Math.abs(skewAngle) >= 0.4 && skewConfidence > 0.35;
+  // 3. Multi-Method Ensemble Skew Diagnostics (Radon + Hough + Run-Length Voting)
+  const ensembleDeskew = computeEnsembleDeskewFromBuffer(data, sampleSize, sampleSize);
+  const skewAngle = ensembleDeskew.angle;
+  const skewConfidence = ensembleDeskew.confidence;
+  const isSkewSignificant = Math.abs(skewAngle) >= 0.25 && skewConfidence > 0.4;
 
-  // 4. Border / Dark Background Framing Diagnostics
-  const { hasBorder, suggestedCropBox } = detectPageFraming(data, sampleSize);
+  // 4. Orientation Detection (Projection Profile Periodicity + Ascender/Descender Asymmetry)
+  const orientResult = detectPageOrientationFromBuffer(data, sampleSize, sampleSize);
+  const suggestedRotation = orientResult.rotation;
+
+  // 5. Border / Dark Background Framing Diagnostics (7-Pass Edge & Quad Pipeline)
+  const quadResult = detectDocumentQuadFromBuffer(data, sampleSize, sampleSize);
+  const hasBorder = quadResult.confidence > 0.45 && (
+    quadResult.quad.topLeft.x > 0.03 ||
+    quadResult.quad.topLeft.y > 0.03 ||
+    quadResult.quad.bottomRight.x < 0.97 ||
+    quadResult.quad.bottomRight.y < 0.97
+  );
+
+  const minQx = Math.max(0, Math.min(quadResult.quad.topLeft.x, quadResult.quad.bottomLeft.x));
+  const minQy = Math.max(0, Math.min(quadResult.quad.topLeft.y, quadResult.quad.topRight.y));
+  const maxQx = Math.min(1.0, Math.max(quadResult.quad.topRight.x, quadResult.quad.bottomRight.x));
+  const maxQy = Math.min(1.0, Math.max(quadResult.quad.bottomLeft.y, quadResult.quad.bottomRight.y));
+
+  const suggestedCropBox = hasBorder ? {
+    x: Number(minQx.toFixed(3)),
+    y: Number(minQy.toFixed(3)),
+    width: Number(Math.max(0.1, maxQx - minQx).toFixed(3)),
+    height: Number(Math.max(0.1, maxQy - minQy).toFixed(3)),
+  } : undefined;
 
   const geometry: DocumentGeometryDiagnostics = {
     skewAngle,
     skewConfidence,
     isSkewSignificant,
-    suggestedRotation: 0,
+    suggestedRotation,
     hasBorderOrBackground: hasBorder,
     suggestedCropBox,
+    suggestedPerspectiveQuad: quadResult.quad,
   };
 
-  // 5. Document Type Classification
+  // 6. Multi-Metric Blank Page Diagnostics & Document Classification
+  const blankAnalysis = computeBlanknessFromBuffer(data, sampleSize, sampleSize);
+  const isBlank = blankAnalysis.isBlank;
+
   let documentType: DocumentDefectReport["documentType"] = "mixed-content";
   let label = "Mixed Document";
   let typeConfidence = 0.85;
 
-  const isBlank = contrastSpread < 20 && (meanLuminance > 240 || meanLuminance < 20);
   const aspectRatio = sourceWidth / sourceHeight;
 
   if (isBlank) {
     documentType = "blank-page";
     label = "Blank Page";
-    typeConfidence = 0.98;
+    typeConfidence = Number((1.0 - blankAnalysis.score * 0.1).toFixed(2));
   } else if (hasSkinTones && (aspectRatio >= 0.65 && aspectRatio <= 0.95) && skinToneRatio > 0.08) {
     documentType = "photo-portrait";
     label = "Passport / Portrait";
@@ -339,11 +373,18 @@ export function buildAdaptivePlan(
     appliedCorrections.push("Intelligent margin crop (removed background surface)");
   }
 
-  // 3. Recommended Preset & Target Filter Parameter Calculation
+  // 3. Page Orientation Correction
+  const shouldRotate = !options.skipRotate && geometry.suggestedRotation !== 0;
+  const targetRotation = shouldRotate ? geometry.suggestedRotation : 0;
+  if (shouldRotate) {
+    appliedCorrections.push(`Auto-orient page ${targetRotation}°`);
+  }
+
+  // 4. Recommended Preset & Target Filter Parameter Calculation
   let recommendedPreset: CamScannerPresetId = "auto";
   const targetFilters: ImageFilterPipeline = {
     ...DEFAULT_FILTERS,
-    rotation: 0,
+    rotation: targetRotation,
     deskewAngle: targetDeskewAngle,
     cropBox: targetCropBox,
   };
@@ -464,6 +505,8 @@ export function buildAdaptivePlan(
     appliedCorrections,
     shouldDeskew,
     targetDeskewAngle,
+    shouldRotate,
+    targetRotation,
     shouldCrop,
     targetCropBox,
     targetFilters,

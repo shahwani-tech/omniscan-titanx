@@ -254,43 +254,57 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
 
       {/* Content Classification & Auto Filter Badge */}
       {detectedContent && (
-        <div className="flex items-center justify-between p-2 rounded-lg bg-neutral-900 border border-neutral-800/80 shadow-inner">
-          <div className="flex items-center space-x-2">
-            {detectedContent.detectedType === "photo-id" ? (
-              <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-500/40 shadow-sm">
-                <ImageIcon className="w-3 h-3 text-blue-400" />
-                <span>Photo / ID Card</span>
-              </span>
-            ) : detectedContent.detectedType === "text-document" ? (
-              <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 shadow-sm">
-                <FileText className="w-3 h-3 text-emerald-400" />
-                <span>Text Document</span>
-              </span>
-            ) : (
-              <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950/80 text-purple-300 border border-purple-500/40 shadow-sm">
-                <Sparkles className="w-3 h-3 text-purple-400" />
-                <span>Mixed Content</span>
-              </span>
-            )}
-
-            <span className="text-[10px] font-medium text-neutral-400">
-              {filterSource === "auto-detected" ? (
-                <span className="text-emerald-400/90 font-medium">✨ Auto-detected</span>
+        <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-neutral-900 border border-neutral-800/80 shadow-inner">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+              {detectedContent.detectedType === "photo-id" ? (
+                <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-950/80 text-blue-300 border border-blue-500/40 shadow-sm">
+                  <ImageIcon className="w-3 h-3 text-blue-400" />
+                  <span>{detectedContent.subCategory === "passport" ? "Passport" : detectedContent.subCategory === "id-card" ? "ID Card" : "Photo / ID"}</span>
+                </span>
+              ) : detectedContent.detectedType === "text-document" ? (
+                <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 shadow-sm">
+                  <FileText className="w-3 h-3 text-emerald-400" />
+                  <span>{detectedContent.subCategory === "receipt" ? "Receipt" : detectedContent.subCategory === "invoice" ? "Invoice / Table" : "Text Document"}</span>
+                </span>
               ) : (
-                <span className="text-neutral-400">Manual override</span>
+                <span className="flex items-center space-x-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950/80 text-purple-300 border border-purple-500/40 shadow-sm">
+                  <Sparkles className="w-3 h-3 text-purple-400" />
+                  <span>Mixed Content</span>
+                </span>
               )}
-            </span>
+
+              {detectedContent.confidence && (
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-medium bg-neutral-800 text-neutral-300 border border-neutral-700">
+                  {Math.round(detectedContent.confidence * 100)}% conf
+                </span>
+              )}
+
+              <span className="text-[10px] font-medium text-neutral-400">
+                {filterSource === "auto-detected" ? (
+                  <span className="text-emerald-400/90 font-medium">✨ Auto-detected</span>
+                ) : (
+                  <span className="text-neutral-400">Manual override</span>
+                )}
+              </span>
+            </div>
+
+            {onReDetect && (
+              <button
+                type="button"
+                onClick={onReDetect}
+                className="text-[10px] text-sky-400 hover:text-sky-300 underline underline-offset-2 px-1 py-0.5 transition-colors shrink-0"
+                title="Re-run optical content analysis"
+              >
+                Re-detect
+              </button>
+            )}
           </div>
 
-          {onReDetect && (
-            <button
-              type="button"
-              onClick={onReDetect}
-              className="text-[10px] text-sky-400 hover:text-sky-300 underline underline-offset-2 px-1 py-0.5 transition-colors"
-              title="Re-run optical content analysis"
-            >
-              Re-detect
-            </button>
+          {detectedContent.reason && (
+            <p className="text-[10px] text-neutral-400 leading-tight line-clamp-2">
+              {detectedContent.reason}
+            </p>
           )}
         </div>
       )}

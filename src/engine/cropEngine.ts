@@ -6,6 +6,7 @@
 import { OmniPage, Point } from "../types";
 import { loadImage } from "./vision";
 import { pageBlobStore } from "../services/storage/PageBlobStore";
+import { detectDocumentQuadAsync } from "../workers/filterWorkerPool";
 
 export type CropUnit = "mm" | "cm" | "inch" | "px" | "pt";
 
@@ -218,12 +219,15 @@ export function marginsFromCropBox(
 
 /**
  * Intelligent Document Content / Contour Detection for Auto-Crop
+ * Uses multi-pass Canny/Otsu edge detector via worker pool with robust fallback.
  */
 export async function detectAutoCropBounds(dataUrl: string): Promise<NormalizedCropBox> {
   const img = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  const w = Math.min(800, img.width);
-  const h = Math.min(1000, img.height);
+  const maxDim = 600;
+  const scale = Math.min(1.0, maxDim / Math.max(img.width, img.height));
+  const w = Math.max(64, Math.round(img.width * scale));
+  const h = Math.max(64, Math.round(img.height * scale));
   canvas.width = w;
   canvas.height = h;
 
@@ -236,7 +240,40 @@ export async function detectAutoCropBounds(dataUrl: string): Promise<NormalizedC
   const imgData = ctx.getImageData(0, 0, w, h);
   const data = imgData.data;
 
-  // Find bounding box of content with luminance threshold
+  // 1. Try 7-Pass Edge & Quad Pipeline in Worker
+  try {
+    const quadRes = await detectDocumentQuadAsync(data, w, h);
+    if (quadRes && quadRes.confidence >= 0.40) {
+      const q = quadRes.quad;
+      const minX = Math.min(q.topLeft.x, q.bottomLeft.x);
+      const maxX = Math.max(q.topRight.x, q.bottomRight.x);
+      const minY = Math.min(q.topLeft.y, q.topRight.y);
+      const maxY = Math.max(q.bottomLeft.y, q.bottomRight.y);
+
+      const spanX = maxX - minX;
+      const spanY = maxY - minY;
+
+      // Ensure plausible document area (>15% of frame)
+      if (spanX > 0.2 && spanY > 0.2 && spanX < 0.99 && spanY < 0.99) {
+        const margin = 0.012; // 1.2% safety breathing margin
+        const finalX = Math.max(0, minX - margin);
+        const finalY = Math.max(0, minY - margin);
+        const finalW = Math.min(1.0 - finalX, spanX + margin * 2);
+        const finalH = Math.min(1.0 - finalY, spanY + margin * 2);
+
+        return {
+          x: Number(finalX.toFixed(4)),
+          y: Number(finalY.toFixed(4)),
+          width: Number(finalW.toFixed(4)),
+          height: Number(finalH.toFixed(4)),
+        };
+      }
+    }
+  } catch (quadErr) {
+    console.warn("Quad detection fallback in detectAutoCropBounds:", quadErr);
+  }
+
+  // 2. High-Precision Background & Content Segmentation Fallback
   let minX = w;
   let maxX = 0;
   let minY = h;
@@ -251,7 +288,7 @@ export async function detectAutoCropBounds(dataUrl: string): Promise<NormalizedC
   ];
   const avgBgLum = sampleCorners.reduce((a, b) => a + b, 0) / 4;
   const isLightBg = avgBgLum > 128;
-  const lumThreshold = isLightBg ? Math.min(230, avgBgLum - 25) : Math.max(30, avgBgLum + 25);
+  const lumThreshold = isLightBg ? Math.min(235, avgBgLum - 20) : Math.max(25, avgBgLum + 20);
 
   let foundContent = false;
 
@@ -275,9 +312,9 @@ export async function detectAutoCropBounds(dataUrl: string): Promise<NormalizedC
     return { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
   }
 
-  // Add 2.5% safe margin around detected content
-  const marginX = w * 0.025;
-  const marginY = h * 0.025;
+  // Add 1.5% safe margin around detected content
+  const marginX = w * 0.015;
+  const marginY = h * 0.015;
 
   const finalMinX = Math.max(0, minX - marginX);
   const finalMinY = Math.max(0, minY - marginY);
@@ -285,10 +322,10 @@ export async function detectAutoCropBounds(dataUrl: string): Promise<NormalizedC
   const finalMaxY = Math.min(h, maxY + marginY);
 
   return {
-    x: finalMinX / w,
-    y: finalMinY / h,
-    width: Math.min(1 - finalMinX / w, (finalMaxX - finalMinX) / w),
-    height: Math.min(1 - finalMinY / h, (finalMaxY - finalMinY) / h),
+    x: Number((finalMinX / w).toFixed(4)),
+    y: Number((finalMinY / h).toFixed(4)),
+    width: Number(Math.min(1 - finalMinX / w, (finalMaxX - finalMinX) / w).toFixed(4)),
+    height: Number(Math.min(1 - finalMinY / h, (finalMaxY - finalMinY) / h).toFixed(4)),
   };
 }
 

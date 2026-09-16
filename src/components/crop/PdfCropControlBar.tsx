@@ -35,6 +35,7 @@ import { CropLivePreviewCard } from "./CropLivePreviewCard";
 import { useShortcuts } from "../../commands/ShortcutContext";
 import { DraggableBarContainer } from "../common/DraggableBarContainer";
 import { useAdaptiveViewport } from "../../hooks/useAdaptiveViewport";
+import { toast } from "../../services/toast/toastService";
 import {
   Crop,
   Check,
@@ -505,8 +506,12 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
         activePage.processedDataUrl || activePage.originalDataUrl
       );
       onCropBoxChange(detected);
+      toast.success(
+        `Auto-detected content bounds: ${(detected.width * 100).toFixed(0)}% × ${(detected.height * 100).toFixed(0)}% frame.`
+      );
     } catch (e) {
       console.error("Auto detect crop bounds failed:", e);
+      toast.error("Auto crop detection could not find document edges.");
     } finally {
       setIsAutoDetecting(false);
     }
@@ -931,27 +936,35 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
                 <span>{isDetectingPerspective ? "Detecting Edges..." : "Auto-Detect Edges"}</span>
               </button>
 
-              {/* Candidate Selector */}
-              {detectionCandidates && detectionCandidates.length > 1 && (
+              {/* Candidate Selector & Confidence Pill */}
+              {detectionCandidates && detectionCandidates.length > 0 && (
                 <div className="flex items-center space-x-1.5 bg-neutral-800/90 px-2 py-1 rounded-lg border border-neutral-700/90 flex-shrink-0 h-[28px]">
-                  <span className="text-[10px] text-amber-400 font-mono font-bold">Candidates:</span>
-                  <select
-                    onChange={(e) => {
-                      const idx = parseInt(e.target.value, 10);
-                      const chosen = detectionCandidates[idx];
-                      if (chosen && onPerspectiveQuadChange) {
-                        onPerspectiveQuadChange(chosen.quad);
-                      }
-                    }}
-                    className="bg-transparent text-neutral-200 text-[11px] font-mono focus:outline-none cursor-pointer"
-                    title="Switch between alternative detected document contours"
-                  >
-                    {detectionCandidates.map((c, idx) => (
-                      <option key={idx} value={idx} className="bg-neutral-900 text-neutral-200">
-                        {c.label || `Contour #${idx + 1}`} ({Math.round(c.confidence * 100)}%)
-                      </option>
-                    ))}
-                  </select>
+                  {detectionCandidates.length > 1 ? (
+                    <>
+                      <span className="text-[10px] text-amber-400 font-mono font-bold">Candidates:</span>
+                      <select
+                        onChange={(e) => {
+                          const idx = parseInt(e.target.value, 10);
+                          const chosen = detectionCandidates[idx];
+                          if (chosen && onPerspectiveQuadChange) {
+                            onPerspectiveQuadChange(chosen.quad);
+                          }
+                        }}
+                        className="bg-transparent text-neutral-200 text-[11px] font-mono focus:outline-none cursor-pointer"
+                        title="Switch between alternative detected document contours"
+                      >
+                        {detectionCandidates.map((c, idx) => (
+                          <option key={idx} value={idx} className="bg-neutral-900 text-neutral-200">
+                            {c.label || `Contour #${idx + 1}`} ({Math.round(c.confidence * 100)}%)
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  ) : (
+                    <span className="text-[10px] font-mono text-emerald-400 font-medium">
+                      Confidence: {Math.round(detectionCandidates[0].confidence * 100)}%
+                    </span>
+                  )}
                 </div>
               )}
 

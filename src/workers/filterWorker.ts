@@ -7,13 +7,15 @@
 import {
   applyPixelFiltersToBuffer,
   computeRadonDeskewFromBuffer,
+  computeEnsembleDeskewFromBuffer,
   computeBlanknessFromBuffer,
   executePerspectiveWarpBuffer,
   detectDocumentQuadFromBuffer,
+  detectPageOrientationFromBuffer,
 } from "../engine/pixelCore";
 
 self.onmessage = (event: MessageEvent) => {
-  const { id, type, buffer, width, height, filters, isFast } = event.data;
+  const { id, type, buffer, width, height, filters, isFast, sensitivity } = event.data;
 
   try {
     switch (type) {
@@ -34,21 +36,35 @@ self.onmessage = (event: MessageEvent) => {
 
       case "CALCULATE_DESKEW": {
         const u8 = new Uint8ClampedArray(buffer);
-        const angle = computeRadonDeskewFromBuffer(u8, width, height);
+        const deskewData = computeEnsembleDeskewFromBuffer(u8, width, height);
         (self as any).postMessage({
           id,
           type: "CALCULATE_DESKEW_SUCCESS",
-          angle,
+          angle: deskewData.angle,
+          confidence: deskewData.confidence,
+          method: deskewData.method,
+          spread: deskewData.spread,
         });
         break;
       }
 
       case "ANALYZE_BLANKNESS": {
         const u8 = new Uint8ClampedArray(buffer);
-        const result = computeBlanknessFromBuffer(u8, width, height);
+        const result = computeBlanknessFromBuffer(u8, width, height, sensitivity);
         (self as any).postMessage({
           id,
           type: "ANALYZE_BLANKNESS_SUCCESS",
+          result,
+        });
+        break;
+      }
+
+      case "DETECT_ORIENTATION": {
+        const u8 = new Uint8ClampedArray(buffer);
+        const result = detectPageOrientationFromBuffer(u8, width, height);
+        (self as any).postMessage({
+          id,
+          type: "DETECT_ORIENTATION_SUCCESS",
           result,
         });
         break;

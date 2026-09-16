@@ -40,7 +40,7 @@ import {
 } from "./engine/pdf";
 import { extractDocumentIntelligence, autoRedactPIIOnPage } from "./engine/intelligence";
 import { packageTitanProject, extractTitanProject } from "./engine/project";
-import { executePhysicalPageCrop, NormalizedCropBox } from "./engine/cropEngine";
+import { executePhysicalPageCrop, NormalizedCropBox, detectAutoCropBounds } from "./engine/cropEngine";
 import {
   classifyImageContent,
   ContentClassificationResult,
@@ -903,13 +903,20 @@ export function AppContent() {
       const page = document.pages[pageIdx];
       if (!page) return;
 
+      recordHistorySnapshot(document);
       setIsProcessing(true);
-      setProcessingMessage("Calculating Radon/Hough Deskew Angle...");
+      setProcessingMessage("Running Ensemble Deskew (Radon + Hough + Run-Length)...");
 
       try {
         const sourceUrl = page.originalDataUrl || (await pageBlobStore.resolvePageUrl(page, "original"));
         const angle = await calculateRadonDeskewAngle(sourceUrl);
-        const newFilters = { ...page.filters, deskewAngle: angle };
+
+        if (Math.abs(angle) < 0.2) {
+          toast.success(`Page ${pageIdx + 1} is already perfectly aligned (residual skew < 0.2°).`);
+          return;
+        }
+
+        const newFilters = { ...page.filters, deskewAngle: Number(angle.toFixed(2)) };
         const { processedDataUrl } = await processImagePipeline(sourceUrl, newFilters);
         const thumb = (await pageBlobStore.generateThumbnail(processedDataUrl, 240)) || processedDataUrl;
 
@@ -930,17 +937,24 @@ export function AppContent() {
             thumbnailDataUrl: thumb,
             isModified: true,
           };
-          return { ...prev, pages: newPages };
+          return { ...prev, pages: newPages, updatedAt: new Date().toISOString() };
         });
+
+        if (pageIdx === activePageIndex) {
+          latestFiltersRef.current = { ...newFilters };
+        }
+
         setIsDirty(true);
+        toast.success(`Deskewed Page ${pageIdx + 1} by ${angle > 0 ? "+" : ""}${angle.toFixed(2)}° (Ensemble Hough/Radon). Press Ctrl+Z to undo.`);
       } catch (err) {
-        console.error(err);
+        console.error("Auto deskew error:", err);
+        toast.error("Auto deskew encountered an issue.");
       } finally {
         setIsProcessing(false);
         setProcessingMessage("");
       }
     },
-    [document.pages, activePageIndex]
+    [document, activePageIndex, recordHistorySnapshot]
   );
 
   const handleAutoCrop = useCallback(
@@ -948,45 +962,46 @@ export function AppContent() {
       const page = document.pages[pageIdx];
       if (!page) return;
 
+      recordHistorySnapshot(document);
       setIsProcessing(true);
-      setProcessingMessage("Detecting Document Margins & Contours...");
+      setProcessingMessage("Detecting 7-pass document boundary contours...");
 
       try {
         const sourceUrl = page.originalDataUrl || (await pageBlobStore.resolvePageUrl(page, "original"));
-        const bbox = await detectDocumentBoundingBox(sourceUrl);
-        // Apply whitening and crop-oriented enhancement
-        const newFilters = { ...page.filters, backgroundWhiten: true, shadowRemoval: true };
-        const { processedDataUrl } = await processImagePipeline(sourceUrl, newFilters);
-        const thumb = (await pageBlobStore.generateThumbnail(processedDataUrl, 240)) || processedDataUrl;
+        const cropBox = await detectAutoCropBounds(sourceUrl);
 
-        let processedBlobId = page.processedBlobId;
-        let finalProcessedUrl = processedDataUrl;
-        if (page.originalBlobId || page.processedBlobId) {
-          processedBlobId = await pageBlobStore.saveDataUrl(page.id, "processed", processedDataUrl);
-          finalProcessedUrl = "";
+        // Check if detected crop actually isolates a boundary (not full frame)
+        const isMeaningfulCrop =
+          cropBox.x > 0.015 ||
+          cropBox.y > 0.015 ||
+          cropBox.width < 0.985 ||
+          cropBox.height < 0.985;
+
+        if (!isMeaningfulCrop) {
+          toast.success(`Page ${pageIdx + 1} margins are already optimal.`);
+          return;
         }
+
+        // Physically crop page with lossless geometry transform
+        const croppedPage = await executePhysicalPageCrop(page, cropBox);
 
         setDocument((prev) => {
           const newPages = [...prev.pages];
-          newPages[pageIdx] = {
-            ...newPages[pageIdx],
-            filters: newFilters,
-            processedBlobId,
-            processedDataUrl: finalProcessedUrl,
-            thumbnailDataUrl: thumb,
-            isModified: true,
-          };
-          return { ...prev, pages: newPages };
+          newPages[pageIdx] = croppedPage;
+          return { ...prev, pages: newPages, updatedAt: new Date().toISOString() };
         });
+
         setIsDirty(true);
+        toast.success(`Auto-cropped Page ${pageIdx + 1} (${(cropBox.width * 100).toFixed(0)}% × ${(cropBox.height * 100).toFixed(0)}% frame). Press Ctrl+Z to undo.`);
       } catch (err) {
-        console.error(err);
+        console.error("Auto crop error:", err);
+        toast.error("Auto crop encountered an issue.");
       } finally {
         setIsProcessing(false);
         setProcessingMessage("");
       }
     },
-    [document.pages, activePageIndex]
+    [document, activePageIndex, recordHistorySnapshot]
   );
 
   // -------------------------------------------------------------

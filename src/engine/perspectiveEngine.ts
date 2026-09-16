@@ -184,6 +184,8 @@ export function calculatePerspectiveGridLines(quad: PerspectiveQuad): {
   return { verticalLines, horizontalLines };
 }
 
+import { getAutoFeatureSettings } from "../services/settings/autoFeatureSettings";
+
 /**
  * Automatically detects document edge boundaries from an image URL or base64 data.
  * Offloads heavy edge gradient analysis to Web Worker to avoid blocking UI.
@@ -195,6 +197,22 @@ export async function detectDocumentPerspective(
   confidence: number;
   candidates: PerspectiveDetectionCandidate[];
 }> {
+  const fallback: PerspectiveQuad = {
+    topLeft: { x: 0.03, y: 0.03 },
+    topRight: { x: 0.97, y: 0.03 },
+    bottomRight: { x: 0.97, y: 0.97 },
+    bottomLeft: { x: 0.03, y: 0.97 },
+  };
+
+  const settings = getAutoFeatureSettings();
+  if (!settings.autoEdgeDetection) {
+    return {
+      quad: fallback,
+      confidence: 0,
+      candidates: [],
+    };
+  }
+
   try {
     const img = await loadImage(sourceUrl);
     const canvas = document.createElement("canvas");

@@ -325,12 +325,34 @@ export async function parseLegacyDocFile(file: File): Promise<DocumentImportResu
   }
 }
 
+import { normalizeImageExifOrientation } from "./exifUtils";
+import { getAutoFeatureSettings } from "../settings/autoFeatureSettings";
+
 /**
- * Decode image file (JPG, PNG, WEBP, BMP, GIF, SVG) into DataURL and dimensions
+ * Decode image file (JPG, PNG, WEBP, BMP, GIF, SVG) into DataURL and dimensions,
+ * applying EXIF orientation transforms (tags 1-8) before any downstream processing.
  */
 export async function decodeImageFile(
   file: File
-): Promise<{ dataUrl: string; width: number; height: number; fileName: string }> {
+): Promise<{ dataUrl: string; width: number; height: number; fileName: string; exifOrientation?: number }> {
+  const settings = getAutoFeatureSettings();
+
+  // If EXIF auto-rotate is enabled, normalize orientation as the absolute first step
+  if (settings.autoRotateExif) {
+    try {
+      const normalized = await normalizeImageExifOrientation(file);
+      return {
+        dataUrl: normalized.dataUrl,
+        width: normalized.width,
+        height: normalized.height,
+        fileName: file.name,
+        exifOrientation: normalized.orientation,
+      };
+    } catch (e) {
+      console.warn("EXIF normalization failed, falling back to raw decoder:", e);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -342,6 +364,7 @@ export async function decodeImageFile(
           width: img.naturalWidth || img.width || 1200,
           height: img.naturalHeight || img.height || 1600,
           fileName: file.name,
+          exifOrientation: 1,
         });
       };
       img.onerror = () => {
@@ -351,6 +374,7 @@ export async function decodeImageFile(
           width: 1200,
           height: 1600,
           fileName: file.name,
+          exifOrientation: 1,
         });
       };
       img.src = dataUrl;

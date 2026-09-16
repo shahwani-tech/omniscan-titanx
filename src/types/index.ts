@@ -339,6 +339,8 @@ export interface AutoProcessingPlan {
   appliedCorrections: string[];
   shouldDeskew: boolean;
   targetDeskewAngle: number;
+  shouldRotate?: boolean;
+  targetRotation?: number;
   shouldCrop: boolean;
   targetCropBox?: { x: number; y: number; width: number; height: number };
   targetFilters: ImageFilterPipeline;

@@ -12,8 +12,19 @@ import { DEFAULT_FILTERS } from "./vision";
 
 export type DetectedContentType = "text-document" | "photo-id" | "mixed-content";
 
+export type DocumentSubCategory =
+  | "id-card"
+  | "passport"
+  | "receipt"
+  | "invoice"
+  | "contract"
+  | "color-photo"
+  | "standard";
+
 export interface ContentClassificationResult {
   detectedType: DetectedContentType;
+  subCategory?: DocumentSubCategory;
+  isIdOrBadge?: boolean;
   label: "Text Document" | "Photo/ID Card" | "Mixed Content";
   confidence: number; // 0 to 1
   recommendedPreset: CamScannerPresetId;
@@ -26,8 +37,12 @@ export interface ContentClassificationResult {
     histogramSpread: number;
     skinToneScore: number;
     textContrastScore: number;
+    tableGridScore?: number;
+    aspectRatio?: number;
   };
 }
+
+import { getAutoFeatureSettings } from "../services/settings/autoFeatureSettings";
 
 /**
  * Highly optimized, lightweight content analyzer.
@@ -37,6 +52,11 @@ export interface ContentClassificationResult {
 export async function classifyImageContent(
   imageSource: string | HTMLImageElement | HTMLCanvasElement
 ): Promise<ContentClassificationResult> {
+  const settings = getAutoFeatureSettings();
+  if (!settings.autoClassification) {
+    return getFallbackClassification();
+  }
+
   let img: HTMLImageElement | HTMLCanvasElement;
 
   if (typeof imageSource === "string") {
@@ -158,64 +178,180 @@ export async function classifyImageContent(
   }
   const histogramSpread = histSpread / 16;
 
+  // Compute table grid / structured line score
+  let horizLineHits = 0;
+  let vertLineHits = 0;
+  for (let y = 10; y < sampleSize - 10; y += 4) {
+    let continuousDark = 0;
+    for (let x = 10; x < sampleSize - 10; x++) {
+      const idx = (y * sampleSize + x) * 4;
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      if (lum < 110) continuousDark++;
+      else continuousDark = 0;
+      if (continuousDark > 20) {
+        horizLineHits++;
+        break;
+      }
+    }
+  }
+  for (let x = 10; x < sampleSize - 10; x += 4) {
+    let continuousDark = 0;
+    for (let y = 10; y < sampleSize - 10; y++) {
+      const idx = (y * sampleSize + x) * 4;
+      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+      if (lum < 110) continuousDark++;
+      else continuousDark = 0;
+      if (continuousDark > 20) {
+        vertLineHits++;
+        break;
+      }
+    }
+  }
+  const totalLineChecks = ((sampleSize - 20) / 4) * 2;
+  const tableGridScore = Number(((horizLineHits + vertLineHits) / totalLineChecks).toFixed(3));
+  const origWidth = img.width || sampleSize;
+  const origHeight = img.height || sampleSize;
+  const aspectRatio = Number((origWidth / origHeight).toFixed(3));
+
   // -------------------------------------------------------------
-  // Decision Tree Classifier
+  // Multi-Signal Decision Tree Classifier
   // -------------------------------------------------------------
   let detectedType: DetectedContentType = "mixed-content";
+  let subCategory: DocumentSubCategory = "standard";
   let label: "Text Document" | "Photo/ID Card" | "Mixed Content" = "Mixed Content";
   let recommendedPreset: CamScannerPresetId = "auto";
   let confidence = 0.85;
   let reason = "";
   let recommendedFilters: ImageFilterPipeline = { ...DEFAULT_FILTERS };
+  let isIdOrBadge = false;
 
-  // Rule 1: Photo / ID Card Identification
-  // High skin tone concentration OR high color saturation with wide chromatic variance
-  const isPhotoCard =
-    skinToneScore > 0.035 ||
-    (saturationMean > 0.17 && colorVariance > 0.08) ||
-    (saturationMean > 0.14 && skinToneScore > 0.02);
+  // Signal Detectors
+  const isIdAspect = (aspectRatio >= 1.40 && aspectRatio <= 1.75) || (aspectRatio >= 0.58 && aspectRatio <= 0.72);
+  const isPassportAspect = (aspectRatio >= 0.68 && aspectRatio <= 0.82) || (aspectRatio >= 1.25 && aspectRatio <= 1.45);
+  const isReceiptAspect = aspectRatio < 0.55;
 
-  // Rule 2: Pure Text Document Identification
-  // Low saturation, high bimodal contrast (paper + text > 50%), low skin tone
-  const isTextDocument =
-    !isPhotoCard &&
-    saturationMean < 0.12 &&
-    (textContrastScore > 0.40 || (nearWhitePixels / totalPixels > 0.60 && darkInkPixels / totalPixels > 0.03)) &&
-    skinToneScore < 0.02;
+  const hasSubstantialFace = skinToneScore > 0.035;
+  const hasVibrantColors = saturationMean > 0.16 && colorVariance > 0.07;
+  const isLowColor = saturationMean < 0.10;
 
-  if (isPhotoCard) {
+  if (isIdAspect && (hasSubstantialFace || hasVibrantColors || skinToneScore > 0.015)) {
     detectedType = "photo-id";
+    subCategory = "id-card";
+    isIdOrBadge = true;
     label = "Photo/ID Card";
-    confidence = Math.min(0.98, 0.75 + skinToneScore * 3 + saturationMean * 0.5);
+    confidence = Math.min(0.98, 0.82 + skinToneScore * 2 + (isIdAspect ? 0.08 : 0));
     recommendedPreset = "photo";
-    reason = `Photo content detected (${(skinToneScore * 100).toFixed(1)}% skin tone, ${(saturationMean * 100).toFixed(1)}% color saturation). Photo-preserving filter tuned for portrait fidelity.`;
-
-    // Photo-preserving filter baseline:
-    // Gentle contrast, natural gamma, color preservation, NO aggressive background whitening that erases faces
+    reason = `ID Card / Driver License detected (${(skinToneScore * 100).toFixed(1)}% portrait zone, aspect ratio ${aspectRatio}). Tuned for ID photo fidelity and legible microtext.`;
+    recommendedFilters = {
+      ...DEFAULT_FILTERS,
+      preset: "photo",
+      brightness: 6,
+      contrast: 18,
+      gamma: 1.02,
+      sharpness: 28,
+      denoise: 12,
+      saturation: 8,
+      backgroundWhiten: false,
+      shadowRemoval: false,
+      colorMode: "color",
+      invert: false,
+    };
+  } else if (isPassportAspect && hasSubstantialFace && skinToneScore > 0.05) {
+    detectedType = "photo-id";
+    subCategory = "passport";
+    isIdOrBadge = true;
+    label = "Photo/ID Card";
+    confidence = Math.min(0.98, 0.85 + skinToneScore * 2);
+    recommendedPreset = "photo";
+    reason = `Passport / Portrait page detected (${(skinToneScore * 100).toFixed(1)}% skin tone). Protective portrait lighting applied.`;
     recommendedFilters = {
       ...DEFAULT_FILTERS,
       preset: "photo",
       brightness: 6,
       contrast: 14,
-      gamma: 1.05,
-      sharpness: 20,
+      gamma: 1.04,
+      sharpness: 22,
       denoise: 10,
-      saturation: 8,
-      exposure: 0,
-      backgroundWhiten: false, // Critical: don't blow out photo backgrounds/skin
+      saturation: 6,
+      backgroundWhiten: false,
       shadowRemoval: false,
       colorMode: "color",
       invert: false,
     };
-  } else if (isTextDocument) {
+  } else if (isReceiptAspect && isLowColor && darkInkPixels / totalPixels > 0.02) {
     detectedType = "text-document";
+    subCategory = "receipt";
     label = "Text Document";
-    confidence = Math.min(0.99, 0.78 + textContrastScore * 0.3);
+    confidence = Math.min(0.96, 0.85 + (1 - saturationMean) * 0.1);
     recommendedPreset = "enhance";
-    reason = `High-contrast text document detected (${(textContrastScore * 100).toFixed(0)}% paper/ink contrast, low saturation). Text-enhancement filter applied for sharp clarity.`;
-
-    // Text document filter baseline:
-    // Deep contrast, background whitening for pure white paper, unsharp mask for crisp letters, shadow removal
+    reason = `Receipt detected (narrow aspect ratio ${aspectRatio}, thermal paper characteristics). Contrast maximized for faint thermal print.`;
+    recommendedFilters = {
+      ...DEFAULT_FILTERS,
+      preset: "enhance",
+      brightness: 14,
+      contrast: 42,
+      gamma: 0.88,
+      sharpness: 50,
+      denoise: 25,
+      saturation: 0,
+      backgroundWhiten: true,
+      backgroundWhitenThreshold: 215,
+      shadowRemoval: true,
+      shadowStrength: 80,
+      colorMode: "color",
+      invert: false,
+    };
+  } else if (tableGridScore > 0.12 && isLowColor && textContrastScore > 0.35) {
+    detectedType = "text-document";
+    subCategory = "invoice";
+    label = "Text Document";
+    confidence = Math.min(0.97, 0.82 + tableGridScore * 0.4);
+    recommendedPreset = "enhance";
+    reason = `Structured invoice/table detected (${(tableGridScore * 100).toFixed(0)}% grid line score). Fine lines and numerical text enhanced.`;
+    recommendedFilters = {
+      ...DEFAULT_FILTERS,
+      preset: "enhance",
+      brightness: 10,
+      contrast: 36,
+      gamma: 0.94,
+      sharpness: 42,
+      denoise: 18,
+      saturation: 0,
+      backgroundWhiten: true,
+      backgroundWhitenThreshold: 220,
+      shadowRemoval: true,
+      shadowStrength: 70,
+      colorMode: "color",
+      invert: false,
+    };
+  } else if (hasSubstantialFace || (hasVibrantColors && colorVariance > 0.10)) {
+    detectedType = "photo-id";
+    subCategory = "color-photo";
+    label = "Photo/ID Card";
+    confidence = Math.min(0.97, 0.78 + saturationMean * 0.6);
+    recommendedPreset = "photo";
+    reason = `Color photo detected (${(saturationMean * 100).toFixed(1)}% saturation). Natural tones and shadow subtleties preserved.`;
+    recommendedFilters = {
+      ...DEFAULT_FILTERS,
+      preset: "photo",
+      brightness: 4,
+      contrast: 12,
+      gamma: 1.05,
+      sharpness: 18,
+      denoise: 10,
+      saturation: 10,
+      backgroundWhiten: false,
+      shadowRemoval: false,
+      colorMode: "color",
+      invert: false,
+    };
+  } else if (isLowColor && (textContrastScore > 0.38 || (nearWhitePixels / totalPixels > 0.55 && darkInkPixels / totalPixels > 0.02))) {
+    detectedType = "text-document";
+    subCategory = "contract";
+    label = "Text Document";
+    confidence = Math.min(0.99, 0.80 + textContrastScore * 0.25);
+    recommendedPreset = "enhance";
+    reason = `High-contrast text document detected (${(textContrastScore * 100).toFixed(0)}% paper/ink contrast). Clean paper whitening and sharp letter edge rendering applied.`;
     recommendedFilters = {
       ...DEFAULT_FILTERS,
       preset: "enhance",
@@ -233,14 +369,12 @@ export async function classifyImageContent(
       invert: false,
     };
   } else {
-    // Mixed Content / Hybrid
     detectedType = "mixed-content";
+    subCategory = "standard";
     label = "Mixed Content";
     confidence = 0.82;
     recommendedPreset = "auto";
     reason = `Mixed document content detected (balanced color & text). Auto-balanced tuning applied.`;
-
-    // Balanced default filter baseline:
     recommendedFilters = {
       ...DEFAULT_FILTERS,
       preset: "auto",
@@ -261,6 +395,8 @@ export async function classifyImageContent(
 
   return {
     detectedType,
+    subCategory,
+    isIdOrBadge,
     label,
     confidence: Number(confidence.toFixed(2)),
     recommendedPreset,
@@ -273,6 +409,8 @@ export async function classifyImageContent(
       histogramSpread: Number(histogramSpread.toFixed(3)),
       skinToneScore: Number(skinToneScore.toFixed(3)),
       textContrastScore: Number(textContrastScore.toFixed(3)),
+      tableGridScore,
+      aspectRatio,
     },
   };
 }
@@ -280,6 +418,8 @@ export async function classifyImageContent(
 export function getFallbackClassification(): ContentClassificationResult {
   return {
     detectedType: "mixed-content",
+    subCategory: "standard",
+    isIdOrBadge: false,
     label: "Mixed Content",
     confidence: 0.7,
     recommendedPreset: "auto",
@@ -292,6 +432,8 @@ export function getFallbackClassification(): ContentClassificationResult {
       histogramSpread: 0.5,
       skinToneScore: 0,
       textContrastScore: 0.5,
+      tableGridScore: 0,
+      aspectRatio: 1.0,
     },
   };
 }
