@@ -229,6 +229,18 @@ export const MASTER_COMMAND_DEFINITIONS: CommandDefinition[] = [
     keywords: ["shortcuts", "hotkeys", "help", "keybindings", "customize"],
   },
   {
+    id: "app.autoFeaturesSettings",
+    label: "Auto Features & Detection Settings",
+    description: "Configure edge detection, deskew, EXIF rotation, color enhancement, and confidence badges",
+    category: "Global",
+    defaultShortcut: "Ctrl+,",
+    alternativeShortcuts: ["Cmd+,"],
+    scope: "global",
+    allowInInputs: false,
+    icon: "Sparkles",
+    keywords: ["auto", "features", "detection", "deskew", "crop", "exif", "orientation", "settings", "confidence", "badges"],
+  },
+  {
     id: "app.escape",
     label: "Escape / Cancel Operation",
     description: "Close top modal, dismiss palette, or exit active crop/tool",

@@ -18,6 +18,7 @@ import {
 import { OmniPage, AppLanguage } from "../../types";
 import { t } from "../../engine/i18n";
 import { UniversalNumericInput } from "../common/UniversalNumericInput";
+import { ConfidenceBadge } from "../common/ConfidenceBadge";
 
 interface StatusBarProps {
   activePage: OmniPage | null;
@@ -108,10 +109,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
         {/* Blank warning */}
         {activePage?.isBlank && (
-          <div className="flex items-center space-x-1 text-amber-400 bg-amber-950/40 px-1.5 py-0.5 rounded border border-amber-800/40 text-xs">
-            <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>{t("status.blankDetected", language)}</span>
-          </div>
+          <ConfidenceBadge
+            score={activePage.blankScore ? Math.round(activePage.blankScore * 100) : 95}
+            label={t("status.blankDetected", language)}
+            featureName="Blank Page Detection"
+            compact
+          />
         )}
       </div>
 

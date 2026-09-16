@@ -220,6 +220,7 @@ export const CropLivePreviewCard: React.FC<CropLivePreviewCardProps> = ({
     activePage.originalBlobId,
     activePage.processedDataUrl,
     activePage.originalDataUrl,
+    activePage.lastModifiedAt,
     resolvedImageUrl,
   ]);
 

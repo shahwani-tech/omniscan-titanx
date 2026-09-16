@@ -7,6 +7,7 @@ import { OmniPage, Point } from "../types";
 import { loadImage } from "./vision";
 import { pageBlobStore } from "../services/storage/PageBlobStore";
 import { detectDocumentQuadAsync } from "../workers/filterWorkerPool";
+import { getAutoFeatureSettings } from "../services/settings/autoFeatureSettings";
 
 export type CropUnit = "mm" | "cm" | "inch" | "px" | "pt";
 
@@ -222,6 +223,11 @@ export function marginsFromCropBox(
  * Uses multi-pass Canny/Otsu edge detector via worker pool with robust fallback.
  */
 export async function detectAutoCropBounds(dataUrl: string): Promise<NormalizedCropBox> {
+  const settings = getAutoFeatureSettings();
+  if (!settings.edgeDetection.enabled) {
+    return { x: 0, y: 0, width: 1, height: 1 };
+  }
+
   const img = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
   const maxDim = 600;

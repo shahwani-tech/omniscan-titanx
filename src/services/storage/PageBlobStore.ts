@@ -111,7 +111,7 @@ class PageBlobStore {
    * Save a binary Blob for a page
    */
   async saveBlob(pageId: string, type: "original" | "processed", blob: Blob): Promise<string> {
-    const id = `blob_${pageId}_${type}`;
+    const id = `blob_${pageId}_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const record: StoredBlobRecord = {
       id,
       pageId,
@@ -310,12 +310,14 @@ class PageBlobStore {
     let originalBlobId = page.originalBlobId;
     let processedBlobId = page.processedBlobId;
 
-    if (!originalBlobId && page.originalDataUrl && page.originalDataUrl.length > 2048) {
+    // If page has a new or updated originalDataUrl, persist it as a binary blob
+    if (page.originalDataUrl && (page.originalDataUrl.startsWith("data:") || page.originalDataUrl.length > 2048)) {
       originalBlobId = await this.saveDataUrl(page.id, "original", page.originalDataUrl);
       modified = true;
     }
 
-    if (!processedBlobId && page.processedDataUrl && page.processedDataUrl.length > 2048) {
+    // If page has a new or updated processedDataUrl, persist it as a binary blob
+    if (page.processedDataUrl && (page.processedDataUrl.startsWith("data:") || page.processedDataUrl.length > 2048)) {
       processedBlobId = await this.saveDataUrl(page.id, "processed", page.processedDataUrl);
       modified = true;
     }
@@ -382,14 +384,27 @@ class PageBlobStore {
       return new Promise<void>((resolve) => {
         const tx = db.transaction(STORE_NAME, "readwrite");
         const store = tx.objectStore(STORE_NAME);
-        store.delete(`blob_${pageId}_original`);
-        store.delete(`blob_${pageId}_processed`);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
+        if (store.indexNames.contains("pageId")) {
+          const index = store.index("pageId");
+          const req = index.getAllKeys(pageId);
+          req.onsuccess = () => {
+            const keys = req.result;
+            keys.forEach((key) => store.delete(key));
+            resolve();
+          };
+          req.onerror = () => resolve();
+        } else {
+          store.delete(`blob_${pageId}_original`);
+          store.delete(`blob_${pageId}_processed`);
+          resolve();
+        }
       });
     } catch {
-      this.memoryFallback.delete(`blob_${pageId}_original`);
-      this.memoryFallback.delete(`blob_${pageId}_processed`);
+      for (const k of Array.from(this.memoryFallback.keys())) {
+        if (k.startsWith(`blob_${pageId}_`)) {
+          this.memoryFallback.delete(k);
+        }
+      }
     }
   }
 

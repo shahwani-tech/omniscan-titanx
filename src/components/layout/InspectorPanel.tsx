@@ -45,6 +45,7 @@ import { t } from "../../engine/i18n";
 import { BUILTIN_CAMSCANNER_PRESETS } from "../../engine/filters";
 import { UniversalNumericInput } from "../common/UniversalNumericInput";
 import { UnifiedColorGradingPanel } from "../common/UnifiedColorGradingPanel";
+import { ConfidenceBadge } from "../common/ConfidenceBadge";
 
 interface InspectorPanelProps {
   activePage: OmniPage | null;
@@ -271,6 +272,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 )}
               </div>
 
+              {/* Blank Page Detection Indicator */}
+              {activePage?.isBlank && (
+                <div className="flex items-center justify-between p-2 rounded-lg bg-amber-950/40 border border-amber-800/50 text-[11px]">
+                  <div className="flex items-center space-x-1.5 text-amber-300 font-medium">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Blank Page Detected</span>
+                  </div>
+                  <ConfidenceBadge
+                    score={activePage.blankScore ? Math.round(activePage.blankScore * 100) : 95}
+                    featureName="Blank Page Detection"
+                  />
+                </div>
+              )}
+
               {activePage?.adaptiveAnalysis ? (
                 <div className="space-y-1.5 bg-black/40 p-2 rounded-lg border border-neutral-800 text-[10px]">
                   <div className="flex items-center justify-between text-neutral-300">
@@ -411,7 +426,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               {/* Deskew Angle Slider */}
               <div className="space-y-1 bg-neutral-850 p-2 rounded border border-neutral-800">
                 <div className="flex items-center justify-between text-neutral-300 text-xs select-none">
-                  <span>Fine Deskew Angle</span>
+                  <div className="flex items-center space-x-1.5">
+                    <span>Fine Deskew Angle</span>
+                    {filters.deskewAngle !== 0 && (
+                      <ConfidenceBadge
+                        score={92}
+                        label={`${filters.deskewAngle > 0 ? "+" : ""}${filters.deskewAngle.toFixed(1)}°`}
+                        featureName="Auto Deskew"
+                      />
+                    )}
+                  </div>
                   <div className="flex items-center space-x-1.5">
                     <button
                       type="button"
@@ -606,9 +630,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     <span className="text-[10px] text-purple-300 font-mono uppercase tracking-wider">
                       Classification: {intel.classification?.category || "General"}
                     </span>
-                    <span className="text-[10px] font-mono bg-purple-900/60 text-purple-200 px-1.5 py-0.5 rounded">
-                      {Math.round((intel.classification?.confidence || 0) * 100)}% Conf
-                    </span>
+                    <ConfidenceBadge
+                      score={(intel.classification?.confidence || 0) * 100}
+                      featureName="Document Classification"
+                    />
                   </div>
                   <div className="text-sm font-bold text-white">
                     {intel.classification?.type || "Standard Document"}

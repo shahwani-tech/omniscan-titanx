@@ -188,21 +188,22 @@ export async function normalizeImageExifOrientation(
       ctx.translate(0, canvasHeight);
       ctx.scale(1, -1);
       break;
-    case 5: // Rotate 90° CW + Flip Horizontal
-      ctx.rotate(0.5 * Math.PI);
+    case 5: // Transpose: Rotate 90° CW + Flip Horizontal
       ctx.scale(1, -1);
+      ctx.rotate(-0.5 * Math.PI);
       break;
-    case 6: // Rotate 90° CW (Most common - phone held in portrait)
+    case 6: // Rotate 90° CW (standard right-handed phone camera)
       ctx.translate(canvasWidth, 0);
       ctx.rotate(0.5 * Math.PI);
       break;
-    case 7: // Rotate 90° CCW + Flip Horizontal
-      ctx.rotate(1.5 * Math.PI);
-      ctx.scale(1, -1);
+    case 7: // Transverse: Rotate 90° CCW + Flip Horizontal
+      ctx.translate(canvasWidth, canvasHeight);
+      ctx.scale(-1, 1);
+      ctx.rotate(0.5 * Math.PI);
       break;
-    case 8: // Rotate 90° CCW (phone held portrait other direction)
+    case 8: // Rotate 90° CCW / 270° CW (left-handed phone camera)
       ctx.translate(0, canvasHeight);
-      ctx.rotate(1.5 * Math.PI);
+      ctx.rotate(-0.5 * Math.PI);
       break;
   }
 

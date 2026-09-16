@@ -93,13 +93,14 @@ interface DocumentCanvasProps {
   onImportFiles?: () => void;
   onAddBlankPage?: () => void;
   onOpenPhotoPrintStudio?: () => void;
-  onApplyPageCrop?: (cropBox: NormalizedCropBox, scope: "current" | "selected" | "all") => void;
+  onApplyPageCrop?: (cropBox: NormalizedCropBox, scope: "current" | "selected" | "all") => void | Promise<void>;
   onApplyPerspectiveWarp?: (
     quad: PerspectiveQuad,
     preset: PerspectivePreset,
     fineDeskew: boolean,
     scope: "current" | "selected" | "all"
   ) => void | Promise<void>;
+  isProcessing?: boolean;
 }
 
 export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
@@ -110,6 +111,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   zoom,
   document: propDocument,
   activePagePreviewUrl,
+  isProcessing,
   onZoomChange,
   onSelectPage,
   onViewModeChange,
@@ -603,7 +605,14 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       if (createdUrl) pageBlobStore.revokeBlobUrl(createdUrl);
       if (createdOrigUrl) pageBlobStore.revokeBlobUrl(createdOrigUrl);
     };
-  }, [activePage?.id, activePage?.processedBlobId, activePage?.originalBlobId, activePage?.processedDataUrl]);
+  }, [
+    activePage?.id,
+    activePage?.processedBlobId,
+    activePage?.originalBlobId,
+    activePage?.processedDataUrl,
+    activePage?.originalDataUrl,
+    activePage?.lastModifiedAt,
+  ]);
 
   const displayedPageUrl =
     (activePage && activePagePreviewUrl) ||
@@ -807,9 +816,10 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     }
   };
 
-  const handleApplyCrop = () => {
+  const handleApplyCrop = async () => {
     if (onApplyPageCrop) {
-      onApplyPageCrop(cropBox, cropScope);
+      await onApplyPageCrop(cropBox, cropScope);
+      handleResetCrop();
     }
   };
 
@@ -928,6 +938,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         fineDeskewEnabled,
         cropScope
       );
+      handleResetPerspectiveQuad();
     }
   };
 
@@ -1025,6 +1036,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           onFineDeskewToggle={setFineDeskewEnabled}
           perspectivePreviewUrl={perspectivePreviewUrl}
           resolvedImageUrl={displayedPageUrl || resolvedActivePageUrl}
+          isProcessing={isProcessing}
           onApplyPerspectiveWarp={handleApplyPerspectiveWarp}
           onResetPerspectiveQuad={handleResetPerspectiveQuad}
         />

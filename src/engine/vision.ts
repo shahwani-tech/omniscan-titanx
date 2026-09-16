@@ -9,6 +9,7 @@ import {
   analyzeBlanknessAsync,
   detectDocumentQuadAsync,
 } from "../workers/filterWorkerPool";
+import { getAutoFeatureSettings } from "../services/settings/autoFeatureSettings";
 
 export const DEFAULT_FILTERS: ImageFilterPipeline = {
   rotation: 0,
@@ -73,6 +74,11 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
  * Returns angle in degrees between -15 and 15 deg
  */
 export async function calculateDeskewAngle(dataUrl: string): Promise<number> {
+  const settings = getAutoFeatureSettings();
+  if (!settings.deskew.enabled) {
+    return 0; // Skip entirely
+  }
+
   const img = await loadImage(dataUrl);
   // Downscale for fast angle detection
   const maxDim = 600;
@@ -89,7 +95,12 @@ export async function calculateDeskewAngle(dataUrl: string): Promise<number> {
   ctx.drawImage(img, 0, 0, w, h);
   const imgData = ctx.getImageData(0, 0, w, h);
 
-  return calculateDeskewAsync(imgData.data, w, h);
+  const rawAngle = await calculateDeskewAsync(imgData.data, w, h);
+  const maxLimit = settings.deskew.maxAngle || 10;
+  if (Math.abs(rawAngle) > maxLimit) {
+    return Math.sign(rawAngle) * maxLimit;
+  }
+  return rawAngle;
 }
 
 export const calculateRadonDeskewAngle = calculateDeskewAngle;
@@ -103,6 +114,8 @@ export async function applyAdaptiveDefectAnalysis(dataUrl: string): Promise<{
   isBlank: boolean;
   score: number;
 }> {
+  const settings = getAutoFeatureSettings();
+
   const img = await loadImage(dataUrl);
   const maxDim = 600;
   const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
@@ -118,13 +131,21 @@ export async function applyAdaptiveDefectAnalysis(dataUrl: string): Promise<{
   ctx.drawImage(img, 0, 0, w, h);
   const imgData = ctx.getImageData(0, 0, w, h);
 
-  const [skewAngle, blankResult] = await Promise.all([
-    calculateDeskewAsync(imgData.data, w, h),
-    analyzeBlanknessAsync(imgData.data, w, h),
-  ]);
+  const deskewPromise = settings.deskew.enabled
+    ? calculateDeskewAsync(imgData.data, w, h)
+    : Promise.resolve(0);
+
+  const blankPromise = settings.blankPage.enabled
+    ? analyzeBlanknessAsync(imgData.data, w, h)
+    : Promise.resolve({ isBlank: false, score: 0 });
+
+  const [skewAngle, blankResult] = await Promise.all([deskewPromise, blankPromise]);
+
+  const maxLimit = settings.deskew.maxAngle || 10;
+  const clampedAngle = Math.abs(skewAngle) > maxLimit ? Math.sign(skewAngle) * maxLimit : skewAngle;
 
   return {
-    skewAngle,
+    skewAngle: clampedAngle,
     isBlank: blankResult.isBlank,
     score: blankResult.score,
   };

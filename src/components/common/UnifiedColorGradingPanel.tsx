@@ -24,6 +24,7 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import { UniversalNumericInput } from "./UniversalNumericInput";
+import { ConfidenceBadge } from "./ConfidenceBadge";
 import { analyzeImageAndComputeAutoGrade } from "../../engine/autoColorGrade";
 import { diagnoseDocumentDefects, buildAdaptivePlan } from "../../engine/autoProcessor";
 import { ContentClassificationResult } from "../../engine/autoClassifier";
@@ -274,10 +275,11 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
                 </span>
               )}
 
-              {detectedContent.confidence && (
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-medium bg-neutral-800 text-neutral-300 border border-neutral-700">
-                  {Math.round(detectedContent.confidence * 100)}% conf
-                </span>
+              {detectedContent.confidence !== undefined && (
+                <ConfidenceBadge
+                  score={detectedContent.confidence * 100}
+                  featureName="Auto Classification"
+                />
               )}
 
               <span className="text-[10px] font-medium text-neutral-400">
@@ -591,6 +593,13 @@ export const UnifiedColorGradingPanel: React.FC<UnifiedColorGradingPanelProps> =
               <span className="flex items-center gap-1.5">
                 <Compass className="w-3.5 h-3.5 text-teal-400" />
                 <span>Rotation Deskew</span>
+                {filters.deskewAngle !== 0 && (
+                  <ConfidenceBadge
+                    score={92}
+                    label={`${filters.deskewAngle > 0 ? "+" : ""}${filters.deskewAngle.toFixed(1)}°`}
+                    featureName="Auto Deskew"
+                  />
+                )}
               </span>
               <button
                 type="button"

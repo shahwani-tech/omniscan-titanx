@@ -75,6 +75,8 @@ import { migrateLegacyLocalStorageSecrets } from "./engine/background/Background
 import { SplitPdfModal } from "./components/modals/SplitPdfModal";
 import { ShortcutProvider, useShortcuts } from "./commands/ShortcutContext";
 import { KeyboardShortcutsModal } from "./components/command/KeyboardShortcutsModal";
+import { AutoFeaturesSettingsModal } from "./components/settings/AutoFeaturesSettingsModal";
+import { getAutoFeatureSettings } from "./services/settings/autoFeatureSettings";
 import { executeFilterPipeline } from "./engine/filters";
 import { isRTL } from "./engine/i18n";
 import { analyzeFile, ACCEPT_ALL_SUPPORTED } from "./services/upload/FileTypeRegistry";
@@ -162,6 +164,7 @@ export function AppContent() {
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isKeyboardShortcutsModalOpen, setIsKeyboardShortcutsModalOpen] = useState<boolean>(false);
+  const [isAutoFeaturesModalOpen, setIsAutoFeaturesModalOpen] = useState<boolean>(false);
   const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
   const [isStressTestModalOpen, setIsStressTestModalOpen] = useState<boolean>(false);
   const [isFilterStudioModalOpen, setIsFilterStudioModalOpen] = useState<boolean>(false);
@@ -742,6 +745,12 @@ export function AppContent() {
       const page = document.pages[pageIdx];
       if (!page) return;
 
+      const settings = getAutoFeatureSettings();
+      if (!settings.colorEnhance.enabled) {
+        toast.info("Auto Color Enhancement is disabled in Auto Features settings.");
+        return;
+      }
+
       recordHistorySnapshot(document);
       setIsProcessing(true);
       setProcessingMessage("Running adaptive document diagnosis & optimization...");
@@ -903,6 +912,12 @@ export function AppContent() {
       const page = document.pages[pageIdx];
       if (!page) return;
 
+      const settings = getAutoFeatureSettings();
+      if (!settings.deskew.enabled) {
+        toast.info("Auto Deskew is disabled in Auto Features settings.");
+        return;
+      }
+
       recordHistorySnapshot(document);
       setIsProcessing(true);
       setProcessingMessage("Running Ensemble Deskew (Radon + Hough + Run-Length)...");
@@ -961,6 +976,12 @@ export function AppContent() {
     async (pageIdx = activePageIndex) => {
       const page = document.pages[pageIdx];
       if (!page) return;
+
+      const settings = getAutoFeatureSettings();
+      if (!settings.edgeDetection.enabled) {
+        toast.info("Auto Edge Detection is disabled in Auto Features settings.");
+        return;
+      }
 
       recordHistorySnapshot(document);
       setIsProcessing(true);
@@ -2049,6 +2070,8 @@ export function AppContent() {
       registerAction("edit.redo", handleRedo),
       registerAction("view.commandPalette", () => setIsCommandPaletteOpen((prev) => !prev)),
       registerAction("view.keyboardShortcuts", () => setIsKeyboardShortcutsModalOpen((prev) => !prev)),
+      registerAction("settings.autoFeatures", () => setIsAutoFeaturesModalOpen((prev) => !prev)),
+      registerAction("app.autoFeaturesSettings", () => setIsAutoFeaturesModalOpen((prev) => !prev)),
       registerAction("view.zoomIn", () => setZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2))))),
       registerAction("view.zoomOut", () => setZoom((prev) => Math.max(0.2, Number((prev - 0.1).toFixed(2))))),
       registerAction("view.resetZoom", () => setZoom(1.0)),
@@ -2353,6 +2376,7 @@ export function AppContent() {
         onOpenStressTest={() => setIsStressTestModalOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onOpenKeyboardShortcuts={() => setIsKeyboardShortcutsModalOpen(true)}
+        onOpenAutoFeaturesSettings={() => setIsAutoFeaturesModalOpen(true)}
         onAnalyzeIntelligence={() => handleAnalyzeIntelligence()}
         onRotateActivePage={(deg) => handleRotateActivePage(deg)}
         onDeleteActivePage={() => handleDeletePage(activePageIndex)}
@@ -2406,6 +2430,7 @@ export function AppContent() {
           onOpenPhotoPrintStudio={() => setIsPhotoPrintStudioModalOpen(true)}
           onApplyPageCrop={handleApplyPageCrop}
           onApplyPerspectiveWarp={handleApplyPerspectiveWarp}
+          isProcessing={isProcessing}
         />
 
         {/* Right Inspector Panel */}
@@ -2495,6 +2520,11 @@ export function AppContent() {
       <KeyboardShortcutsModal
         isOpen={isKeyboardShortcutsModalOpen}
         onClose={() => setIsKeyboardShortcutsModalOpen(false)}
+      />
+
+      <AutoFeaturesSettingsModal
+        isOpen={isAutoFeaturesModalOpen}
+        onClose={() => setIsAutoFeaturesModalOpen(false)}
       />
 
       <DiagnosticsModal

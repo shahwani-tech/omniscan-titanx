@@ -4,7 +4,7 @@
  * Comprehensive Presets, Aspect Ratio Locks, Precision Dimensions (W/H/X/Y), Margins & Live Preview
  */
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   CropUnit,
   StandardCropPreset,
@@ -36,6 +36,7 @@ import { useShortcuts } from "../../commands/ShortcutContext";
 import { DraggableBarContainer } from "../common/DraggableBarContainer";
 import { useAdaptiveViewport } from "../../hooks/useAdaptiveViewport";
 import { toast } from "../../services/toast/toastService";
+import { ConfidenceBadge } from "../common/ConfidenceBadge";
 import {
   Crop,
   Check,
@@ -59,6 +60,7 @@ import {
   MoreHorizontal,
   Crosshair,
   RefreshCw,
+  Loader2,
 } from "lucide-react";
 
 export interface PdfCropControlBarProps {
@@ -90,6 +92,7 @@ export interface PdfCropControlBarProps {
   onFineDeskewToggle?: (enabled: boolean) => void;
   onAutoDetectPerspective?: () => void;
   isDetectingPerspective?: boolean;
+  isProcessing?: boolean;
   onApplyPerspectiveWarp?: () => void;
   detectionCandidates?: PerspectiveDetectionCandidate[];
   onResetPerspectiveQuad?: () => void;
@@ -151,6 +154,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   onFineDeskewToggle,
   onAutoDetectPerspective,
   isDetectingPerspective = false,
+  isProcessing = false,
   onApplyPerspectiveWarp,
   detectionCandidates = [],
   onResetPerspectiveQuad,
@@ -172,6 +176,27 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   // Auto-detect CV state
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
 
+  // Loading / processing state for apply action
+  const [isApplying, setIsApplying] = useState(false);
+
+  const isActionBusy = isApplying || isProcessing;
+
+  const handleApply = useCallback(async () => {
+    if (isActionBusy) return;
+    setIsApplying(true);
+    try {
+      if (cropMode === "perspective" && onApplyPerspectiveWarp) {
+        await onApplyPerspectiveWarp();
+      } else {
+        await onApplyCrop();
+      }
+    } catch (err) {
+      console.error("Apply crop error:", err);
+    } finally {
+      setIsApplying(false);
+    }
+  }, [isActionBusy, cropMode, onApplyPerspectiveWarp, onApplyCrop]);
+
   // Centralized Shortcut Management for Crop Mode
   const { pushScope, popScope, registerAction } = useShortcuts();
 
@@ -191,14 +216,9 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
       });
     };
 
-    const handleApply = () => {
-      if (cropMode === "perspective" && onApplyPerspectiveWarp) {
-        onApplyPerspectiveWarp();
-      } else {
-        onApplyCrop();
-      }
-    };
-    const unregApply = registerAction("crop.apply", handleApply);
+    const unregApply = registerAction("crop.apply", () => {
+      handleApply();
+    });
 
     const unregCancel = registerAction("crop.cancel", () => {
       if (activePopover) {
@@ -253,7 +273,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   }, [
     cropBox,
     onCropBoxChange,
-    onApplyCrop,
+    handleApply,
     onCancelCrop,
     onResetCrop,
     aspectRatioLocked,
@@ -639,16 +659,28 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
 
               {/* Primary Apply Button */}
               <button
-                onClick={cropMode === "perspective" ? onApplyPerspectiveWarp : onApplyCrop}
+                onClick={handleApply}
+                disabled={isActionBusy}
                 className={`flex items-center space-x-1.5 px-3 py-1 rounded-full font-bold text-[11px] shadow-md transition-all active:scale-95 ${
+                  isActionBusy ? "opacity-75 cursor-not-allowed" : ""
+                } ${
                   cropMode === "perspective"
                     ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-neutral-950 shadow-amber-950/60"
                     : "bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sky-950/60"
                 }`}
                 title={cropMode === "perspective" ? "Apply Perspective Warp (Enter)" : "Apply Crop (Enter)"}
               >
-                <Check className="w-3.5 h-3.5" />
-                <span>{cropMode === "perspective" ? "Warp" : "Apply"}</span>
+                {isActionBusy ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>{cropMode === "perspective" ? "Warping..." : "Applying..."}</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{cropMode === "perspective" ? "Warp" : "Apply"}</span>
+                  </>
+                )}
               </button>
 
               <div className="h-3.5 w-px bg-neutral-750 mx-0.5" />
@@ -822,16 +854,28 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
 
           {/* Primary Apply Action Button with Stable Width */}
           <button
-            onClick={cropMode === "perspective" ? onApplyPerspectiveWarp : onApplyCrop}
+            onClick={handleApply}
+            disabled={isActionBusy}
             className={`flex items-center justify-center space-x-1.5 px-3 py-1 rounded-lg font-bold shadow-md transition-all active:scale-95 text-[11px] h-[28px] min-w-[125px] ${
+              isActionBusy ? "opacity-75 cursor-not-allowed" : ""
+            } ${
               cropMode === "perspective"
                 ? "bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-neutral-950 shadow-amber-950/60"
                 : "bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white shadow-sky-950/60"
             }`}
             title={cropMode === "perspective" ? "Flatten document and correct perspective (Enter)" : "Apply crop box to page (Enter)"}
           >
-            <Check className="w-3.5 h-3.5" />
-            <span>{cropMode === "perspective" ? "Apply Warp" : "Apply Crop"}</span>
+            {isActionBusy ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>{cropMode === "perspective" ? "Warping..." : "Applying..."}</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>{cropMode === "perspective" ? "Apply Warp" : "Apply Crop"}</span>
+              </>
+            )}
           </button>
 
           <div className="h-4 w-px bg-neutral-750/80 flex-shrink-0" />
@@ -950,7 +994,7 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
                             onPerspectiveQuadChange(chosen.quad);
                           }
                         }}
-                        className="bg-transparent text-neutral-200 text-[11px] font-mono focus:outline-none cursor-pointer"
+                        className="bg-transparent text-neutral-200 text-[11px] font-mono focus:outline-none cursor-pointer mr-1"
                         title="Switch between alternative detected document contours"
                       >
                         {detectionCandidates.map((c, idx) => (
@@ -959,11 +1003,17 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
                           </option>
                         ))}
                       </select>
+                      <ConfidenceBadge
+                        score={detectionCandidates[0].confidence}
+                        featureName="Corner Detection"
+                        compact
+                      />
                     </>
                   ) : (
-                    <span className="text-[10px] font-mono text-emerald-400 font-medium">
-                      Confidence: {Math.round(detectionCandidates[0].confidence * 100)}%
-                    </span>
+                    <ConfidenceBadge
+                      score={detectionCandidates[0].confidence}
+                      featureName="Corner Detection"
+                    />
                   )}
                 </div>
               )}

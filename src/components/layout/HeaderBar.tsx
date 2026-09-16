@@ -78,6 +78,7 @@ interface HeaderBarProps {
   onOpenStressTest?: () => void;
   onOpenCommandPalette: () => void;
   onOpenKeyboardShortcuts?: () => void;
+  onOpenAutoFeaturesSettings?: () => void;
   onAnalyzeIntelligence: () => void;
   onRotateActivePage: (degrees: number) => void;
   onDeleteActivePage: () => void;
@@ -128,6 +129,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenStressTest,
   onOpenCommandPalette,
   onOpenKeyboardShortcuts,
+  onOpenAutoFeaturesSettings,
   onAnalyzeIntelligence,
   onRotateActivePage,
   onDeleteActivePage,
@@ -268,13 +270,25 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             <button
               onClick={onOpenKeyboardShortcuts}
               className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
-              title="Keyboard Shortcuts & Settings (Ctrl + / or F1)"
+              title="Keyboard Shortcuts & Help (Ctrl + / or F1)"
             >
               <Keyboard className="w-3 h-3 text-sky-400" />
               <span className="hidden md:inline">Shortcuts</span>
               <kbd className="px-1 py-0.5 text-[10px] bg-neutral-900 rounded border border-neutral-700 text-neutral-400 font-mono">
                 ⌘/
               </kbd>
+            </button>
+          )}
+
+          {/* Auto Features Settings Modal Trigger */}
+          {onOpenAutoFeaturesSettings && (
+            <button
+              onClick={onOpenAutoFeaturesSettings}
+              className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors"
+              title="Auto Features Settings (Edge Detection, Deskew, EXIF, Color, Confidence)"
+            >
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              <span className="hidden md:inline">Auto Features</span>
             </button>
           )}
 

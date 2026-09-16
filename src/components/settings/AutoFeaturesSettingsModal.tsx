@@ -195,7 +195,7 @@ export const AutoFeaturesSettingsModal: React.FC<AutoFeaturesSettingsModalProps>
                 <div className="pt-2 border-t border-neutral-700/60 flex items-center justify-between text-[11px]">
                   <span className="text-neutral-400 font-medium">Enhance Mode:</span>
                   <div className="inline-flex rounded-lg bg-neutral-900 p-0.5 border border-neutral-750">
-                    {(["content-aware", "always-enhance", "off"] as const).map((mode) => (
+                    {(["content-aware", "always-enhance"] as const).map((mode) => (
                       <button
                         key={mode}
                         type="button"
