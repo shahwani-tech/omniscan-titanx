@@ -3,6 +3,7 @@
  */
 
 export * from "./UnifiedBackgroundStudioModal";
+export * from "./BackgroundRemoveConfirmModal";
 export * from "./BackgroundColorPicker";
 export * from "./BackgroundImageControls";
 export * from "./BackgroundCropModal";

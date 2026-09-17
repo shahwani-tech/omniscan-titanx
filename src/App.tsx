@@ -42,6 +42,7 @@ import {
 import { extractDocumentIntelligence, autoRedactPIIOnPage } from "./engine/intelligence";
 import { packageTitanProject, extractTitanProject } from "./engine/project";
 import { executePhysicalPageCrop, NormalizedCropBox, detectAutoCropBounds } from "./engine/cropEngine";
+import { rotatePagePhysical } from "./engine/rotationEngine";
 import {
   classifyImageContent,
   ContentClassificationResult,
@@ -1365,10 +1366,45 @@ export function AppContent() {
       const page = document.pages[pageIdx];
       if (!page) return;
 
-      const newRotation = (page.filters.rotation + degrees + 360) % 360;
-      await handleUpdateFilters({ rotation: newRotation });
+      recordHistorySnapshot(document);
+      setIsProcessing(true);
+      setProcessingMessage(`Rotating page ${pageIdx + 1} by ${degrees}°...`);
+
+      try {
+        const rotatedPage = await rotatePagePhysical(page, degrees);
+
+        // Clear all cached URLs & decoded images for this page to prevent stale frame references
+        cachedSourceImageRef.current = null;
+        clearDecodedImageCache();
+        setActivePagePreviewUrl(null);
+
+        setDocument((prev) => {
+          const newPages = [...prev.pages];
+          newPages[pageIdx] = rotatedPage;
+          return {
+            ...prev,
+            pages: newPages,
+            updatedAt: new Date().toISOString(),
+          };
+        });
+
+        if (pageIdx === activePageIndex) {
+          latestFiltersRef.current = { ...rotatedPage.filters };
+        }
+
+        setIsDirty(true);
+        toast.success(
+          `Page ${pageIdx + 1} rotated ${degrees > 0 ? `+${degrees}` : degrees}° (${rotatedPage.width}×${rotatedPage.height}px)`
+        );
+      } catch (err) {
+        console.error("Page rotation error:", err);
+        toast.error("Failed to rotate page.");
+      } finally {
+        setIsProcessing(false);
+        setProcessingMessage("");
+      }
     },
-    [document.pages, activePageIndex, handleUpdateFilters]
+    [document, activePageIndex, recordHistorySnapshot]
   );
 
   const handleDeletePage = useCallback((index: number) => {
@@ -2476,6 +2512,7 @@ export function AppContent() {
           isCollapsed={isRightCollapsed}
           isProcessing={isProcessing}
           onToggleCollapse={() => setIsRightCollapsed(!isRightCollapsed)}
+          onRotatePage={(deg) => handleRotateActivePage(deg)}
           onUpdateFilters={handleUpdateFilters}
           onResetFilters={handleResetFilters}
           onAutoDeskew={() => handleAutoDeskew()}

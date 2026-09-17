@@ -456,6 +456,7 @@ export interface PhotoSheetConfig {
   marginRightInches: number;
   marginMode?: "auto" | "manual";
   marginUnit?: PaperUnit;
+  printerMarginStandard?: "standard" | "professional";
 
   // Spacing / Gaps (in inches)
   gapHorizontalInches: number;

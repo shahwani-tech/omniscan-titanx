@@ -37,17 +37,18 @@ export function ensurePdfWorker(): void {
   if (typeof window !== "undefined") {
     try {
       if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        // Resolve worker URL relative to current location to support both HTTP and Electron file://
+        const resolvedWorkerUrl = new URL(pdfWorkerUrl, window.location.href).href;
+        pdfjsLib.GlobalWorkerOptions.workerSrc = resolvedWorkerUrl;
       }
       if (!workerInitialized) {
         workerInitialized = true;
-        // Verify worker URL configuration
         if (!pdfWorkerUrl) {
           console.warn("[PDF Engine] PDF worker URL not found. Falling back to inline execution.");
           workerFailed = true;
-        } else {
-          // Pre-test worker URL accessibility non-blockingly
-          fetch(pdfWorkerUrl, { method: "HEAD" }).catch(() => {
+        } else if (window.location.protocol.startsWith("http")) {
+          // Pre-test worker URL accessibility non-blockingly on HTTP servers
+          fetch(pdfjsLib.GlobalWorkerOptions.workerSrc, { method: "HEAD" }).catch(() => {
             console.warn("[PDF Engine] Note: PDF.js worker fetch returned warning, local execution active.");
           });
         }

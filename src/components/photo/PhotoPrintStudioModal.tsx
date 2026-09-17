@@ -23,6 +23,12 @@ import {
   calculatePhotoSheetLayout,
   calculateMaxPhotos,
   calculateMaxPhotosGrid,
+  optimizeLayout,
+  analyzeSheetLayout,
+  PRINTER_MARGIN_STANDARDS,
+  PrinterMarginStandardType,
+  SheetOptimizationAnalysis,
+  SheetLayoutOption,
   renderPhotoSheetCanvas,
   exportPhotoSheetAsPDF,
   exportPhotoSheetAsBlob,
@@ -41,7 +47,9 @@ import {
 import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStudioModal";
 import { BackgroundStudioState } from "../../engine/background/types";
 import * as pdfjsLib from "pdfjs-dist";
-import { renderPDFPageToDataUrl } from "../../engine/pdf";
+import { renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
+
+ensurePdfWorker();
 import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
 import {
   PdfImportDialog,
@@ -164,13 +172,14 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     orientation: "landscape",
     printInstanceRotation: 0,
     marginMode: "auto",
-    marginUnit: "in",
-    marginTopInches: 0.1,
-    marginBottomInches: 0.1,
-    marginLeftInches: 0.1,
-    marginRightInches: 0.1,
-    gapHorizontalInches: 0.08,
-    gapVerticalInches: 0.08,
+    marginUnit: "mm",
+    marginTopInches: 3.0 / 25.4,
+    marginBottomInches: 3.0 / 25.4,
+    marginLeftInches: 3.0 / 25.4,
+    marginRightInches: 3.0 / 25.4,
+    gapHorizontalInches: 1.0 / 25.4,
+    gapVerticalInches: 1.0 / 25.4,
+    printerMarginStandard: "standard",
     border: {
       enabled: true,
       widthPx: 1,
@@ -189,6 +198,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   // Margin unit state for the margin UI (mm | in | cm)
   const [marginUnit, setMarginUnit] = useState<PaperUnit>("in");
 
+  // Minimum Margin Standard (Standard 3mm vs Professional 1.5mm)
+  const [printerMarginStandard, setPrinterMarginStandard] = useState<PrinterMarginStandardType>("standard");
+
   // Selected Country Standard & Paper Specification
   const currentPassportSpec =
     PASSPORT_STANDARDS.find((p) => p.id === sheetConfig.passportStandardId) || PASSPORT_STANDARDS[1];
@@ -200,7 +212,8 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     (
       cfg: PhotoSheetConfig,
       passportSpec?: PassportStandardSpec,
-      paperSpec?: PaperSizeSpec
+      paperSpec?: PaperSizeSpec,
+      marginStandard: PrinterMarginStandardType = printerMarginStandard
     ) => {
       const activePassport =
         passportSpec ||
@@ -224,35 +237,100 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       const paperH =
         cfg.orientation === "landscape" ? Math.min(rawW, rawH) : Math.max(rawW, rawH);
 
-      const photoW = activePassport.widthMm || cfg.photoWidthInches * 25.4;
-      const photoH = activePassport.heightMm || cfg.photoHeightInches * 25.4;
+      const isRotated = cfg.printInstanceRotation === 90 || cfg.printInstanceRotation === 270;
+      const basePhotoW = activePassport.widthMm || cfg.photoWidthInches * 25.4;
+      const basePhotoH = activePassport.heightMm || cfg.photoHeightInches * 25.4;
+      const photoW = isRotated ? basePhotoH : basePhotoW;
+      const photoH = isRotated ? basePhotoW : basePhotoH;
 
-      const marginMm = (cfg.marginLeftInches ?? 0.1) * 25.4;
-      const gapMm = (cfg.gapHorizontalInches ?? 0.08) * 25.4;
+      const minMarginMm = marginStandard === "professional" ? 1.5 : 3.0;
+      const gapMm = (cfg.gapHorizontalInches ?? (1.0 / 25.4)) * 25.4;
 
-      const maxPhotos = calculateMaxPhotos(paperW, paperH, photoW, photoH, marginMm, gapMm);
-      const grid = calculateMaxPhotosGrid(paperW, paperH, photoW, photoH, marginMm, gapMm);
+      let cols: number;
+      let rows: number;
+      let marginX: number;
+      let marginY: number;
+
+      if (cfg.marginMode === "manual") {
+        const leftMm = (cfg.marginLeftInches ?? (minMarginMm / 25.4)) * 25.4;
+        const rightMm = (cfg.marginRightInches ?? (minMarginMm / 25.4)) * 25.4;
+        const topMm = (cfg.marginTopInches ?? (minMarginMm / 25.4)) * 25.4;
+        const bottomMm = (cfg.marginBottomInches ?? (minMarginMm / 25.4)) * 25.4;
+
+        cols = Math.max(1, Math.floor((paperW - leftMm - rightMm + gapMm + 0.001) / (photoW + gapMm)));
+        rows = Math.max(1, Math.floor((paperH - topMm - bottomMm + gapMm + 0.001) / (photoH + gapMm)));
+        marginX = leftMm;
+        marginY = topMm;
+      } else {
+        const opt = optimizeLayout(paperW, paperH, photoW, photoH, minMarginMm, gapMm);
+        cols = opt.cols;
+        rows = opt.rows;
+        marginX = opt.marginX;
+        marginY = opt.marginY;
+      }
+
+      const maxPhotos = cols * rows;
 
       return {
         paperW,
         paperH,
         photoW,
         photoH,
-        marginMm,
+        marginMm: minMarginMm,
         gapMm,
         maxPhotos,
-        cols: grid.cols,
-        rows: grid.rows,
+        cols,
+        rows,
+        marginX,
+        marginY,
         paperName: activePaper.name.split(" (")[0] || activePaper.name,
       };
     },
-    []
+    [printerMarginStandard]
   );
 
   // Real-time calculated capacity and fit for the current configuration
   const currentFit = useMemo(() => {
-    return computeFit(sheetConfig, currentPassportSpec, currentPaperSpec);
-  }, [computeFit, sheetConfig, currentPassportSpec, currentPaperSpec]);
+    return computeFit(sheetConfig, currentPassportSpec, currentPaperSpec, printerMarginStandard);
+  }, [computeFit, sheetConfig, currentPassportSpec, currentPaperSpec, printerMarginStandard]);
+
+  // Real-time Multi-Orientation Layout Analysis (checks normal vs rotated, portrait vs landscape)
+  const layoutAnalysis: SheetOptimizationAnalysis = useMemo(() => {
+    let rawW = currentPaperSpec.widthMm;
+    let rawH = currentPaperSpec.heightMm;
+    if (currentPaperSpec.isCustom && sheetConfig.paperWidthInches && sheetConfig.paperHeightInches) {
+      rawW = sheetConfig.paperWidthInches * 25.4;
+      rawH = sheetConfig.paperHeightInches * 25.4;
+    }
+    const basePhotoW = currentPassportSpec.widthMm || sheetConfig.photoWidthInches * 25.4;
+    const basePhotoH = currentPassportSpec.heightMm || sheetConfig.photoHeightInches * 25.4;
+    const minMarginMm = printerMarginStandard === "professional" ? 1.5 : 3.0;
+    const gapMm = (sheetConfig.gapHorizontalInches ?? (1.0 / 25.4)) * 25.4;
+    const paperName = currentPaperSpec.name.split(" (")[0] || currentPaperSpec.name;
+
+    return analyzeSheetLayout(
+      rawW,
+      rawH,
+      basePhotoW,
+      basePhotoH,
+      sheetConfig.orientation,
+      sheetConfig.printInstanceRotation,
+      minMarginMm,
+      gapMm,
+      paperName
+    );
+  }, [
+    currentPaperSpec,
+    currentPassportSpec,
+    sheetConfig.paperWidthInches,
+    sheetConfig.paperHeightInches,
+    sheetConfig.photoWidthInches,
+    sheetConfig.photoHeightInches,
+    sheetConfig.orientation,
+    sheetConfig.printInstanceRotation,
+    sheetConfig.gapHorizontalInches,
+    printerMarginStandard,
+  ]);
 
   const [aspectRatioLocked, setAspectRatioLocked] = useState<boolean>(true);
 
@@ -917,9 +995,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const layoutResult = calculatePhotoSheetLayout(sheetConfig, ["photo-1"]);
 
   // Dynamic maximum photos that genuinely fit on the current paper size with safe margins & gaps
-  const dynamicMaxPhotos = layoutResult.maxPhotosPerSheet || currentFit.maxPhotos;
-  const dynamicCols = layoutResult.maxColumns || currentFit.cols;
-  const dynamicRows = layoutResult.maxRows || currentFit.rows;
+  const dynamicMaxPhotos = currentFit.maxPhotos || layoutResult.maxPhotosPerSheet;
+  const dynamicCols = currentFit.cols || layoutResult.maxColumns;
+  const dynamicRows = currentFit.rows || layoutResult.maxRows;
 
   useEffect(() => {
     if (!isOpen || (studioStep !== "sheet" && studioStep !== "filters")) return;
@@ -1075,23 +1153,28 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     if (!spec) return;
 
     setSheetConfig((prev) => {
+      // Set landscape if paper width >= height, else portrait
+      const orientation = spec.widthInches >= spec.heightInches ? "landscape" : "portrait";
       const nextConfig: PhotoSheetConfig = {
         ...prev,
         paperSizeId: spec.id,
         paperWidthInches: spec.widthInches,
         paperHeightInches: spec.heightInches,
-        // Set landscape if paper width >= height, else portrait
-        orientation: spec.widthInches >= spec.heightInches ? "landscape" : "portrait",
+        orientation,
         printInstanceRotation: 0,
       };
 
-      const fit = computeFit(nextConfig, currentPassportSpec, spec);
+      const fit = computeFit(nextConfig, currentPassportSpec, spec, printerMarginStandard);
       return {
         ...nextConfig,
         copies: fit.maxPhotos,
         columns: fit.cols,
         rows: fit.rows,
         autoFit: true,
+        marginLeftInches: fit.marginX / 25.4,
+        marginRightInches: fit.marginX / 25.4,
+        marginTopInches: fit.marginY / 25.4,
+        marginBottomInches: fit.marginY / 25.4,
       };
     });
   };
@@ -1106,13 +1189,17 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         paperWidthInches: dimension === "width" ? valInches : prev.paperWidthInches,
         paperHeightInches: dimension === "height" ? valInches : prev.paperHeightInches,
       };
-      const fit = computeFit(nextConfig, currentPassportSpec, currentPaperSpec);
+      const fit = computeFit(nextConfig, currentPassportSpec, currentPaperSpec, printerMarginStandard);
       return {
         ...nextConfig,
         copies: fit.maxPhotos,
         columns: fit.cols,
         rows: fit.rows,
         autoFit: true,
+        marginLeftInches: fit.marginX / 25.4,
+        marginRightInches: fit.marginX / 25.4,
+        marginTopInches: fit.marginY / 25.4,
+        marginBottomInches: fit.marginY / 25.4,
       };
     });
   };
@@ -1130,13 +1217,17 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         photoHeightInches: spec.heightInches,
       };
 
-      const fit = computeFit(nextConfig, spec, currentPaperSpec);
+      const fit = computeFit(nextConfig, spec, currentPaperSpec, printerMarginStandard);
       return {
         ...nextConfig,
         copies: fit.maxPhotos,
         columns: fit.cols,
         rows: fit.rows,
         autoFit: true,
+        marginLeftInches: fit.marginX / 25.4,
+        marginRightInches: fit.marginX / 25.4,
+        marginTopInches: fit.marginY / 25.4,
+        marginBottomInches: fit.marginY / 25.4,
       };
     });
   };
@@ -1149,13 +1240,17 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         orientation,
       };
 
-      const fit = computeFit(nextConfig, currentPassportSpec, currentPaperSpec);
+      const fit = computeFit(nextConfig, currentPassportSpec, currentPaperSpec, printerMarginStandard);
       return {
         ...nextConfig,
         copies: fit.maxPhotos,
         columns: fit.cols,
         rows: fit.rows,
         autoFit: true,
+        marginLeftInches: fit.marginX / 25.4,
+        marginRightInches: fit.marginX / 25.4,
+        marginTopInches: fit.marginY / 25.4,
+        marginBottomInches: fit.marginY / 25.4,
       };
     });
   };
@@ -1173,33 +1268,140 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handleAutoFitLayout = () => {
+    const minMarginMm = printerMarginStandard === "professional" ? 1.5 : 3.0;
+    const gapMm = (sheetConfig.gapHorizontalInches ?? (1.0 / 25.4)) * 25.4;
+    const opt = optimizeLayout(
+      currentFit.paperW,
+      currentFit.paperH,
+      currentFit.photoW,
+      currentFit.photoH,
+      minMarginMm,
+      gapMm
+    );
+
     setSheetConfig((prev) => ({
       ...prev,
-      copies: dynamicMaxPhotos,
-      columns: dynamicCols,
-      rows: dynamicRows,
+      copies: opt.total,
+      columns: opt.cols,
+      rows: opt.rows,
       autoFit: true,
       marginMode: "auto",
-      marginLeftInches: 0.1,
-      marginRightInches: 0.1,
-      marginTopInches: 0.1,
-      marginBottomInches: 0.1,
-      gapHorizontalInches: 0.08,
-      gapVerticalInches: 0.08,
+      marginLeftInches: opt.marginX / 25.4,
+      marginRightInches: opt.marginX / 25.4,
+      marginTopInches: opt.marginY / 25.4,
+      marginBottomInches: opt.marginY / 25.4,
+      gapHorizontalInches: gapMm / 25.4,
+      gapVerticalInches: gapMm / 25.4,
     }));
-    showToast(`Layout auto-fitted to maximum sheet capacity (${dynamicMaxPhotos} photos).`);
+    showToast(`Layout auto-fitted to maximum sheet capacity (${opt.total} photos).`);
+  };
+
+  const handleApplyLayoutOption = (target: SheetLayoutOption) => {
+    setSheetConfig((prev) => ({
+      ...prev,
+      orientation: target.orientation,
+      printInstanceRotation: target.photoRotated ? 90 : 0,
+      columns: target.cols,
+      rows: target.rows,
+      copies: target.total,
+      autoFit: true,
+      marginMode: "auto",
+      marginLeftInches: target.marginX / 25.4,
+      marginRightInches: target.marginX / 25.4,
+      marginTopInches: target.marginY / 25.4,
+      marginBottomInches: target.marginY / 25.4,
+    }));
+    showToast(`Applied optimal ${target.cols} × ${target.rows} layout (${target.total} photos on ${target.orientation}).`);
+  };
+
+  const handleSelectPrinterStandard = (standard: PrinterMarginStandardType) => {
+    setPrinterMarginStandard(standard);
+    const minMarginMm = standard === "professional" ? 1.5 : 3.0;
+    const gapMm = (sheetConfig.gapHorizontalInches ?? (1.0 / 25.4)) * 25.4;
+
+    setSheetConfig((prev) => {
+      const updatedConfig = { ...prev, printerMarginStandard: standard };
+      const fit = computeFit(updatedConfig, currentPassportSpec, currentPaperSpec, standard);
+      return {
+        ...updatedConfig,
+        marginLeftInches: fit.marginX / 25.4,
+        marginRightInches: fit.marginX / 25.4,
+        marginTopInches: fit.marginY / 25.4,
+        marginBottomInches: fit.marginY / 25.4,
+        copies: prev.autoFit ? fit.maxPhotos : Math.min(prev.copies, fit.maxPhotos),
+        columns: prev.autoFit ? fit.cols : Math.min(prev.columns, fit.cols),
+        rows: prev.autoFit ? fit.rows : Math.min(prev.rows, fit.rows),
+      };
+    });
+    showToast(
+      standard === "professional"
+        ? "Professional printer preset active (1.5mm margins)."
+        : "Standard printer preset active (3.0mm margins safe for all printers)."
+    );
+  };
+
+  const handleSmartOptimizeMargins = () => {
+    const minMarginMm = printerMarginStandard === "professional" ? 1.5 : 3.0;
+    const gapMm = (sheetConfig.gapHorizontalInches ?? (1.0 / 25.4)) * 25.4;
+    const opt = optimizeLayout(
+      currentFit.paperW,
+      currentFit.paperH,
+      currentFit.photoW,
+      currentFit.photoH,
+      minMarginMm,
+      gapMm
+    );
+
+    setSheetConfig((prev) => ({
+      ...prev,
+      marginMode: "auto",
+      marginLeftInches: opt.marginX / 25.4,
+      marginRightInches: opt.marginX / 25.4,
+      marginTopInches: opt.marginY / 25.4,
+      marginBottomInches: opt.marginY / 25.4,
+      columns: opt.cols,
+      rows: opt.rows,
+      copies: prev.autoFit ? opt.total : Math.min(prev.copies, opt.total),
+    }));
+    showToast(`Margins optimized & centered: ${opt.marginX.toFixed(1)}mm sides, ${opt.marginY.toFixed(1)}mm top/bottom.`);
   };
 
   // Outer Margin update helper
   const handleMarginChange = (side: "top" | "bottom" | "left" | "right", rawValue: number) => {
     const valInInches = convertUnits(Math.max(0, rawValue), marginUnit, "in");
     setSheetConfig((prev) => {
-      const updated = { ...prev, marginMode: "manual" as const };
+      const updated: PhotoSheetConfig = { ...prev, marginMode: "manual" as const };
       if (side === "top") updated.marginTopInches = valInInches;
       if (side === "bottom") updated.marginBottomInches = valInInches;
       if (side === "left") updated.marginLeftInches = valInInches;
       if (side === "right") updated.marginRightInches = valInInches;
-      return updated;
+
+      const fit = computeFit(updated, currentPassportSpec, currentPaperSpec);
+      return {
+        ...updated,
+        copies: prev.autoFit ? fit.maxPhotos : Math.min(prev.copies, fit.maxPhotos),
+        columns: prev.autoFit ? fit.cols : Math.min(prev.columns, fit.cols),
+        rows: prev.autoFit ? fit.rows : Math.min(prev.rows, fit.rows),
+      };
+    });
+  };
+
+  // Photo Gap change helper
+  const handleGapChange = (valInches: number) => {
+    const safeGap = Math.max(0, valInches);
+    setSheetConfig((prev) => {
+      const updated: PhotoSheetConfig = {
+        ...prev,
+        gapHorizontalInches: safeGap,
+        gapVerticalInches: safeGap,
+      };
+      const fit = computeFit(updated, currentPassportSpec, currentPaperSpec);
+      return {
+        ...updated,
+        copies: prev.autoFit ? fit.maxPhotos : Math.min(prev.copies, fit.maxPhotos),
+        columns: prev.autoFit ? fit.cols : Math.min(prev.columns, fit.cols),
+        rows: prev.autoFit ? fit.rows : Math.min(prev.rows, fit.rows),
+      };
     });
   };
 
@@ -2234,25 +2436,62 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
             {/* STEP 3: 4×6" Print Sheet & 8-Copy Grid Layout Settings */}
             {studioStep === "sheet" && (
               <div className="p-4 space-y-4">
-                {/* Dynamic Sheet Capacity Banner */}
-                <div className="bg-sky-950/40 border border-sky-800/60 rounded-lg p-2.5 flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                    <div>
-                      <div className="text-xs font-bold text-sky-200">
-                        {dynamicMaxPhotos} photos fit on {currentFit.paperName}
-                      </div>
-                      <div className="text-[10px] text-sky-400/80">
-                        Grid: {dynamicCols} columns × {dynamicRows} rows ({currentPassportSpec.widthMm}×{currentPassportSpec.heightMm} mm)
+                {/* Dynamic Sheet Capacity Banner & Layout Recommendation */}
+                <div className="space-y-2">
+                  <div className="bg-sky-950/40 border border-sky-800/60 rounded-lg p-2.5 flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+                      <div>
+                        <div className="text-xs font-bold text-sky-200">
+                          {dynamicMaxPhotos} photos fit on {currentFit.paperName}
+                        </div>
+                        <div className="text-[10px] text-sky-400/80">
+                          Current Grid: {dynamicCols} cols × {dynamicRows} rows ({currentPassportSpec.widthMm}×{currentPassportSpec.heightMm} mm)
+                          {sheetConfig.printInstanceRotation === 90 || sheetConfig.printInstanceRotation === 270 ? " • Rotated 90°" : ""}
+                        </div>
                       </div>
                     </div>
+                    <button
+                      onClick={handleAutoFitLayout}
+                      className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold transition-colors shadow"
+                      title="Set copies and grid to maximum capacity"
+                    >
+                      Fill Max ({dynamicMaxPhotos})
+                    </button>
                   </div>
-                  <button
-                    onClick={handleAutoFitLayout}
-                    className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold transition-colors shadow"
-                  >
-                    Fill Max ({dynamicMaxPhotos})
-                  </button>
+
+                  {/* Recommendation Card if layout isn't optimal */}
+                  {layoutAnalysis.recommendationType !== "current-is-best" && (
+                    <div className="bg-amber-950/40 border border-amber-800/60 rounded-lg p-2.5 flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                        <div>
+                          <div className="text-xs font-semibold text-amber-200">
+                            Higher Capacity Available ({layoutAnalysis.overallBest.total} photos)
+                          </div>
+                          <div className="text-[10px] text-amber-300/80">
+                            {layoutAnalysis.recommendationMessage}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleApplyLayoutOption(layoutAnalysis.overallBest)}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-[10px] font-bold transition-colors shadow shrink-0 ml-2"
+                      >
+                        Apply ({layoutAnalysis.overallBest.total})
+                      </button>
+                    </div>
+                  )}
+
+                  {/* If current IS best, show confirmation */}
+                  {layoutAnalysis.recommendationType === "current-is-best" && (
+                    <div className="text-[10px] text-emerald-400/90 bg-emerald-950/20 border border-emerald-900/40 rounded px-2.5 py-1 flex items-center justify-between">
+                      <span>✓ {layoutAnalysis.recommendationMessage}</span>
+                      <span className="text-[9px] text-neutral-400 font-mono">
+                        {printerMarginStandard === "professional" ? "1.5mm pro margins" : "3.0mm safe margins"}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Quick Sheet Layouts Presets */}
@@ -2335,38 +2574,86 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   </div>
                 </div>
 
-                {/* Paper Size & Orientation */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
-                      Paper Size
-                    </label>
-                    <select
-                      value={sheetConfig.paperSizeId}
-                      onChange={(e) => handlePaperSizeChange(e.target.value)}
-                      className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
-                    >
-                      {STANDARD_PAPER_SIZES.map((paper) => (
-                        <option key={paper.id} value={paper.id}>
-                          {paper.name}
-                        </option>
-                      ))}
-                    </select>
+                {/* Paper Size, Orientation & Photo Grid Rotation */}
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
+                        Paper Size
+                      </label>
+                      <select
+                        value={sheetConfig.paperSizeId}
+                        onChange={(e) => handlePaperSizeChange(e.target.value)}
+                        className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                      >
+                        {STANDARD_PAPER_SIZES.map((paper) => (
+                          <option key={paper.id} value={paper.id}>
+                            {paper.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
+                        Paper Orientation
+                      </label>
+                      <select
+                        value={sheetConfig.orientation}
+                        onChange={(e) =>
+                          handleOrientationChange(e.target.value as "portrait" | "landscape")
+                        }
+                        className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                      >
+                        <option value="portrait">Portrait</option>
+                        <option value="landscape">Landscape</option>
+                      </select>
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
-                      Orientation
-                    </label>
-                    <select
-                      value={sheetConfig.orientation}
-                      onChange={(e) =>
-                        handleOrientationChange(e.target.value as "portrait" | "landscape")
-                      }
-                      className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
-                    >
-                      <option value="landscape">Landscape</option>
-                      <option value="portrait">Portrait</option>
-                    </select>
+
+                  {/* Photo Rotation Choice (Normal upright vs 90° Rotated) */}
+                  <div className="bg-neutral-950 p-2.5 rounded-lg border border-neutral-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] text-neutral-300 font-medium block">
+                        Photo Grid Rotation
+                      </span>
+                      <span className="text-[9px] text-neutral-500">
+                        Rotate all photos 90° across sheet
+                      </span>
+                    </div>
+                    <div className="flex bg-neutral-900 rounded p-0.5 border border-neutral-800">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleApplyLayoutOption({
+                            ...layoutAnalysis.currentNormal,
+                            orientation: sheetConfig.orientation,
+                          })
+                        }
+                        className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                          sheetConfig.printInstanceRotation === 0
+                            ? "bg-sky-600 text-white font-bold"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                      >
+                        Upright ({layoutAnalysis.currentNormal.total})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleApplyLayoutOption({
+                            ...layoutAnalysis.currentRotated,
+                            orientation: sheetConfig.orientation,
+                          })
+                        }
+                        className={`px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                          sheetConfig.printInstanceRotation === 90 || sheetConfig.printInstanceRotation === 270
+                            ? "bg-sky-600 text-white font-bold"
+                            : "text-neutral-400 hover:text-white"
+                        }`}
+                      >
+                        Rotated 90° ({layoutAnalysis.currentRotated.total})
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -2416,15 +2703,15 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   </select>
                 </div>
 
-                {/* PASSPORT PHOTO MARGIN SYSTEM (4 Independent Outer Margins) */}
+                {/* PRINTER MARGIN STANDARDS & SHEET MARGIN SYSTEM */}
                 <div className="bg-neutral-950 p-3 rounded-lg border border-neutral-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
-                        4×6" Outer Sheet Margins
+                        Printer Margins & Spacing
                       </div>
                       <div className="text-[10px] text-neutral-400">
-                        Space from paper edges to photo grid
+                        Printer-safe boundaries & gap distribution
                       </div>
                     </div>
 
@@ -2435,17 +2722,17 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                           onClick={() => setSheetConfig((prev) => ({ ...prev, marginMode: "auto" }))}
                           className={`px-2 py-0.5 text-[10px] font-medium rounded ${
                             sheetConfig.marginMode !== "manual"
-                              ? "bg-sky-600 text-white"
+                              ? "bg-sky-600 text-white font-bold"
                               : "text-neutral-400 hover:text-white"
                           }`}
                         >
-                          Auto
+                          Auto Centered
                         </button>
                         <button
                           onClick={() => setSheetConfig((prev) => ({ ...prev, marginMode: "manual" }))}
                           className={`px-2 py-0.5 text-[10px] font-medium rounded ${
                             sheetConfig.marginMode === "manual"
-                              ? "bg-sky-600 text-white"
+                              ? "bg-sky-600 text-white font-bold"
                               : "text-neutral-400 hover:text-white"
                           }`}
                         >
@@ -2463,6 +2750,42 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         <option value="cm">cm</option>
                       </select>
                     </div>
+                  </div>
+
+                  {/* Printer Margin Standard Selector */}
+                  <div className="bg-neutral-900/90 p-2.5 rounded-lg border border-neutral-800 space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-neutral-300 font-semibold">Printer Safe Margin:</span>
+                      <div className="flex space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPrinterStandard("standard")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                            printerMarginStandard === "standard"
+                              ? "bg-sky-600 text-white font-bold"
+                              : "bg-neutral-800 text-neutral-400 hover:text-white"
+                          }`}
+                        >
+                          Standard 3.0mm
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPrinterStandard("professional")}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                            printerMarginStandard === "professional"
+                              ? "bg-sky-600 text-white font-bold"
+                              : "bg-neutral-800 text-neutral-400 hover:text-white"
+                          }`}
+                        >
+                          Compact 1.5mm
+                        </button>
+                      </div>
+                    </div>
+                    {printerMarginStandard === "professional" && (
+                      <div className="text-[10px] text-amber-300 bg-amber-950/50 p-1.5 rounded border border-amber-800/60">
+                        {PRINTER_MARGIN_STANDARDS.professional.warning}
+                      </div>
+                    )}
                   </div>
 
                   {sheetConfig.marginMode === "manual" ? (
@@ -2552,14 +2875,23 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                         <div className="flex space-x-1">
                           <button
                             onClick={() => {
-                              setSheetConfig((prev) => ({
-                                ...prev,
-                                marginMode: "manual",
-                                marginTopInches: 0,
-                                marginBottomInches: 0,
-                                marginLeftInches: 0,
-                                marginRightInches: 0,
-                              }));
+                              setSheetConfig((prev) => {
+                                const updated: PhotoSheetConfig = {
+                                  ...prev,
+                                  marginMode: "manual",
+                                  marginTopInches: 0,
+                                  marginBottomInches: 0,
+                                  marginLeftInches: 0,
+                                  marginRightInches: 0,
+                                };
+                                const fit = computeFit(updated, currentPassportSpec, currentPaperSpec);
+                                return {
+                                  ...updated,
+                                  copies: prev.autoFit ? fit.maxPhotos : Math.min(prev.copies, fit.maxPhotos),
+                                  columns: prev.autoFit ? fit.cols : Math.min(prev.columns, fit.cols),
+                                  rows: prev.autoFit ? fit.rows : Math.min(prev.rows, fit.rows),
+                                };
+                              });
                             }}
                             className="px-1.5 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-300"
                           >
@@ -2567,66 +2899,93 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                           </button>
                           <button
                             onClick={() => {
-                              setSheetConfig((prev) => ({
-                                ...prev,
-                                marginMode: "manual",
-                                marginTopInches: 0.1,
-                                marginBottomInches: 0.1,
-                                marginLeftInches: 0.1,
-                                marginRightInches: 0.1,
-                              }));
+                              setSheetConfig((prev) => {
+                                const updated: PhotoSheetConfig = {
+                                  ...prev,
+                                  marginMode: "manual",
+                                  marginTopInches: 1.5 / 25.4,
+                                  marginBottomInches: 1.5 / 25.4,
+                                  marginLeftInches: 1.5 / 25.4,
+                                  marginRightInches: 1.5 / 25.4,
+                                };
+                                const fit = computeFit(updated, currentPassportSpec, currentPaperSpec);
+                                return {
+                                  ...updated,
+                                  copies: prev.autoFit ? fit.maxPhotos : Math.min(prev.copies, fit.maxPhotos),
+                                  columns: prev.autoFit ? fit.cols : Math.min(prev.columns, fit.cols),
+                                  rows: prev.autoFit ? fit.rows : Math.min(prev.rows, fit.rows),
+                                };
+                              });
                             }}
                             className="px-1.5 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-300"
                           >
-                            0.1" (2.5mm)
+                            1.5mm
                           </button>
                           <button
                             onClick={() => {
-                              setSheetConfig((prev) => ({
-                                ...prev,
-                                marginMode: "manual",
-                                marginTopInches: 0.2,
-                                marginBottomInches: 0.2,
-                                marginLeftInches: 0.2,
-                                marginRightInches: 0.2,
-                              }));
+                              setSheetConfig((prev) => {
+                                const updated: PhotoSheetConfig = {
+                                  ...prev,
+                                  marginMode: "manual",
+                                  marginTopInches: 3.0 / 25.4,
+                                  marginBottomInches: 3.0 / 25.4,
+                                  marginLeftInches: 3.0 / 25.4,
+                                  marginRightInches: 3.0 / 25.4,
+                                };
+                                const fit = computeFit(updated, currentPassportSpec, currentPaperSpec);
+                                return {
+                                  ...updated,
+                                  copies: prev.autoFit ? fit.maxPhotos : Math.min(prev.copies, fit.maxPhotos),
+                                  columns: prev.autoFit ? fit.cols : Math.min(prev.columns, fit.cols),
+                                  rows: prev.autoFit ? fit.rows : Math.min(prev.rows, fit.rows),
+                                };
+                              });
                             }}
                             className="px-1.5 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-neutral-300"
                           >
-                            0.2" (5.0mm)
+                            3.0mm Safe
                           </button>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-[11px] text-neutral-400 bg-neutral-900/60 p-2 rounded border border-neutral-800/80 flex items-center justify-between">
-                      <span>✓ Symmetric Auto-Centering active on {currentFit.paperName}</span>
-                      <span className="font-mono text-sky-400 text-[10px]">
-                        {sheetConfig.marginLeftInches.toFixed(2)}" margins
-                      </span>
+                    <div className="space-y-2">
+                      <div className="text-[11px] text-neutral-300 bg-neutral-900/60 p-2.5 rounded border border-neutral-800/80 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-neutral-200">✓ Symmetric Auto-Centering active</div>
+                          <div className="text-[10px] text-neutral-400 mt-0.5">
+                            Margins: {(sheetConfig.marginLeftInches * 25.4).toFixed(1)}mm sides • {(sheetConfig.marginTopInches * 25.4).toFixed(1)}mm top/bottom
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSmartOptimizeMargins}
+                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-sky-400 hover:text-sky-300 text-[10px] font-semibold rounded border border-neutral-700 transition-colors"
+                          title="Recalculate symmetric margins and center photo grid on sheet"
+                        >
+                          Center Grid
+                        </button>
+                      </div>
                     </div>
                   )}
 
                   {/* Photo Gap Spacing (Independent from outer margins) */}
                   <div className="pt-2 border-t border-neutral-850 flex items-center justify-between">
-                    <span className="text-[10px] text-neutral-400">Photo-to-Photo Gap</span>
+                    <div>
+                      <span className="text-[11px] text-neutral-300 font-medium block">Inter-Photo Gap</span>
+                      <span className="text-[9px] text-neutral-500">Separation between photos for cutting</span>
+                    </div>
                     <div className="flex items-center space-x-1.5">
                       <input
                         type="number"
-                        step="0.01"
+                        step={marginUnit === "in" ? "0.01" : "0.5"}
                         min="0"
-                        max="0.5"
-                        value={sheetConfig.gapHorizontalInches}
-                        onChange={(e) =>
-                          setSheetConfig((prev) => ({
-                            ...prev,
-                            gapHorizontalInches: Math.max(0, Number(e.target.value)),
-                            gapVerticalInches: Math.max(0, Number(e.target.value)),
-                          }))
-                        }
-                        className="w-14 bg-neutral-900 border border-neutral-700 rounded px-1 py-0.5 text-right font-mono text-xs"
+                        max={marginUnit === "in" ? "0.5" : "15"}
+                        value={Number(convertUnits(sheetConfig.gapHorizontalInches, "in", marginUnit).toFixed(2))}
+                        onChange={(e) => handleGapChange(convertUnits(Number(e.target.value), marginUnit, "in"))}
+                        className="w-16 bg-neutral-900 border border-neutral-700 rounded px-1.5 py-0.5 text-right font-mono text-xs text-white"
                       />
-                      <span className="text-[10px] text-neutral-400">in</span>
+                      <span className="text-[10px] text-neutral-400">{marginUnit}</span>
                     </div>
                   </div>
                 </div>
@@ -2651,8 +3010,29 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                           copies: Math.max(1, Math.min(dynamicMaxPhotos, Number(e.target.value))),
                         }))
                       }
-                      className="w-16 bg-neutral-900 border border-neutral-700 rounded px-2 py-0.5 text-right font-mono text-sky-400"
+                      className="w-16 bg-neutral-900 border border-neutral-700 rounded px-2 py-0.5 text-right font-mono text-sky-400 font-bold"
                     />
+                  </div>
+
+                  {/* Range Slider for Copies bounded dynamically */}
+                  <div className="space-y-1 pt-1">
+                    <input
+                      type="range"
+                      min="1"
+                      max={dynamicMaxPhotos}
+                      value={Math.min(sheetConfig.copies, dynamicMaxPhotos)}
+                      onChange={(e) =>
+                        setSheetConfig((prev) => ({
+                          ...prev,
+                          copies: Math.max(1, Math.min(dynamicMaxPhotos, Number(e.target.value))),
+                        }))
+                      }
+                      className="w-full accent-sky-500 h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[9px] text-neutral-500 font-mono">
+                      <span>1 copy</span>
+                      <span>{dynamicMaxPhotos} copies (Max fit)</span>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-1 border-t border-neutral-800">
@@ -2661,14 +3041,18 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                       <input
                         type="number"
                         min="1"
-                        max={Math.max(dynamicCols, 24)}
+                        max={dynamicCols}
                         value={sheetConfig.columns}
                         onChange={(e) =>
-                          setSheetConfig((prev) => ({
-                            ...prev,
-                            columns: Math.max(1, Number(e.target.value)),
-                            autoFit: false,
-                          }))
+                          setSheetConfig((prev) => {
+                            const val = Math.max(1, Math.min(dynamicCols, Number(e.target.value)));
+                            return {
+                              ...prev,
+                              columns: val,
+                              copies: Math.min(prev.copies, val * prev.rows),
+                              autoFit: false,
+                            };
+                          })
                         }
                         className="w-12 bg-neutral-900 border border-neutral-700 rounded px-1.5 py-0.5 text-right font-mono"
                       />
@@ -2678,14 +3062,18 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                       <input
                         type="number"
                         min="1"
-                        max={Math.max(dynamicRows, 24)}
+                        max={dynamicRows}
                         value={sheetConfig.rows}
                         onChange={(e) =>
-                          setSheetConfig((prev) => ({
-                            ...prev,
-                            rows: Math.max(1, Number(e.target.value)),
-                            autoFit: false,
-                          }))
+                          setSheetConfig((prev) => {
+                            const val = Math.max(1, Math.min(dynamicRows, Number(e.target.value)));
+                            return {
+                              ...prev,
+                              rows: val,
+                              copies: Math.min(prev.copies, prev.columns * val),
+                              autoFit: false,
+                            };
+                          })
                         }
                         className="w-12 bg-neutral-900 border border-neutral-700 rounded px-1.5 py-0.5 text-right font-mono"
                       />

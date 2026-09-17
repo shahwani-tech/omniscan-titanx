@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X, Check, FileText, ChevronLeft, ChevronRight, RefreshCw, ZoomIn } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
-import { renderPDFPageThumbnail, renderPdfThumbnailsConcurrent } from "../../engine/pdf";
+import { renderPDFPageThumbnail, renderPdfThumbnailsConcurrent, ensurePdfWorker } from "../../engine/pdf";
+
+ensurePdfWorker();
 
 interface A6PdfPagePickerModalProps {
   isOpen: boolean;

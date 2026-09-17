@@ -186,6 +186,15 @@ class PageBlobStore {
   }
 
   /**
+   * High-level resolver alias: returns an Object URL string for a blob ID
+   */
+  async resolveUrl(blobId: string): Promise<string> {
+    if (!blobId) return "";
+    const url = await this.getBlobUrl(blobId);
+    return url || "";
+  }
+
+  /**
    * Revoke a single tracked Object URL
    */
   revokeBlobUrl(url: string): void {

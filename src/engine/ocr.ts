@@ -9,6 +9,26 @@ import { OCRBlock, OCRLine, OCRResult, OCRWord } from "../types";
 let cachedWorker: Worker | null = null;
 let currentLanguage = "";
 
+/**
+ * Resolve local bundled asset paths for 100% offline Tesseract OCR execution
+ * Supports both standard web hostings and Electron file:// desktop environments.
+ */
+function getLocalTesseractPaths(): { workerPath: string; corePath: string; langPath: string } {
+  if (typeof window !== "undefined") {
+    const base = new URL("./", window.location.href);
+    return {
+      workerPath: new URL("tesseract/worker.min.js", base).href,
+      corePath: new URL("tesseract/tesseract-core.wasm.js", base).href,
+      langPath: new URL("tesseract/lang", base).href,
+    };
+  }
+  return {
+    workerPath: "/tesseract/worker.min.js",
+    corePath: "/tesseract/tesseract-core.wasm.js",
+    langPath: "/tesseract/lang",
+  };
+}
+
 export interface OCRProgressEvent {
   status: string;
   progress: number; // 0 to 1
@@ -37,7 +57,11 @@ async function getOCRWorker(
 
   onProgress?.({ status: `Loading OCR Model (${language})...`, progress: 0.1 });
 
+  const localPaths = getLocalTesseractPaths();
   const worker = await createWorker(language, 1, {
+    workerPath: localPaths.workerPath,
+    corePath: localPaths.corePath,
+    langPath: localPaths.langPath,
     logger: (m) => {
       if (m.status === "recognizing text") {
         onProgress?.({

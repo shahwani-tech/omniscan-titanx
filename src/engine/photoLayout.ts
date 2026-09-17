@@ -39,47 +39,47 @@ export const STANDARD_PAPER_SIZES: PaperSizeSpec[] = [
   },
   {
     id: "iso-a6",
-    name: "A6 (148 × 105 mm)",
-    widthInches: 5.827,
-    heightInches: 4.134,
-    widthMm: 148.0,
-    heightMm: 105.0,
-    category: "Standard Paper",
-  },
-  {
-    id: "iso-a5",
-    name: "A5 (210 × 148 mm)",
-    widthInches: 8.268,
+    name: "A6 (105 × 148 mm)",
+    widthInches: 4.134,
     heightInches: 5.827,
-    widthMm: 210.0,
+    widthMm: 105.0,
     heightMm: 148.0,
     category: "Standard Paper",
   },
   {
-    id: "iso-a4",
-    name: "A4 (297 × 210 mm)",
-    widthInches: 11.693,
+    id: "iso-a5",
+    name: "A5 (148 × 210 mm)",
+    widthInches: 5.827,
     heightInches: 8.268,
-    widthMm: 297.0,
+    widthMm: 148.0,
     heightMm: 210.0,
     category: "Standard Paper",
   },
   {
-    id: "iso-a3",
-    name: "A3 (420 × 297 mm)",
-    widthInches: 16.535,
+    id: "iso-a4",
+    name: "A4 (210 × 297 mm)",
+    widthInches: 8.268,
     heightInches: 11.693,
-    widthMm: 420.0,
+    widthMm: 210.0,
     heightMm: 297.0,
     category: "Standard Paper",
   },
   {
+    id: "iso-a3",
+    name: "A3 (297 × 420 mm)",
+    widthInches: 11.693,
+    heightInches: 16.535,
+    widthMm: 297.0,
+    heightMm: 420.0,
+    category: "Standard Paper",
+  },
+  {
     id: "us-letter",
-    name: "Letter (279.4 × 215.9 mm)",
-    widthInches: 11.0,
-    heightInches: 8.5,
-    widthMm: 279.4,
-    heightMm: 215.9,
+    name: "Letter (215.9 × 279.4 mm)",
+    widthInches: 8.5,
+    heightInches: 11.0,
+    widthMm: 215.9,
+    heightMm: 279.4,
     category: "Standard Paper",
   },
   {
@@ -268,6 +268,27 @@ export const BUILTIN_PRINTER_PROFILES: PrinterProfile[] = [
   },
 ];
 
+export const PRINTER_MARGIN_STANDARDS = {
+  standard: {
+    id: "standard",
+    name: "Standard Home/Office Printer",
+    minMarginMm: 3.0,
+    minGapMm: 1.0,
+    description: "Safe 3mm border margin and 1mm gap for desktop inkjet & laser printers",
+    warning: undefined,
+  },
+  professional: {
+    id: "professional",
+    name: "Professional / Borderless Printer",
+    minMarginMm: 1.5,
+    minGapMm: 1.0,
+    description: "1.5mm compact margins for photo labs and borderless photo printers",
+    warning: "⚠️ Reduced margins (1.5mm) may be cut off on some standard home printers",
+  },
+} as const;
+
+export type PrinterMarginStandardType = "standard" | "professional";
+
 export const DEFAULT_PHOTO_SHEET_CONFIG: PhotoSheetConfig = {
   paperSizeId: "photo-6x4",
   paperWidthInches: 6.0,
@@ -290,13 +311,14 @@ export const DEFAULT_PHOTO_SHEET_CONFIG: PhotoSheetConfig = {
   columns: 4,
   rows: 2,
 
-  marginTopInches: 0.1,
-  marginBottomInches: 0.1,
-  marginLeftInches: 0.1,
-  marginRightInches: 0.1,
+  marginTopInches: 3.0 / 25.4, // 3mm safe margin
+  marginBottomInches: 3.0 / 25.4,
+  marginLeftInches: 3.0 / 25.4,
+  marginRightInches: 3.0 / 25.4,
 
-  gapHorizontalInches: 0.08,
-  gapVerticalInches: 0.08,
+  gapHorizontalInches: 1.0 / 25.4, // 1mm safe gap
+  gapVerticalInches: 1.0 / 25.4,
+  printerMarginStandard: "standard",
 
   border: {
     enabled: true,
@@ -315,6 +337,238 @@ export const DEFAULT_PHOTO_SHEET_CONFIG: PhotoSheetConfig = {
 
   globalFilterPreset: "original",
   backgroundColor: "#FFFFFF",
+};
+
+/**
+ * Smart Margin Optimization:
+ * Calculates optimal columns, rows, centered margins, and total capacity
+ * given paper dimensions, photo dimensions, minimum printer-safe margins, and inter-photo gaps.
+ */
+export const optimizeLayout = (
+  paperW: number,
+  paperH: number,
+  photoW: number,
+  photoH: number,
+  minMarginMm: number = 3,
+  minGapMm: number = 1
+): {
+  cols: number;
+  rows: number;
+  marginX: number;
+  marginY: number;
+  total: number;
+  usedW: number;
+  usedH: number;
+} => {
+  const cols = Math.max(
+    1,
+    Math.floor((paperW - 2 * minMarginMm + minGapMm) / (photoW + minGapMm))
+  );
+  const rows = Math.max(
+    1,
+    Math.floor((paperH - 2 * minMarginMm + minGapMm) / (photoH + minGapMm))
+  );
+
+  const usedW = cols * (photoW + minGapMm) - minGapMm;
+  const usedH = rows * (photoH + minGapMm) - minGapMm;
+  const marginX = Math.max(0, (paperW - usedW) / 2);
+  const marginY = Math.max(0, (paperH - usedH) / 2);
+
+  return {
+    cols,
+    rows,
+    marginX,
+    marginY,
+    total: cols * rows,
+    usedW,
+    usedH,
+  };
+};
+
+// DEV assertion to catch calculation regressions against mathematical ground truth
+if (typeof process !== "undefined" && process.env?.NODE_ENV === "development") {
+  // A4 portrait + 35x45mm sanity check
+  const sanityA4Port = optimizeLayout(210, 297, 35, 45, 3, 1);
+  if (sanityA4Port.total !== 30) {
+    console.error(
+      "LAYOUT CALCULATION BUG: Expected 30 for A4 portrait, got",
+      sanityA4Port.total,
+      "Inputs:",
+      sanityA4Port
+    );
+  }
+  // A4 landscape + 35x45mm sanity check
+  const sanityA4Land = optimizeLayout(297, 210, 35, 45, 3, 1);
+  if (sanityA4Land.total !== 32) {
+    console.error(
+      "LAYOUT CALCULATION BUG: Expected 32 for A4 landscape, got",
+      sanityA4Land.total,
+      "Inputs:",
+      sanityA4Land
+    );
+  }
+  // 6x4 inch + 35x45mm sanity check
+  const sanity6x4 = optimizeLayout(152.4, 101.6, 35, 45, 3, 1);
+  if (sanity6x4.total !== 8) {
+    console.error(
+      "LAYOUT CALCULATION BUG: Expected 8 for 6x4 inch, got",
+      sanity6x4.total,
+      "Inputs:",
+      sanity6x4
+    );
+  }
+}
+
+export interface SheetLayoutOption {
+  orientation: "portrait" | "landscape";
+  photoRotated: boolean;
+  cols: number;
+  rows: number;
+  total: number;
+  marginX: number;
+  marginY: number;
+  usedW: number;
+  usedH: number;
+  paperW: number;
+  paperH: number;
+  slotW: number;
+  slotH: number;
+}
+
+export interface SheetOptimizationAnalysis {
+  currentOrientation: "portrait" | "landscape";
+  currentNormal: SheetLayoutOption;
+  currentRotated: SheetLayoutOption;
+  currentBest: SheetLayoutOption;
+  flippedNormal: SheetLayoutOption;
+  flippedRotated: SheetLayoutOption;
+  overallBest: SheetLayoutOption;
+  activeOption: SheetLayoutOption;
+  recommendationMessage: string;
+  recommendationType: "current-is-best" | "rotate-layout" | "switch-orientation";
+}
+
+/**
+ * Multi-Orientation Analysis:
+ * Evaluates both photo orientations (normal 0° vs rotated 90°)
+ * and both paper orientations (portrait vs landscape) to find the configuration
+ * that yields the highest photo count while maintaining grid constraints.
+ */
+export const analyzeSheetLayout = (
+  paperShortMm: number,
+  paperLongMm: number,
+  photoW: number,
+  photoH: number,
+  currentOrientation: "portrait" | "landscape",
+  currentPrintRotation: number = 0,
+  minMarginMm: number = 3,
+  minGapMm: number = 1,
+  paperName: string = "Paper"
+): SheetOptimizationAnalysis => {
+  const portW = Math.min(paperShortMm, paperLongMm);
+  const portH = Math.max(paperShortMm, paperLongMm);
+
+  const landW = Math.max(paperShortMm, paperLongMm);
+  const landH = Math.min(paperShortMm, paperLongMm);
+
+  // 1. Portrait Normal (photos upright: photoW, photoH)
+  const pNorm = optimizeLayout(portW, portH, photoW, photoH, minMarginMm, minGapMm);
+  const portraitNormal: SheetLayoutOption = {
+    orientation: "portrait",
+    photoRotated: false,
+    ...pNorm,
+    paperW: portW,
+    paperH: portH,
+    slotW: photoW,
+    slotH: photoH,
+  };
+
+  // 2. Portrait Rotated (photos rotated 90°: photoH, photoW)
+  const pRot = optimizeLayout(portW, portH, photoH, photoW, minMarginMm, minGapMm);
+  const portraitRotated: SheetLayoutOption = {
+    orientation: "portrait",
+    photoRotated: true,
+    ...pRot,
+    paperW: portW,
+    paperH: portH,
+    slotW: photoH,
+    slotH: photoW,
+  };
+
+  // 3. Landscape Normal (photos upright: photoW, photoH)
+  const lNorm = optimizeLayout(landW, landH, photoW, photoH, minMarginMm, minGapMm);
+  const landscapeNormal: SheetLayoutOption = {
+    orientation: "landscape",
+    photoRotated: false,
+    ...lNorm,
+    paperW: landW,
+    paperH: landH,
+    slotW: photoW,
+    slotH: photoH,
+  };
+
+  // 4. Landscape Rotated (photos rotated 90°: photoH, photoW)
+  const lRot = optimizeLayout(landW, landH, photoH, photoW, minMarginMm, minGapMm);
+  const landscapeRotated: SheetLayoutOption = {
+    orientation: "landscape",
+    photoRotated: true,
+    ...lRot,
+    paperW: landW,
+    paperH: landH,
+    slotW: photoH,
+    slotH: photoW,
+  };
+
+  const isCurrentPortrait = currentOrientation === "portrait";
+  const currentNormal = isCurrentPortrait ? portraitNormal : landscapeNormal;
+  const currentRotated = isCurrentPortrait ? portraitRotated : landscapeRotated;
+  const flippedNormal = isCurrentPortrait ? landscapeNormal : portraitNormal;
+  const flippedRotated = isCurrentPortrait ? landscapeRotated : portraitRotated;
+
+  // Best for current paper orientation
+  const currentBest =
+    currentNormal.total >= currentRotated.total ? currentNormal : currentRotated;
+
+  // All candidates sorted by total capacity; prefer upright photo if equal
+  const allCandidates = [portraitNormal, portraitRotated, landscapeNormal, landscapeRotated];
+  allCandidates.sort((a, b) => {
+    if (b.total !== a.total) return b.total - a.total;
+    if (!a.photoRotated && b.photoRotated) return -1;
+    if (a.photoRotated && !b.photoRotated) return 1;
+    return 0;
+  });
+  const overallBest = allCandidates[0];
+
+  const isCurrentRotated = currentPrintRotation === 90 || currentPrintRotation === 270;
+  const activeOption = isCurrentRotated ? currentRotated : currentNormal;
+
+  let recommendationMessage = `Best layout: ${overallBest.cols} × ${overallBest.rows} = ${overallBest.total} photos on ${paperName}`;
+  let recommendationType: "current-is-best" | "rotate-layout" | "switch-orientation" = "current-is-best";
+
+  if (activeOption.total < currentRotated.total && !isCurrentRotated) {
+    recommendationType = "rotate-layout";
+    recommendationMessage = `Rotate layout: ${currentRotated.cols} × ${currentRotated.rows} = ${currentRotated.total} photos — photos will print rotated 90°`;
+  } else if (activeOption.total < overallBest.total) {
+    recommendationType = "switch-orientation";
+    const targetOrient = overallBest.orientation;
+    recommendationMessage = `Switch to ${targetOrient} for ${overallBest.total} photos (${overallBest.cols} × ${overallBest.rows}${overallBest.photoRotated ? " rotated 90°" : ""})`;
+  } else {
+    recommendationType = "current-is-best";
+    recommendationMessage = `Best layout: ${activeOption.cols} × ${activeOption.rows} = ${activeOption.total} photos on ${paperName}`;
+  }
+
+  return {
+    currentOrientation,
+    currentNormal,
+    currentRotated,
+    currentBest,
+    flippedNormal,
+    flippedRotated,
+    overallBest,
+    activeOption,
+    recommendationMessage,
+    recommendationType,
+  };
 };
 
 /**
@@ -388,21 +642,53 @@ export function calculatePhotoSheetLayout(
       ? Math.min(config.paperWidthInches, config.paperHeightInches)
       : Math.max(config.paperWidthInches, config.paperHeightInches);
 
-  const printableW = Math.max(0.1, paperW - config.marginLeftInches - config.marginRightInches);
-  const printableH = Math.max(0.1, paperH - config.marginTopInches - config.marginBottomInches);
+  const paperW_mm = paperW * 25.4;
+  const paperH_mm = paperH * 25.4;
 
   // Effective slot dimensions on paper considering printInstanceRotation
   const isRotated90or270 =
     config.printInstanceRotation === 90 || config.printInstanceRotation === 270;
-  const cellW = isRotated90or270 ? config.photoHeightInches : config.photoWidthInches;
-  const cellH = isRotated90or270 ? config.photoWidthInches : config.photoHeightInches;
+  const baseW_mm = config.photoWidthInches * 25.4;
+  const baseH_mm = config.photoHeightInches * 25.4;
+  const cellW_mm = isRotated90or270 ? baseH_mm : baseW_mm;
+  const cellH_mm = isRotated90or270 ? baseW_mm : baseH_mm;
 
-  const gapH = config.gapHorizontalInches;
-  const gapV = config.gapVerticalInches;
+  const cellW = cellW_mm / 25.4;
+  const cellH = cellH_mm / 25.4;
 
-  // Maximum columns & rows mathematically possible within printable area
-  const maxCols = Math.max(1, Math.floor((printableW + gapH) / (cellW + gapH)));
-  const maxRows = Math.max(1, Math.floor((printableH + gapV) / (cellH + gapV)));
+  const minMarginMm = config.printerMarginStandard === "professional" ? 1.5 : 3.0;
+  const gapH_mm = (config.gapHorizontalInches ?? (1.0 / 25.4)) * 25.4;
+  const gapV_mm = (config.gapVerticalInches ?? (1.0 / 25.4)) * 25.4;
+  const gapH = gapH_mm / 25.4;
+  const gapV = gapV_mm / 25.4;
+
+  let maxCols: number;
+  let maxRows: number;
+  let printableW: number;
+  let printableH: number;
+
+  if (config.marginMode === "manual") {
+    const leftMm = (config.marginLeftInches ?? (minMarginMm / 25.4)) * 25.4;
+    const rightMm = (config.marginRightInches ?? (minMarginMm / 25.4)) * 25.4;
+    const topMm = (config.marginTopInches ?? (minMarginMm / 25.4)) * 25.4;
+    const bottomMm = (config.marginBottomInches ?? (minMarginMm / 25.4)) * 25.4;
+
+    const printableW_mm = Math.max(0.1, paperW_mm - leftMm - rightMm);
+    const printableH_mm = Math.max(0.1, paperH_mm - topMm - bottomMm);
+    printableW = printableW_mm / 25.4;
+    printableH = printableH_mm / 25.4;
+
+    maxCols = Math.max(1, Math.floor((printableW_mm + gapH_mm + 0.001) / (cellW_mm + gapH_mm)));
+    maxRows = Math.max(1, Math.floor((printableH_mm + gapV_mm + 0.001) / (cellH_mm + gapV_mm)));
+  } else {
+    // Auto mode: layout is optimized using printer safe margins (default 3mm)
+    const opt = optimizeLayout(paperW_mm, paperH_mm, cellW_mm, cellH_mm, minMarginMm, gapH_mm);
+    maxCols = opt.cols;
+    maxRows = opt.rows;
+    printableW = paperW - (2 * minMarginMm) / 25.4;
+    printableH = paperH - (2 * minMarginMm) / 25.4;
+  }
+
   const maxPhotosPerSheet = maxCols * maxRows;
 
   let actualCols = config.columns;
@@ -432,14 +718,15 @@ export function calculatePhotoSheetLayout(
     warningMessage = `Sheet fits ${totalPhotosPlaced} photos. ${overflowCount} remaining photo${overflowCount > 1 ? "s" : ""} will go to next sheet.`;
   }
 
-  // Determine grid positioning: Auto centers within printable area, Manual starts at exact marginLeft/marginTop
-  const isAutoMargin = config.marginMode !== "manual";
-  const startX = isAutoMargin
-    ? config.marginLeftInches + Math.max(0, (printableW - gridW) / 2)
-    : config.marginLeftInches;
-  const startY = isAutoMargin
-    ? config.marginTopInches + Math.max(0, (printableH - gridH) / 2)
-    : config.marginTopInches;
+  // Determine grid positioning: Auto centers within paper, Manual starts at exact marginLeft/marginTop
+  const startX =
+    config.marginMode === "manual"
+      ? config.marginLeftInches
+      : Math.max(0, (paperW - gridW) / 2);
+  const startY =
+    config.marginMode === "manual"
+      ? config.marginTopInches
+      : Math.max(0, (paperH - gridH) / 2);
 
   const positions: PhotoInstancePosition[] = [];
 

@@ -958,7 +958,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     let isCancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const src = activePage.processedDataUrl || activePage.originalDataUrl;
+        const src =
+          displayedPageUrl ||
+          resolvedActivePageUrl ||
+          activePage.processedDataUrl ||
+          activePage.originalDataUrl ||
+          (await pageBlobStore.resolvePageUrl(activePage, "processed"));
         if (!src) return;
         const img = await loadImage(src);
         if (isCancelled) return;
@@ -975,7 +980,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       isCancelled = true;
       clearTimeout(timer);
     };
-  }, [activeTool, cropMode, activePage, perspectiveQuad]);
+  }, [activeTool, cropMode, activePage, perspectiveQuad, displayedPageUrl, resolvedActivePageUrl]);
 
   return (
     <main

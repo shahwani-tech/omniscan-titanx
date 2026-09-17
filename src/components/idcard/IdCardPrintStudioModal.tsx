@@ -74,7 +74,9 @@ import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStu
 import { BackgroundStudioState } from "../../engine/background/types";
 import { classifyImageContent, ContentClassificationResult } from "../../engine/autoClassifier";
 import * as pdfjsLib from "pdfjs-dist";
-import { renderPDFPageThumbnail, renderPDFPageToDataUrl } from "../../engine/pdf";
+import { renderPDFPageThumbnail, renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
+
+ensurePdfWorker();
 import { A6HalfCardStudioModal } from "../a6card/A6HalfCardStudioModal";
 import {
   PdfImportDialog,

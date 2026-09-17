@@ -60,12 +60,14 @@ import {
   Cpu,
 } from "lucide-react";
 import { useToolShortcuts } from "../../commands/ShortcutContext";
+import { BackgroundRemoveConfirmModal } from "./BackgroundRemoveConfirmModal";
 
 interface UnifiedBackgroundStudioModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialImage: string;
   initialState?: Partial<BackgroundStudioState>;
+  autoStartRemoval?: boolean;
   title?: string;
   subtitle?: string;
   onApply: (finalCompositeUrl: string, fullState: BackgroundStudioState) => void;
@@ -76,6 +78,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   onClose,
   initialImage,
   initialState,
+  autoStartRemoval = false,
   title = "Studio Background Editor & Compositor",
   subtitle = "Independent Multi-Layer Background Replacement • Local Biometric AI & GitHub Backend Integration",
   onApply,
@@ -175,6 +178,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   // Crop Modal & Provider Config Dialog Modals
   const [isCropModalOpen, setIsCropModalOpen] = useState<boolean>(false);
   const [isProviderConfigOpen, setIsProviderConfigOpen] = useState<boolean>(false);
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(false);
 
   // Interactive Preview Canvas
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -206,6 +210,9 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
     optionsToUse = state.removalOptions,
     strokesToUse = state.manualStrokes
   ) => {
+    // Prevent duplicate processing if user clicks repeatedly
+    if (state.removalState.status === "processing") return;
+
     const activeProvider = backgroundRemovalService.getActiveProvider();
 
     setState((prev) => ({
@@ -265,12 +272,12 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
     }
   };
 
-  // Run removal on initial modal open if not yet processed
+  // Run removal on initial modal open ONLY IF explicitly confirmed by user
   useEffect(() => {
-    if (isOpen && state.removalState.status === "idle" && !state.foregroundImage) {
+    if (isOpen && autoStartRemoval && state.removalState.status === "idle" && !state.foregroundImage) {
       executeRemoval();
     }
-  }, [isOpen]);
+  }, [isOpen, autoStartRemoval]);
 
   // -------------------------------------------------------------
   // Manual Brush Point Addition

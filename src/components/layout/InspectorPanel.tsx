@@ -54,6 +54,7 @@ interface InspectorPanelProps {
   isCollapsed: boolean;
   isProcessing: boolean;
   onToggleCollapse: () => void;
+  onRotatePage?: (degrees: number) => void;
   onUpdateFilters: (filters: Partial<ImageFilterPipeline>, isCommit?: boolean) => void;
   onResetFilters: () => void;
   onAutoDeskew: () => void;
@@ -80,6 +81,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   isCollapsed,
   isProcessing,
   onToggleCollapse,
+  onRotatePage,
   onUpdateFilters,
   onResetFilters,
   onAutoDeskew,
@@ -408,19 +410,42 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
               {/* Rotation buttons */}
               <div className="grid grid-cols-4 gap-1.5">
-                {[0, 90, 180, 270].map((deg) => (
-                  <button
-                    key={deg}
-                    onClick={() => handleControlChange({ rotation: deg }, true)}
-                    className={`py-1.5 rounded border text-center font-mono font-medium transition-colors ${
-                      filters.rotation === deg
-                        ? "bg-sky-600 text-white border-sky-500"
-                        : "bg-neutral-800 text-neutral-300 border-neutral-700 hover:bg-neutral-750"
-                    }`}
-                  >
-                    {deg}°
-                  </button>
-                ))}
+                <button
+                  onClick={() => onRotatePage ? onRotatePage(-90) : handleControlChange({ rotation: (filters.rotation - 90 + 360) % 360 }, true)}
+                  disabled={isProcessing}
+                  className="py-1.5 px-1 rounded border border-neutral-700 bg-neutral-800 text-neutral-300 hover:bg-neutral-750 hover:text-white disabled:opacity-50 flex items-center justify-center space-x-1 text-xs font-medium transition-colors"
+                  title="Rotate 90° Counter-Clockwise"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
+                  <span>-90°</span>
+                </button>
+                <button
+                  onClick={() => onRotatePage ? onRotatePage(90) : handleControlChange({ rotation: (filters.rotation + 90) % 360 }, true)}
+                  disabled={isProcessing}
+                  className="py-1.5 px-1 rounded border border-neutral-700 bg-neutral-800 text-neutral-300 hover:bg-neutral-750 hover:text-white disabled:opacity-50 flex items-center justify-center space-x-1 text-xs font-medium transition-colors"
+                  title="Rotate 90° Clockwise"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                  <span>+90°</span>
+                </button>
+                <button
+                  onClick={() => onRotatePage ? onRotatePage(180) : handleControlChange({ rotation: (filters.rotation + 180) % 360 }, true)}
+                  disabled={isProcessing}
+                  className="py-1.5 px-1 rounded border border-neutral-700 bg-neutral-800 text-neutral-300 hover:bg-neutral-750 hover:text-white disabled:opacity-50 flex items-center justify-center space-x-1 text-xs font-medium transition-colors"
+                  title="Rotate 180° Flip"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
+                  <span>180°</span>
+                </button>
+                <button
+                  onClick={() => onRotatePage ? onRotatePage(270) : handleControlChange({ rotation: (filters.rotation + 270) % 360 }, true)}
+                  disabled={isProcessing}
+                  className="py-1.5 px-1 rounded border border-neutral-700 bg-neutral-800 text-neutral-300 hover:bg-neutral-750 hover:text-white disabled:opacity-50 flex items-center justify-center space-x-1 text-xs font-medium transition-colors"
+                  title="Rotate 270°"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                  <span>270°</span>
+                </button>
               </div>
 
               {/* Deskew Angle Slider */}
