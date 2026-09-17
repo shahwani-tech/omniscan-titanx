@@ -8,7 +8,7 @@ export type { BackgroundRemovalOptions, BackgroundRemovalResult, ShadowRemovalLe
 
 export type BackgroundMode = "original" | "transparent" | "color" | "image" | "gradient" | "preset";
 
-export type ImageFitMode = "contain" | "cover" | "fill" | "center" | "original" | "custom";
+export type ImageFitMode = "contain" | "cover" | "fill" | "stretch" | "center" | "original" | "custom" | "crop" | "tile";
 
 export interface BackgroundTransform {
   x: number;          // Horizontal offset in pixels relative to center
@@ -21,6 +21,11 @@ export interface BackgroundTransform {
   rotation: number;   // Rotation angle in degrees (-180 to 180 or 0 to 360)
   opacity: number;    // Opacity (0 to 1)
   fitMode: ImageFitMode;
+  blur?: number;        // Blur in pixels (0-20px) for bokeh/depth effect
+  brightness?: number;  // -100 to +100 (default 0)
+  contrast?: number;    // -100 to +100 (default 0)
+  saturation?: number;  // -100 to +100 (default 0)
+  temperature?: number; // -100 (Cool) to +100 (Warm) (default 0)
 }
 
 export interface BackgroundCrop {
@@ -90,6 +95,7 @@ export type RemovalJobStatus = "idle" | "processing" | "completed" | "failed" | 
 export interface BackgroundStudioState {
   // Source & Layers (Separate, Non-Destructive)
   originalImage: string;
+  originalHasTransparency?: boolean;
   foregroundImage: string | null; // Alpha-transparent subject cutout
   backgroundMode: BackgroundMode;
   backgroundColor: string;        // Hex representation (#FFFFFF)
@@ -143,6 +149,11 @@ export const DEFAULT_BACKGROUND_TRANSFORM: BackgroundTransform = {
   rotation: 0,
   opacity: 1,
   fitMode: "cover",
+  blur: 0,
+  brightness: 0,
+  contrast: 0,
+  saturation: 0,
+  temperature: 0,
 };
 
 export const DEFAULT_FOREGROUND_TRANSFORM: ForegroundTransform = {
@@ -156,38 +167,56 @@ export const DEFAULT_FOREGROUND_TRANSFORM: ForegroundTransform = {
 };
 
 export const STANDARD_BACKGROUND_PRESETS: BackgroundPreset[] = [
+  // Solid Standard
   {
     id: "icao-white",
-    name: "ICAO Pure White",
+    name: "Pure White",
     category: "passport",
     mode: "color",
     color: "#FFFFFF",
-    description: "Official standard for US, EU, and Schengen passport photos",
+    description: "Official ICAO standard for US, Schengen & global passports",
   },
   {
-    id: "embassy-blue",
-    name: "Embassy Light Blue",
+    id: "off-white",
+    name: "Off White",
     category: "passport",
     mode: "color",
-    color: "#E0F2FE",
-    description: "Diplomatic & Visa standard for Kuwait, Malaysia, and selected consulates",
+    color: "#F5F5F5",
+    description: "Soft high-key neutral passport & ID photo background",
   },
   {
-    id: "standard-gray",
-    name: "Studio Light Gray",
+    id: "light-grey",
+    name: "Light Grey",
     category: "passport",
     mode: "color",
-    color: "#F3F4F6",
-    description: "Official standard for Canadian passport and high-key portraits",
+    color: "#E0E0E0",
+    description: "Standard compliant neutral gray for Canadian & UK passports",
   },
   {
-    id: "off-white-cream",
-    name: "Consular Off-White",
+    id: "medium-grey",
+    name: "Medium Grey",
     category: "passport",
     mode: "color",
-    color: "#FAFAF9",
-    description: "Soft warm ivory backdrop for ID cards and badge verification",
+    color: "#9E9E9E",
+    description: "Formal corporate ID & badge neutral slate",
   },
+  {
+    id: "sky-blue",
+    name: "Sky Blue",
+    category: "passport",
+    mode: "color",
+    color: "#87CEEB",
+    description: "Standard for US visa, consular, and Malaysian photo requirements",
+  },
+  {
+    id: "cream-ivory",
+    name: "Cream",
+    category: "passport",
+    mode: "color",
+    color: "#FFF8E7",
+    description: "Warm consular ivory tone for badges and IDs",
+  },
+  // Studio & Dark
   {
     id: "studio-slate",
     name: "Studio Slate Dark",
@@ -204,9 +233,36 @@ export const STANDARD_BACKGROUND_PRESETS: BackgroundPreset[] = [
     color: "#0B0F17",
     description: "High-contrast theatrical dark background",
   },
+  // Gradient Studio
   {
-    id: "corporate-gradient",
-    name: "Corporate Blue Gradient",
+    id: "white-to-light-grey",
+    name: "White to Light Grey",
+    category: "gradient",
+    mode: "gradient",
+    gradient: {
+      color1: "#FFFFFF",
+      color2: "#D1D5DB",
+      type: "linear",
+      angle: 180,
+    },
+    description: "Classic top-to-bottom studio portrait illumination",
+  },
+  {
+    id: "soft-studio-gradient",
+    name: "Soft Studio Radial",
+    category: "gradient",
+    mode: "gradient",
+    gradient: {
+      color1: "#FFFFFF",
+      color2: "#9CA3AF",
+      type: "radial",
+      angle: 0,
+    },
+    description: "Soft center spotlight feathering into neutral gray",
+  },
+  {
+    id: "corporate-blue-gradient",
+    name: "Professional Blue Gradient",
     category: "gradient",
     mode: "gradient",
     gradient: {
@@ -219,12 +275,12 @@ export const STANDARD_BACKGROUND_PRESETS: BackgroundPreset[] = [
   },
   {
     id: "clean-silver-gradient",
-    name: "Silver Mist Gradient",
+    name: "Studio Grey Gradient",
     category: "gradient",
     mode: "gradient",
     gradient: {
       color1: "#E2E8F0",
-      color2: "#FFFFFF",
+      color2: "#94A3B8",
       type: "linear",
       angle: 180,
     },

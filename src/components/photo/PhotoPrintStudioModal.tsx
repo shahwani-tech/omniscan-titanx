@@ -985,7 +985,18 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   // -------------------------------------------------------------
   // Background Remover Execution Handler
   // -------------------------------------------------------------
-  const handleOpenBgRemover = () => {
+  const handleOpenBgRemover = async () => {
+    if (cropImageRef.current && cropImageRef.current.offsetWidth > 0) {
+      cropStageLayoutRef.current = {
+        width: cropImageRef.current.offsetWidth,
+        height: cropImageRef.current.offsetHeight,
+      };
+    }
+    try {
+      await generateProcessedPhoto();
+    } catch (err) {
+      console.warn("Could not generate processed photo for BG removal:", err);
+    }
     setIsBgRemoverOpen(true);
   };
 
@@ -3181,13 +3192,18 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       <UnifiedBackgroundStudioModal
         isOpen={isBgRemoverOpen}
         onClose={() => setIsBgRemoverOpen(false)}
-        initialImage={rawSourceImage}
+        initialImage={processedPhotoDataUrl ?? rawSourceImage}
         initialState={bgStudioState || undefined}
         title="Passport Studio Background Editor"
         subtitle="Biometric Subject Matting • Multi-Layer Composition • Offline AI & GitHub Backend"
         onApply={(finalCompositeUrl, fullState) => {
           setBgStudioState(fullState);
+          setProcessedPhotoDataUrl(finalCompositeUrl);
           setRawSourceImage(finalCompositeUrl);
+          setCropBox({ x: 0, y: 0, width: 1, height: 1 });
+          setCropZoom(1.0);
+          setCropImagePan({ x: 0, y: 0 });
+          setCropRotation(0);
           showToast("Passport photo background updated.");
           setIsBgRemoverOpen(false);
         }}

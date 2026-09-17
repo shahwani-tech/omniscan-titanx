@@ -50,7 +50,8 @@ export function calculateFitDimensions(
       break;
     }
 
-    case "cover": {
+    case "cover":
+    case "crop": {
       if (imgAspect > containerAspect) {
         height = containerHeight;
         width = containerHeight * imgAspect;
@@ -63,7 +64,8 @@ export function calculateFitDimensions(
       break;
     }
 
-    case "fill": {
+    case "fill":
+    case "stretch": {
       width = containerWidth;
       height = containerHeight;
       x = 0;
@@ -71,6 +73,7 @@ export function calculateFitDimensions(
       break;
     }
 
+    case "tile":
     case "original": {
       width = imgNaturalWidth;
       height = imgNaturalHeight;
@@ -79,7 +82,14 @@ export function calculateFitDimensions(
       break;
     }
 
-    case "center":
+    case "center": {
+      width = imgNaturalWidth;
+      height = imgNaturalHeight;
+      x = (containerWidth - width) / 2;
+      y = (containerHeight - height) / 2;
+      break;
+    }
+
     default: {
       if (imgAspect > containerAspect) {
         height = containerHeight;

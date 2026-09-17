@@ -136,27 +136,59 @@ export class BackgroundCompositor {
           ctx.rotate((bgTransform.rotation * Math.PI) / 180);
         }
 
+        const filterParts: string[] = [];
+        if (bgTransform.blur && bgTransform.blur > 0) {
+          filterParts.push(`blur(${bgTransform.blur}px)`);
+        }
+        if (bgTransform.brightness !== undefined && bgTransform.brightness !== 0) {
+          filterParts.push(`brightness(${1 + bgTransform.brightness / 100})`);
+        }
+        if (bgTransform.contrast !== undefined && bgTransform.contrast !== 0) {
+          filterParts.push(`contrast(${1 + bgTransform.contrast / 100})`);
+        }
+        if (bgTransform.saturation !== undefined && bgTransform.saturation !== 0) {
+          filterParts.push(`saturate(${1 + bgTransform.saturation / 100})`);
+        }
+        if (bgTransform.temperature !== undefined && bgTransform.temperature !== 0) {
+          if (bgTransform.temperature > 0) {
+            filterParts.push(`sepia(${bgTransform.temperature * 0.35}%)`);
+          } else {
+            filterParts.push(`hue-rotate(${bgTransform.temperature * 0.25}deg)`);
+          }
+        }
+        if (filterParts.length > 0) {
+          ctx.filter = filterParts.join(" ");
+        }
+
         const sx = (bgTransform.scaleX || 1) * (bgTransform.scale || 1);
         const sy = (bgTransform.scaleY || 1) * (bgTransform.scale || 1);
         ctx.scale(sx, sy);
 
-        // Calculate fit dimensions
-        const fit = calculateFitDimensions(
-          bgImg.naturalWidth,
-          bgImg.naturalHeight,
-          width,
-          height,
-          bgTransform.fitMode || "cover"
-        );
+        if (bgTransform.fitMode === "tile") {
+          const pattern = ctx.createPattern(bgImg, "repeat");
+          if (pattern) {
+            ctx.fillStyle = pattern;
+            ctx.fillRect(-width / 2, -height / 2, width, height);
+          }
+        } else {
+          // Calculate fit dimensions
+          const fit = calculateFitDimensions(
+            bgImg.naturalWidth,
+            bgImg.naturalHeight,
+            width,
+            height,
+            bgTransform.fitMode || "cover"
+          );
 
-        // Draw centered at origin
-        ctx.drawImage(
-          bgImg,
-          -fit.width / 2,
-          -fit.height / 2,
-          fit.width,
-          fit.height
-        );
+          // Draw centered at origin
+          ctx.drawImage(
+            bgImg,
+            -fit.width / 2,
+            -fit.height / 2,
+            fit.width,
+            fit.height
+          );
+        }
 
         ctx.restore();
       } catch (err) {
