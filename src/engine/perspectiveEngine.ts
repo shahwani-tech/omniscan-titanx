@@ -106,10 +106,34 @@ export function calculateNaturalQuadDimensions(
   srcH: number,
   quad: PerspectiveQuad
 ): { width: number; height: number; naturalRatio: number } {
-  const p0 = { x: quad.topLeft.x * srcW, y: quad.topLeft.y * srcH };
-  const p1 = { x: quad.topRight.x * srcW, y: quad.topRight.y * srcH };
-  const p2 = { x: quad.bottomRight.x * srcW, y: quad.bottomRight.y * srcH };
-  const p3 = { x: quad.bottomLeft.x * srcW, y: quad.bottomLeft.y * srcH };
+  const isNormalized =
+    Math.max(
+      Math.abs(quad.topLeft.x),
+      Math.abs(quad.topRight.x),
+      Math.abs(quad.bottomRight.x),
+      Math.abs(quad.bottomLeft.x),
+      Math.abs(quad.topLeft.y),
+      Math.abs(quad.topRight.y),
+      Math.abs(quad.bottomRight.y),
+      Math.abs(quad.bottomLeft.y)
+    ) <= 1.5;
+
+  const p0 = {
+    x: isNormalized ? quad.topLeft.x * srcW : quad.topLeft.x,
+    y: isNormalized ? quad.topLeft.y * srcH : quad.topLeft.y,
+  };
+  const p1 = {
+    x: isNormalized ? quad.topRight.x * srcW : quad.topRight.x,
+    y: isNormalized ? quad.topRight.y * srcH : quad.topRight.y,
+  };
+  const p2 = {
+    x: isNormalized ? quad.bottomRight.x * srcW : quad.bottomRight.x,
+    y: isNormalized ? quad.bottomRight.y * srcH : quad.bottomRight.y,
+  };
+  const p3 = {
+    x: isNormalized ? quad.bottomLeft.x * srcW : quad.bottomLeft.x,
+    y: isNormalized ? quad.bottomLeft.y * srcH : quad.bottomLeft.y,
+  };
 
   const topW = Math.hypot(p1.x - p0.x, p1.y - p0.y);
   const botW = Math.hypot(p2.x - p3.x, p2.y - p3.y);
@@ -283,6 +307,7 @@ export async function executePerspectiveWarp(
   height: number;
   deskewAngleApplied?: number;
 }> {
+  console.log("[PerspectiveEngine] executePerspectiveWarp called with quad:", JSON.stringify(quad), { options });
   const img = await loadImage(sourceUrl);
   const srcW = img.width;
   const srcH = img.height;
@@ -383,10 +408,10 @@ export async function warpPagePerspective(
   options: PerspectiveWarpOptions = {}
 ): Promise<OmniPage> {
   const sourceUrl =
-    page.originalDataUrl ||
     page.processedDataUrl ||
-    (await pageBlobStore.resolvePageUrl(page, "original")) ||
-    (await pageBlobStore.resolvePageUrl(page, "processed"));
+    page.originalDataUrl ||
+    (await pageBlobStore.resolvePageUrl(page, "processed")) ||
+    (await pageBlobStore.resolvePageUrl(page, "original"));
 
   if (!sourceUrl) {
     throw new Error(`Cannot warp perspective: Page ${page.id} has no source image.`);
@@ -423,7 +448,9 @@ export async function warpPagePerspective(
     lastModifiedAt: new Date().toISOString(),
     filters: {
       ...page.filters,
-      deskewAngle: deskewAngleApplied ? (page.filters.deskewAngle || 0) + deskewAngleApplied : page.filters.deskewAngle,
+      rotation: 0,
+      deskewAngle: 0,
+      cropBox: undefined,
     },
   };
 

@@ -72,6 +72,7 @@ self.onmessage = (event: MessageEvent) => {
 
       case "PERSPECTIVE_WARP": {
         const { quad, targetW, targetH } = event.data;
+        console.log("[filterWorker] PERSPECTIVE_WARP received task", { id, width, height, targetW, targetH, quad });
         const u8 = new Uint8ClampedArray(buffer);
         const targetBuffer = executePerspectiveWarpBuffer(
           u8,

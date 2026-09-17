@@ -777,20 +777,46 @@ export function executePerspectiveWarpBuffer(
   targetW: number,
   targetH: number
 ): Uint8ClampedArray {
+  console.log("[PixelCore] executePerspectiveWarpBuffer called with incoming quad:", JSON.stringify(quad), {
+    srcW,
+    srcH,
+    targetW,
+    targetH,
+  });
+
   const targetBuffer = new Uint8ClampedArray(targetW * targetH * 4);
 
-  // Convert normalized corner coordinates (0-1) to pixel coordinates
-  const x0 = Math.max(0, Math.min(srcW - 1, quad.topLeft.x * srcW));
-  const y0 = Math.max(0, Math.min(srcH - 1, quad.topLeft.y * srcH));
+  // Check whether quad points are in normalized coordinate space (0-1) or pixel space
+  const isNormalized =
+    Math.max(
+      Math.abs(quad.topLeft.x),
+      Math.abs(quad.topRight.x),
+      Math.abs(quad.bottomRight.x),
+      Math.abs(quad.bottomLeft.x),
+      Math.abs(quad.topLeft.y),
+      Math.abs(quad.topRight.y),
+      Math.abs(quad.bottomRight.y),
+      Math.abs(quad.bottomLeft.y)
+    ) <= 1.5;
 
-  const x1 = Math.max(0, Math.min(srcW - 1, quad.topRight.x * srcW));
-  const y1 = Math.max(0, Math.min(srcH - 1, quad.topRight.y * srcH));
+  const rawX0 = isNormalized ? quad.topLeft.x * srcW : quad.topLeft.x;
+  const rawY0 = isNormalized ? quad.topLeft.y * srcH : quad.topLeft.y;
+  const rawX1 = isNormalized ? quad.topRight.x * srcW : quad.topRight.x;
+  const rawY1 = isNormalized ? quad.topRight.y * srcH : quad.topRight.y;
+  const rawX2 = isNormalized ? quad.bottomRight.x * srcW : quad.bottomRight.x;
+  const rawY2 = isNormalized ? quad.bottomRight.y * srcH : quad.bottomRight.y;
+  const rawX3 = isNormalized ? quad.bottomLeft.x * srcW : quad.bottomLeft.x;
+  const rawY3 = isNormalized ? quad.bottomLeft.y * srcH : quad.bottomLeft.y;
 
-  const x2 = Math.max(0, Math.min(srcW - 1, quad.bottomRight.x * srcW));
-  const y2 = Math.max(0, Math.min(srcH - 1, quad.bottomRight.y * srcH));
-
-  const x3 = Math.max(0, Math.min(srcW - 1, quad.bottomLeft.x * srcW));
-  const y3 = Math.max(0, Math.min(srcH - 1, quad.bottomLeft.y * srcH));
+  // Convert to clamped pixel coordinates
+  const x0 = Math.max(0, Math.min(srcW - 1, rawX0));
+  const y0 = Math.max(0, Math.min(srcH - 1, rawY0));
+  const x1 = Math.max(0, Math.min(srcW - 1, rawX1));
+  const y1 = Math.max(0, Math.min(srcH - 1, rawY1));
+  const x2 = Math.max(0, Math.min(srcW - 1, rawX2));
+  const y2 = Math.max(0, Math.min(srcH - 1, rawY2));
+  const x3 = Math.max(0, Math.min(srcW - 1, rawX3));
+  const y3 = Math.max(0, Math.min(srcH - 1, rawY3));
 
   // Compute Projective Matrix mapping Unit Square [0, 1]x[0, 1] -> Quad (x, y)
   // Mapping:

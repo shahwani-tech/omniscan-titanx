@@ -931,6 +931,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   };
 
   const handleApplyPerspectiveWarp = async () => {
+    console.log("[DocumentCanvas] handleApplyPerspectiveWarp invoked", {
+      perspectiveQuad,
+      perspectivePreset,
+      fineDeskewEnabled,
+      cropScope,
+    });
     if (onApplyPerspectiveWarp) {
       await onApplyPerspectiveWarp(
         perspectiveQuad,

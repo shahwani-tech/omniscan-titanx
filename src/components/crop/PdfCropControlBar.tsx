@@ -182,6 +182,11 @@ export const PdfCropControlBar: React.FC<PdfCropControlBarProps> = ({
   const isActionBusy = isApplying || isProcessing;
 
   const handleApply = useCallback(async () => {
+    console.log("[CropControlBar] handleApply invoked", {
+      cropMode,
+      hasPerspectiveHandler: !!onApplyPerspectiveWarp,
+      isActionBusy,
+    });
     if (isActionBusy) return;
     setIsApplying(true);
     try {

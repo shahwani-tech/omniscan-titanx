@@ -6,7 +6,7 @@
  * High-DPI Output & Non-Destructive Session Isolation
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   OmniPage,
   PhotoSheetConfig,
@@ -21,6 +21,8 @@ import {
   PASSPORT_STANDARDS,
   DEFAULT_PHOTO_SHEET_CONFIG,
   calculatePhotoSheetLayout,
+  calculateMaxPhotos,
+  calculateMaxPhotosGrid,
   renderPhotoSheetCanvas,
   exportPhotoSheetAsPDF,
   exportPhotoSheetAsBlob,
@@ -151,13 +153,16 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   // -------------------------------------------------------------
   const [sheetConfig, setSheetConfig] = useState<PhotoSheetConfig>({
     ...DEFAULT_PHOTO_SHEET_CONFIG,
-    paperSizeId: "photo-4x6",
+    paperSizeId: "photo-6x4",
+    paperWidthInches: 6.0,
+    paperHeightInches: 4.0,
     passportStandardId: "uk-eu-schengen", // 35x45mm standard
-    copies: 8, // 8 copies by default for 4x6"
-    columns: 2,
-    rows: 4,
+    copies: 8, // 8 copies for 6x4"
+    columns: 4,
+    rows: 2,
     autoFit: true,
-    orientation: "portrait",
+    orientation: "landscape",
+    printInstanceRotation: 0,
     marginMode: "auto",
     marginUnit: "in",
     marginTopInches: 0.1,
@@ -189,6 +194,65 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     PASSPORT_STANDARDS.find((p) => p.id === sheetConfig.passportStandardId) || PASSPORT_STANDARDS[1];
   const currentPaperSpec =
     STANDARD_PAPER_SIZES.find((p) => p.id === sheetConfig.paperSizeId) || STANDARD_PAPER_SIZES[0];
+
+  // Helper to dynamically calculate photos capacity and grid dimensions based on exact paper & photo specs
+  const computeFit = useCallback(
+    (
+      cfg: PhotoSheetConfig,
+      passportSpec?: PassportStandardSpec,
+      paperSpec?: PaperSizeSpec
+    ) => {
+      const activePassport =
+        passportSpec ||
+        PASSPORT_STANDARDS.find((p) => p.id === cfg.passportStandardId) ||
+        PASSPORT_STANDARDS[1];
+      const activePaper =
+        paperSpec ||
+        STANDARD_PAPER_SIZES.find((p) => p.id === cfg.paperSizeId) ||
+        STANDARD_PAPER_SIZES[0];
+
+      let rawW = activePaper.widthMm;
+      let rawH = activePaper.heightMm;
+      if (activePaper.isCustom && cfg.paperWidthInches && cfg.paperHeightInches) {
+        rawW = cfg.paperWidthInches * 25.4;
+        rawH = cfg.paperHeightInches * 25.4;
+      }
+
+      // Dimensions based on orientation
+      const paperW =
+        cfg.orientation === "landscape" ? Math.max(rawW, rawH) : Math.min(rawW, rawH);
+      const paperH =
+        cfg.orientation === "landscape" ? Math.min(rawW, rawH) : Math.max(rawW, rawH);
+
+      const photoW = activePassport.widthMm || cfg.photoWidthInches * 25.4;
+      const photoH = activePassport.heightMm || cfg.photoHeightInches * 25.4;
+
+      const marginMm = (cfg.marginLeftInches ?? 0.1) * 25.4;
+      const gapMm = (cfg.gapHorizontalInches ?? 0.08) * 25.4;
+
+      const maxPhotos = calculateMaxPhotos(paperW, paperH, photoW, photoH, marginMm, gapMm);
+      const grid = calculateMaxPhotosGrid(paperW, paperH, photoW, photoH, marginMm, gapMm);
+
+      return {
+        paperW,
+        paperH,
+        photoW,
+        photoH,
+        marginMm,
+        gapMm,
+        maxPhotos,
+        cols: grid.cols,
+        rows: grid.rows,
+        paperName: activePaper.name.split(" (")[0] || activePaper.name,
+      };
+    },
+    []
+  );
+
+  // Real-time calculated capacity and fit for the current configuration
+  const currentFit = useMemo(() => {
+    return computeFit(sheetConfig, currentPassportSpec, currentPaperSpec);
+  }, [computeFit, sheetConfig, currentPassportSpec, currentPaperSpec]);
 
   const [aspectRatioLocked, setAspectRatioLocked] = useState<boolean>(true);
 
@@ -852,6 +916,11 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   // -------------------------------------------------------------
   const layoutResult = calculatePhotoSheetLayout(sheetConfig, ["photo-1"]);
 
+  // Dynamic maximum photos that genuinely fit on the current paper size with safe margins & gaps
+  const dynamicMaxPhotos = layoutResult.maxPhotosPerSheet || currentFit.maxPhotos;
+  const dynamicCols = layoutResult.maxColumns || currentFit.cols;
+  const dynamicRows = layoutResult.maxRows || currentFit.rows;
+
   useEffect(() => {
     if (!isOpen || (studioStep !== "sheet" && studioStep !== "filters")) return;
 
@@ -894,10 +963,11 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `OMNISCAN_Passport_4x6_${currentPassportSpec.id}_${Date.now()}.pdf`;
+      const paperSlug = currentFit.paperName.replace(/[^a-zA-Z0-9]/g, "_");
+      a.download = `OMNISCAN_Passport_${paperSlug}_${currentPassportSpec.id}_${Date.now()}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      showToast("4×6\" High-DPI PDF generated and downloaded.");
+      showToast(`${currentFit.paperName} High-DPI PDF generated and downloaded.`);
     } catch (err) {
       console.error("PDF Export error:", err);
       showToast("PDF Export failed.");
@@ -942,7 +1012,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     if (previewCanvas) {
       const sheetDataUrl = previewCanvas.toDataURL("image/jpeg", 0.95);
       onInsertIntoDocument(sheetDataUrl);
-      showToast("Inserted 4×6\" Photo Sheet into current document as new page.");
+      showToast(`Inserted ${currentFit.paperName} Photo Sheet into current document as new page.`);
       onClose();
     }
   };
@@ -999,13 +1069,105 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     },
   });
 
-  // Quick Preset Handlers
-  const handleSelectPresetCopies = (copies: number, cols: number, rows: number) => {
+  // Paper Size change handler: automatically calculates max photos that fit on the selected paper size
+  const handlePaperSizeChange = (paperId: string) => {
+    const spec = STANDARD_PAPER_SIZES.find((p) => p.id === paperId);
+    if (!spec) return;
+
+    setSheetConfig((prev) => {
+      const nextConfig: PhotoSheetConfig = {
+        ...prev,
+        paperSizeId: spec.id,
+        paperWidthInches: spec.widthInches,
+        paperHeightInches: spec.heightInches,
+        // Set landscape if paper width >= height, else portrait
+        orientation: spec.widthInches >= spec.heightInches ? "landscape" : "portrait",
+        printInstanceRotation: 0,
+      };
+
+      const fit = computeFit(nextConfig, currentPassportSpec, spec);
+      return {
+        ...nextConfig,
+        copies: fit.maxPhotos,
+        columns: fit.cols,
+        rows: fit.rows,
+        autoFit: true,
+      };
+    });
+  };
+
+  // Custom Paper dimension change handler
+  const handleCustomPaperDimensionChange = (dimension: "width" | "height", valMm: number) => {
+    const safeMm = Math.max(30, valMm);
+    const valInches = safeMm / 25.4;
+    setSheetConfig((prev) => {
+      const nextConfig: PhotoSheetConfig = {
+        ...prev,
+        paperWidthInches: dimension === "width" ? valInches : prev.paperWidthInches,
+        paperHeightInches: dimension === "height" ? valInches : prev.paperHeightInches,
+      };
+      const fit = computeFit(nextConfig, currentPassportSpec, currentPaperSpec);
+      return {
+        ...nextConfig,
+        copies: fit.maxPhotos,
+        columns: fit.cols,
+        rows: fit.rows,
+        autoFit: true,
+      };
+    });
+  };
+
+  // Country standard change handler: recalculates fit when photo dimensions change
+  const handlePassportStandardChange = (stdId: string) => {
+    const spec = PASSPORT_STANDARDS.find((p) => p.id === stdId);
+    if (!spec) return;
+
+    setSheetConfig((prev) => {
+      const nextConfig: PhotoSheetConfig = {
+        ...prev,
+        passportStandardId: spec.id,
+        photoWidthInches: spec.widthInches,
+        photoHeightInches: spec.heightInches,
+      };
+
+      const fit = computeFit(nextConfig, spec, currentPaperSpec);
+      return {
+        ...nextConfig,
+        copies: fit.maxPhotos,
+        columns: fit.cols,
+        rows: fit.rows,
+        autoFit: true,
+      };
+    });
+  };
+
+  // Orientation change handler
+  const handleOrientationChange = (orientation: "portrait" | "landscape") => {
+    setSheetConfig((prev) => {
+      const nextConfig: PhotoSheetConfig = {
+        ...prev,
+        orientation,
+      };
+
+      const fit = computeFit(nextConfig, currentPassportSpec, currentPaperSpec);
+      return {
+        ...nextConfig,
+        copies: fit.maxPhotos,
+        columns: fit.cols,
+        rows: fit.rows,
+        autoFit: true,
+      };
+    });
+  };
+
+  // Quick Preset Handlers: clamps copies to genuine capacity
+  const handleSelectPresetCopies = (copies: number, cols?: number, rows?: number) => {
+    const clampedCopies = Math.max(1, Math.min(copies, dynamicMaxPhotos));
     setSheetConfig((prev) => ({
       ...prev,
-      copies,
-      columns: cols,
-      rows,
+      copies: clampedCopies,
+      columns: cols || Math.max(1, Math.min(prev.columns, dynamicCols)),
+      rows: rows || Math.max(1, Math.min(prev.rows, dynamicRows)),
       autoFit: true,
     }));
   };
@@ -1013,6 +1175,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const handleAutoFitLayout = () => {
     setSheetConfig((prev) => ({
       ...prev,
+      copies: dynamicMaxPhotos,
+      columns: dynamicCols,
+      rows: dynamicRows,
       autoFit: true,
       marginMode: "auto",
       marginLeftInches: 0.1,
@@ -1022,7 +1187,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       gapHorizontalInches: 0.08,
       gapVerticalInches: 0.08,
     }));
-    showToast("Layout auto-fitted to maximum sheet capacity.");
+    showToast(`Layout auto-fitted to maximum sheet capacity (${dynamicMaxPhotos} photos).`);
   };
 
   // Outer Margin update helper
@@ -1057,9 +1222,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     },
     {
       id: "sheet",
-      label: `3. 4×6″ Print Sheet (${sheetConfig.copies} Copies)`,
-      shortLabel: "3. 4×6″ Sheet",
-      description: `4×6" multi-copy grid layout (${sheetConfig.copies} copies), margins, & 300 DPI PDF export`,
+      label: `3. Print Sheet (${sheetConfig.copies} Copies)`,
+      shortLabel: "3. Print Sheet",
+      description: `${currentFit.paperName} multi-copy grid layout (${sheetConfig.copies} copies), margins, & 300 DPI PDF export`,
       icon: <Grid className="w-3.5 h-3.5" />,
       isCompleted: layoutResult.fits,
     },
@@ -1105,7 +1270,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
             ? "Portrait Source & Specifications"
             : studioStep === "filters"
             ? "Tone Grading & CamScanner Filters"
-            : "4×6″ Sheet & Layout Parameters"
+            : `${currentFit.paperName} Sheet & Layout Parameters`
         }
         footerLeft={
           <div className="flex items-center space-x-2">
@@ -1178,7 +1343,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                 onClick={() => handleSelectStep("sheet")}
                 className="flex items-center space-x-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg text-xs shadow transition-colors cursor-pointer"
               >
-                <span>Proceed to 4×6″ Sheet Layout</span>
+                <span>Proceed to {currentFit.paperName} Sheet Layout</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
@@ -1721,17 +1886,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   </label>
                   <select
                     value={sheetConfig.passportStandardId}
-                    onChange={(e) => {
-                      const spec = PASSPORT_STANDARDS.find((p) => p.id === e.target.value);
-                      if (spec) {
-                        setSheetConfig((prev) => ({
-                          ...prev,
-                          passportStandardId: spec.id,
-                          photoWidthInches: spec.widthInches,
-                          photoHeightInches: spec.heightInches,
-                        }));
-                      }
-                    }}
+                    onChange={(e) => handlePassportStandardChange(e.target.value)}
                     className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
                   >
                     {PASSPORT_STANDARDS.map((std) => (
@@ -2079,44 +2234,92 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
             {/* STEP 3: 4×6" Print Sheet & 8-Copy Grid Layout Settings */}
             {studioStep === "sheet" && (
               <div className="p-4 space-y-4">
-                {/* Quick 8-Copy & Multi-Grid Presets for 4x6" Paper */}
+                {/* Dynamic Sheet Capacity Banner */}
+                <div className="bg-sky-950/40 border border-sky-800/60 rounded-lg p-2.5 flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+                    <div>
+                      <div className="text-xs font-bold text-sky-200">
+                        {dynamicMaxPhotos} photos fit on {currentFit.paperName}
+                      </div>
+                      <div className="text-[10px] text-sky-400/80">
+                        Grid: {dynamicCols} columns × {dynamicRows} rows ({currentPassportSpec.widthMm}×{currentPassportSpec.heightMm} mm)
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAutoFitLayout}
+                    className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-[10px] font-semibold transition-colors shadow"
+                  >
+                    Fill Max ({dynamicMaxPhotos})
+                  </button>
+                </div>
+
+                {/* Quick Sheet Layouts Presets */}
                 <div>
-                  <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-2">
-                    Quick Sheet Layouts (4×6" Paper)
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">
+                      Quick Sheet Layouts ({currentFit.paperName})
+                    </label>
+                    <span className="text-[10px] text-sky-400 font-mono">
+                      Max {dynamicMaxPhotos}
+                    </span>
+                  </div>
                   <div className="grid grid-cols-4 gap-1.5">
                     <button
-                      onClick={() => handleSelectPresetCopies(8, 2, 4)}
+                      onClick={() => handleSelectPresetCopies(dynamicMaxPhotos, dynamicCols, dynamicRows)}
                       className={`p-2 rounded-lg border text-center transition-all ${
-                        sheetConfig.copies === 8 && sheetConfig.rows === 4
+                        sheetConfig.copies === dynamicMaxPhotos
                           ? "bg-sky-600 text-white border-sky-400 font-bold"
                           : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-300"
                       }`}
                     >
-                      <div className="text-xs">8 Copies</div>
-                      <div className="text-[9px] opacity-70">2×4 Grid</div>
+                      <div className="text-xs font-medium">{dynamicMaxPhotos} Copies</div>
+                      <div className="text-[9px] opacity-70">Max ({dynamicCols}×{dynamicRows})</div>
                     </button>
+                    {dynamicMaxPhotos >= 4 ? (
+                      <button
+                        onClick={() =>
+                          handleSelectPresetCopies(
+                            Math.max(2, Math.floor(dynamicMaxPhotos / 2)),
+                            Math.max(1, Math.floor(dynamicCols / 2)),
+                            dynamicRows
+                          )
+                        }
+                        className={`p-2 rounded-lg border text-center transition-all ${
+                          sheetConfig.copies === Math.max(2, Math.floor(dynamicMaxPhotos / 2))
+                            ? "bg-sky-600 text-white border-sky-400 font-bold"
+                            : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-300"
+                        }`}
+                      >
+                        <div className="text-xs font-medium">
+                          {Math.max(2, Math.floor(dynamicMaxPhotos / 2))} Copies
+                        </div>
+                        <div className="text-[9px] opacity-70">Half Sheet</div>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleSelectPresetCopies(Math.min(2, dynamicMaxPhotos))}
+                        className={`p-2 rounded-lg border text-center transition-all ${
+                          sheetConfig.copies === Math.min(2, dynamicMaxPhotos)
+                            ? "bg-sky-600 text-white border-sky-400 font-bold"
+                            : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-300"
+                        }`}
+                      >
+                        <div className="text-xs font-medium">{Math.min(2, dynamicMaxPhotos)} Copies</div>
+                        <div className="text-[9px] opacity-70">Dual</div>
+                      </button>
+                    )}
                     <button
-                      onClick={() => handleSelectPresetCopies(6, 2, 3)}
+                      onClick={() => handleSelectPresetCopies(Math.min(4, dynamicMaxPhotos))}
                       className={`p-2 rounded-lg border text-center transition-all ${
-                        sheetConfig.copies === 6 && sheetConfig.rows === 3
+                        sheetConfig.copies === Math.min(4, dynamicMaxPhotos) && sheetConfig.copies !== dynamicMaxPhotos
                           ? "bg-sky-600 text-white border-sky-400 font-bold"
                           : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-300"
                       }`}
                     >
-                      <div className="text-xs">6 Copies</div>
-                      <div className="text-[9px] opacity-70">2×3 Grid</div>
-                    </button>
-                    <button
-                      onClick={() => handleSelectPresetCopies(4, 2, 2)}
-                      className={`p-2 rounded-lg border text-center transition-all ${
-                        sheetConfig.copies === 4 && sheetConfig.rows === 2
-                          ? "bg-sky-600 text-white border-sky-400 font-bold"
-                          : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-300"
-                      }`}
-                    >
-                      <div className="text-xs">4 Copies</div>
-                      <div className="text-[9px] opacity-70">2×2 Grid</div>
+                      <div className="text-xs font-medium">{Math.min(4, dynamicMaxPhotos)} Copies</div>
+                      <div className="text-[9px] opacity-70">Standard</div>
                     </button>
                     <button
                       onClick={() => handleSelectPresetCopies(1, 1, 1)}
@@ -2126,7 +2329,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                           : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-neutral-300"
                       }`}
                     >
-                      <div className="text-xs">1 Copy</div>
+                      <div className="text-xs font-medium">1 Copy</div>
                       <div className="text-[9px] opacity-70">Single</div>
                     </button>
                   </div>
@@ -2140,17 +2343,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                     </label>
                     <select
                       value={sheetConfig.paperSizeId}
-                      onChange={(e) => {
-                        const spec = STANDARD_PAPER_SIZES.find((p) => p.id === e.target.value);
-                        if (spec) {
-                          setSheetConfig((prev) => ({
-                            ...prev,
-                            paperSizeId: spec.id,
-                            paperWidthInches: spec.widthInches,
-                            paperHeightInches: spec.heightInches,
-                          }));
-                        }
-                      }}
+                      onChange={(e) => handlePaperSizeChange(e.target.value)}
                       className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
                     >
                       {STANDARD_PAPER_SIZES.map((paper) => (
@@ -2167,17 +2360,60 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                     <select
                       value={sheetConfig.orientation}
                       onChange={(e) =>
-                        setSheetConfig((prev) => ({
-                          ...prev,
-                          orientation: e.target.value as "portrait" | "landscape",
-                        }))
+                        handleOrientationChange(e.target.value as "portrait" | "landscape")
                       }
                       className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
                     >
-                      <option value="portrait">Portrait</option>
                       <option value="landscape">Landscape</option>
+                      <option value="portrait">Portrait</option>
                     </select>
                   </div>
+                </div>
+
+                {/* Custom Paper Size Dimensions (if Custom selected) */}
+                {currentPaperSpec.isCustom && (
+                  <div className="bg-neutral-950 p-2.5 rounded-lg border border-neutral-800 grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[10px] text-neutral-400 block mb-1">Width (mm)</span>
+                      <input
+                        type="number"
+                        min="40"
+                        max="1000"
+                        value={Math.round(sheetConfig.paperWidthInches * 25.4)}
+                        onChange={(e) => handleCustomPaperDimensionChange("width", Number(e.target.value))}
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-white font-mono"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-neutral-400 block mb-1">Height (mm)</span>
+                      <input
+                        type="number"
+                        min="40"
+                        max="1000"
+                        value={Math.round(sheetConfig.paperHeightInches * 25.4)}
+                        onChange={(e) => handleCustomPaperDimensionChange("height", Number(e.target.value))}
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-white font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Photo Standard / Spec Selector on Sheet Tab */}
+                <div>
+                  <label className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
+                    Photo Dimensions
+                  </label>
+                  <select
+                    value={sheetConfig.passportStandardId}
+                    onChange={(e) => handlePassportStandardChange(e.target.value)}
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-2 py-1.5 text-xs text-white"
+                  >
+                    {PASSPORT_STANDARDS.map((std) => (
+                      <option key={std.id} value={std.id}>
+                        {std.name} ({std.widthMm} × {std.heightMm} mm)
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* PASSPORT PHOTO MARGIN SYSTEM (4 Independent Outer Margins) */}
@@ -2364,7 +2600,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                     </div>
                   ) : (
                     <div className="text-[11px] text-neutral-400 bg-neutral-900/60 p-2 rounded border border-neutral-800/80 flex items-center justify-between">
-                      <span>✓ Symmetric Auto-Centering active on 4×6" Paper</span>
+                      <span>✓ Symmetric Auto-Centering active on {currentFit.paperName}</span>
                       <span className="font-mono text-sky-400 text-[10px]">
                         {sheetConfig.marginLeftInches.toFixed(2)}" margins
                       </span>
@@ -2398,16 +2634,21 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                 {/* Copies & Grid Dimensions */}
                 <div className="bg-neutral-950 p-3 rounded-lg border border-neutral-800 space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-neutral-300">Total Copies on Sheet</span>
+                    <div>
+                      <span className="text-neutral-300 text-xs font-medium block">Total Copies on Sheet</span>
+                      <span className="text-[10px] text-sky-400">
+                        {dynamicMaxPhotos} photos fit on {currentFit.paperName} (Max: {dynamicMaxPhotos})
+                      </span>
+                    </div>
                     <input
                       type="number"
                       min="1"
-                      max="24"
-                      value={sheetConfig.copies}
+                      max={dynamicMaxPhotos}
+                      value={Math.min(sheetConfig.copies, dynamicMaxPhotos)}
                       onChange={(e) =>
                         setSheetConfig((prev) => ({
                           ...prev,
-                          copies: Math.max(1, Number(e.target.value)),
+                          copies: Math.max(1, Math.min(dynamicMaxPhotos, Number(e.target.value))),
                         }))
                       }
                       className="w-16 bg-neutral-900 border border-neutral-700 rounded px-2 py-0.5 text-right font-mono text-sky-400"
@@ -2420,12 +2661,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                       <input
                         type="number"
                         min="1"
-                        max="6"
+                        max={Math.max(dynamicCols, 24)}
                         value={sheetConfig.columns}
                         onChange={(e) =>
                           setSheetConfig((prev) => ({
                             ...prev,
-                            columns: Number(e.target.value),
+                            columns: Math.max(1, Number(e.target.value)),
                             autoFit: false,
                           }))
                         }
@@ -2437,12 +2678,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                       <input
                         type="number"
                         min="1"
-                        max="8"
+                        max={Math.max(dynamicRows, 24)}
                         value={sheetConfig.rows}
                         onChange={(e) =>
                           setSheetConfig((prev) => ({
                             ...prev,
-                            rows: Number(e.target.value),
+                            rows: Math.max(1, Number(e.target.value)),
                             autoFit: false,
                           }))
                         }

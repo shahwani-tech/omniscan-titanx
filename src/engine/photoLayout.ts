@@ -20,17 +20,8 @@ import { loadImage } from "./vision";
 // -------------------------------------------------------------
 export const STANDARD_PAPER_SIZES: PaperSizeSpec[] = [
   {
-    id: "photo-4x6",
-    name: "4 × 6 inch (102 × 152 mm)",
-    widthInches: 4.0,
-    heightInches: 6.0,
-    widthMm: 101.6,
-    heightMm: 152.4,
-    category: "Photo Sheets",
-  },
-  {
     id: "photo-6x4",
-    name: "6 × 4 inch Landscape (152 × 102 mm)",
+    name: "6 × 4 inch (152.4 × 101.6 mm)",
     widthInches: 6.0,
     heightInches: 4.0,
     widthMm: 152.4,
@@ -38,17 +29,71 @@ export const STANDARD_PAPER_SIZES: PaperSizeSpec[] = [
     category: "Photo Sheets",
   },
   {
+    id: "photo-4x6",
+    name: "4 × 6 inch Portrait (101.6 × 152.4 mm)",
+    widthInches: 4.0,
+    heightInches: 6.0,
+    widthMm: 101.6,
+    heightMm: 152.4,
+    category: "Photo Sheets",
+  },
+  {
+    id: "iso-a6",
+    name: "A6 (148 × 105 mm)",
+    widthInches: 5.827,
+    heightInches: 4.134,
+    widthMm: 148.0,
+    heightMm: 105.0,
+    category: "Standard Paper",
+  },
+  {
+    id: "iso-a5",
+    name: "A5 (210 × 148 mm)",
+    widthInches: 8.268,
+    heightInches: 5.827,
+    widthMm: 210.0,
+    heightMm: 148.0,
+    category: "Standard Paper",
+  },
+  {
+    id: "iso-a4",
+    name: "A4 (297 × 210 mm)",
+    widthInches: 11.693,
+    heightInches: 8.268,
+    widthMm: 297.0,
+    heightMm: 210.0,
+    category: "Standard Paper",
+  },
+  {
+    id: "iso-a3",
+    name: "A3 (420 × 297 mm)",
+    widthInches: 16.535,
+    heightInches: 11.693,
+    widthMm: 420.0,
+    heightMm: 297.0,
+    category: "Standard Paper",
+  },
+  {
+    id: "us-letter",
+    name: "Letter (279.4 × 215.9 mm)",
+    widthInches: 11.0,
+    heightInches: 8.5,
+    widthMm: 279.4,
+    heightMm: 215.9,
+    category: "Standard Paper",
+  },
+  {
     id: "photo-5x7",
-    name: "5 × 7 inch (127 × 178 mm)",
-    widthInches: 5.0,
-    heightInches: 7.0,
-    widthMm: 127.0,
-    heightMm: 177.8,
+    name: "5 × 7 inch (177.8 × 127 mm)",
+    widthInches: 7.0,
+    heightInches: 5.0,
+    widthMm: 177.8,
+    heightMm: 127.0,
     category: "Photo Sheets",
   },
   {
     id: "photo-3.5x5",
-    name: "3.5 × 5 inch (89 × 127 mm)",
+    name: "3.5 × 5 inch (88.9 × 127 mm)",
     widthInches: 3.5,
     heightInches: 5.0,
     widthMm: 88.9,
@@ -56,22 +101,14 @@ export const STANDARD_PAPER_SIZES: PaperSizeSpec[] = [
     category: "Photo Sheets",
   },
   {
-    id: "iso-a4",
-    name: "A4 Standard (210 × 297 mm)",
-    widthInches: 8.27,
-    heightInches: 11.69,
-    widthMm: 210.0,
-    heightMm: 297.0,
-    category: "Standard Paper",
-  },
-  {
-    id: "us-letter",
-    name: "US Letter (8.5 × 11.0 inch)",
-    widthInches: 8.5,
-    heightInches: 11.0,
-    widthMm: 215.9,
-    heightMm: 279.4,
-    category: "Standard Paper",
+    id: "custom-paper",
+    name: "Custom Paper Size",
+    widthInches: 6.0,
+    heightInches: 4.0,
+    widthMm: 152.4,
+    heightMm: 101.6,
+    isCustom: true,
+    category: "Custom",
   },
 ];
 
@@ -232,14 +269,14 @@ export const BUILTIN_PRINTER_PROFILES: PrinterProfile[] = [
 ];
 
 export const DEFAULT_PHOTO_SHEET_CONFIG: PhotoSheetConfig = {
-  paperSizeId: "photo-4x6",
-  paperWidthInches: 4.0,
-  paperHeightInches: 6.0,
+  paperSizeId: "photo-6x4",
+  paperWidthInches: 6.0,
+  paperHeightInches: 4.0,
   paperUnit: "in",
   dpi: 300,
-  orientation: "portrait",
+  orientation: "landscape",
 
-  printInstanceRotation: 90,
+  printInstanceRotation: 0,
   printerProfileId: "feed-90-standard",
 
   passportStandardId: "uk-eu-schengen",
@@ -250,8 +287,8 @@ export const DEFAULT_PHOTO_SHEET_CONFIG: PhotoSheetConfig = {
 
   copies: 8,
   autoFit: true,
-  columns: 2,
-  rows: 4,
+  columns: 4,
+  rows: 2,
 
   marginTopInches: 0.1,
   marginBottomInches: 0.1,
@@ -278,6 +315,61 @@ export const DEFAULT_PHOTO_SHEET_CONFIG: PhotoSheetConfig = {
 
   globalFilterPreset: "original",
   backgroundColor: "#FFFFFF",
+};
+
+/**
+ * Dynamically calculate how many photos fit on a given paper size.
+ * Uses exact physical dimensions (in mm), safe margins, and inter-photo gaps.
+ */
+export const calculateMaxPhotos = (
+  paperWidthMm: number,
+  paperHeightMm: number,
+  photoWidthMm: number,
+  photoHeightMm: number,
+  marginMm: number,
+  gapMm: number
+): number => {
+  const cols = Math.floor(
+    (paperWidthMm - 2 * marginMm + gapMm) / 
+    (photoWidthMm + gapMm)
+  );
+  const rows = Math.floor(
+    (paperHeightMm - 2 * marginMm + gapMm) / 
+    (photoHeightMm + gapMm)
+  );
+  return Math.max(1, cols * rows);
+};
+
+export interface MaxPhotosGridResult {
+  cols: number;
+  rows: number;
+  maxPhotos: number;
+}
+
+/**
+ * Dynamically calculate the maximum columns, rows, and total photo capacity for a given paper size.
+ */
+export const calculateMaxPhotosGrid = (
+  paperWidthMm: number,
+  paperHeightMm: number,
+  photoWidthMm: number,
+  photoHeightMm: number,
+  marginMm: number,
+  gapMm: number
+): MaxPhotosGridResult => {
+  const cols = Math.max(
+    1,
+    Math.floor((paperWidthMm - 2 * marginMm + gapMm) / (photoWidthMm + gapMm))
+  );
+  const rows = Math.max(
+    1,
+    Math.floor((paperHeightMm - 2 * marginMm + gapMm) / (photoHeightMm + gapMm))
+  );
+  return {
+    cols,
+    rows,
+    maxPhotos: Math.max(1, cols * rows),
+  };
 };
 
 /**
@@ -335,7 +427,7 @@ export function calculatePhotoSheetLayout(
 
   let warningMessage: string | undefined;
   if (!fits) {
-    warningMessage = "Layout does not fit within the 4×6 printable area.";
+    warningMessage = "Layout does not fit within the printable area.";
   } else if (overflowCount > 0) {
     warningMessage = `Sheet fits ${totalPhotosPlaced} photos. ${overflowCount} remaining photo${overflowCount > 1 ? "s" : ""} will go to next sheet.`;
   }

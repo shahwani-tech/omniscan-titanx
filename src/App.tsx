@@ -25,6 +25,7 @@ import {
   detectDocumentBoundingBox,
   analyzeDataUrlBlankness,
   DEFAULT_FILTERS,
+  clearDecodedImageCache,
 } from "./engine/vision";
 import {
   warpPagePerspective,
@@ -512,35 +513,52 @@ export function AppContent() {
       renderJobIdRef.current++;
 
       // Pre-cache source image element
-      if (
-        !cachedSourceImageRef.current ||
-        cachedSourceImageRef.current.pageId !== activePage.id ||
-        cachedSourceImageRef.current.sourceUrl !== activePage.originalDataUrl
-      ) {
-        const img = new Image();
-        img.onload = () => {
-          if (activePageRef.current?.id === activePage.id) {
+      let isMounted = true;
+      const loadSourceImage = async () => {
+        const srcUrl =
+          activePage.originalDataUrl ||
+          (await pageBlobStore.resolvePageUrl(activePage, "original"));
+        if (!isMounted || !srcUrl) return;
+
+        if (
+          !cachedSourceImageRef.current ||
+          cachedSourceImageRef.current.pageId !== activePage.id ||
+          cachedSourceImageRef.current.sourceUrl !== srcUrl
+        ) {
+          const img = new Image();
+          img.onload = () => {
+            if (isMounted && activePageRef.current?.id === activePage.id) {
+              cachedSourceImageRef.current = {
+                pageId: activePage.id,
+                sourceUrl: srcUrl,
+                image: img,
+              };
+            }
+          };
+          img.src = srcUrl;
+          if (img.complete && img.naturalWidth > 0) {
             cachedSourceImageRef.current = {
               pageId: activePage.id,
-              sourceUrl: activePage.originalDataUrl,
+              sourceUrl: srcUrl,
               image: img,
             };
           }
-        };
-        img.src = activePage.originalDataUrl;
-        if (img.complete && img.naturalWidth > 0) {
-          cachedSourceImageRef.current = {
-            pageId: activePage.id,
-            sourceUrl: activePage.originalDataUrl,
-            image: img,
-          };
         }
-      }
+      };
+      loadSourceImage();
+      return () => {
+        isMounted = false;
+      };
     } else {
       cachedSourceImageRef.current = null;
       setActivePagePreviewUrl(null);
     }
-  }, [activePage?.id, activePage?.originalDataUrl]);
+  }, [
+    activePage?.id,
+    activePage?.originalDataUrl,
+    activePage?.originalBlobId,
+    activePage?.lastModifiedAt,
+  ]);
 
   const runFilterRender = useCallback(async (isCommit: boolean) => {
     const page = activePageRef.current;
@@ -1107,6 +1125,11 @@ export function AppContent() {
       fineDeskew: boolean = false,
       scope: "current" | "selected" | "all" = "current"
     ) => {
+      console.log("[App] handleApplyPerspectiveWarp invoked with quad:", JSON.stringify(quad), {
+        preset,
+        fineDeskew,
+        scope,
+      });
       recordHistorySnapshot(document);
       setIsProcessing(true);
       setProcessingMessage(
@@ -1144,17 +1167,24 @@ export function AppContent() {
             });
 
             try {
-              const classification = await classifyImageContent(
-                warpedPage.originalDataUrl || warpedPage.processedDataUrl
-              );
-              warpedPage.detectedContent = classification;
-              warpedPage.filters = {
-                ...warpedPage.filters,
-                ...classification.recommendedFilters,
-                rotation: warpedPage.filters.rotation,
-                deskewAngle: warpedPage.filters.deskewAngle,
-              };
-              warpedPage.filterSource = "auto-detected";
+              const warpedUrl =
+                warpedPage.originalDataUrl ||
+                warpedPage.processedDataUrl ||
+                (await pageBlobStore.resolvePageUrl(warpedPage, "original")) ||
+                (await pageBlobStore.resolvePageUrl(warpedPage, "processed"));
+
+              if (warpedUrl) {
+                const classification = await classifyImageContent(warpedUrl);
+                warpedPage.detectedContent = classification;
+                warpedPage.filters = {
+                  ...warpedPage.filters,
+                  ...classification.recommendedFilters,
+                  rotation: 0,
+                  deskewAngle: 0,
+                  cropBox: undefined,
+                };
+                warpedPage.filterSource = "auto-detected";
+              }
               if (idx === activePageIndex) {
                 latestFiltersRef.current = { ...warpedPage.filters };
               }
@@ -1164,6 +1194,11 @@ export function AppContent() {
             newPages[idx] = warpedPage;
           }
         }
+
+        // Invalidate stale in-memory and decoded caches
+        cachedSourceImageRef.current = null;
+        clearDecodedImageCache();
+        setActivePagePreviewUrl(null);
 
         setDocument((prev) => ({
           ...prev,
