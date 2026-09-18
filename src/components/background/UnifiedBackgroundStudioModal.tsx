@@ -23,6 +23,7 @@ import { toast } from "../../services/toast/toastService";
 import { backgroundRemovalService } from "../../engine/background/BackgroundRemovalService";
 import {
   ShadowRemovalLevel,
+  DEFAULT_BG_REMOVAL_OPTIONS,
 } from "../../engine/backgroundRemover";
 import { BackgroundColorPicker } from "./BackgroundColorPicker";
 import { BackgroundImageControls } from "./BackgroundImageControls";
@@ -79,6 +80,7 @@ interface UnifiedBackgroundStudioModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialImage: string; // The cropped photo from PhotoPrintStudioModal
+  initialState?: BackgroundStudioState;
   onApply: (finalCompositeUrl: string, fullState: BackgroundStudioState) => void;
   title?: string;
   subtitle?: string;
@@ -88,6 +90,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   isOpen,
   onClose,
   initialImage,
+  initialState,
   onApply,
   title = "Passport Photo Background Composer",
   subtitle = "Two-Layer Studio: Position background freely behind your centered passport portrait",
@@ -95,38 +98,44 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   // -------------------------------------------------------------
   // Primary State Engine
   // -------------------------------------------------------------
-  const [state, setState] = useState<BackgroundStudioState>(() => ({
-    originalImage: initialImage,
-    foregroundImage: null,
-    backgroundMode: "transparent",
-    backgroundColor: "#FFFFFF",
-    backgroundGradient: {
-      type: "linear",
-      color1: "#FFFFFF",
-      color2: "#E2E8F0",
-      angle: 180,
-    },
-    backgroundImage: null,
-    backgroundImageName: undefined,
-    backgroundTransform: { ...DEFAULT_BACKGROUND_TRANSFORM },
-    foregroundTransform: { ...DEFAULT_FOREGROUND_TRANSFORM },
-    removalOptions: {
-      algorithm: "hybrid",
-      edgeFeathering: 1.5,
-      hairMatting: true,
-      shadowHandling: true,
-      shadowRemovalLevel: "medium",
-      contrastBoost: 1.0,
-      spillSuppression: true,
-    },
-    manualStrokes: [],
-    removalState: {
-      status: "idle",
-      confidenceScore: 98,
-      providerId: "local",
-    },
-    originalHasTransparency: false,
-  }));
+  const [state, setState] = useState<BackgroundStudioState>(() => {
+    if (initialState) {
+      return {
+        ...initialState,
+        originalImage: initialImage || initialState.originalImage,
+        backgroundCrop: initialState.backgroundCrop ?? null,
+        compositePreviewUrl: initialState.compositePreviewUrl ?? null,
+      };
+    }
+    return {
+      originalImage: initialImage,
+      foregroundImage: null,
+      backgroundMode: "transparent",
+      backgroundColor: "#FFFFFF",
+      backgroundGradient: {
+        type: "linear",
+        color1: "#FFFFFF",
+        color2: "#E2E8F0",
+        angle: 180,
+      },
+      backgroundImage: null,
+      backgroundImageName: undefined,
+      backgroundTransform: { ...DEFAULT_BACKGROUND_TRANSFORM },
+      backgroundCrop: null,
+      foregroundTransform: { ...DEFAULT_FOREGROUND_TRANSFORM },
+      removalOptions: {
+        ...DEFAULT_BG_REMOVAL_OPTIONS,
+      },
+      manualStrokes: [],
+      removalState: {
+        status: "idle",
+        confidenceScore: 98,
+        providerId: "local",
+      },
+      compositePreviewUrl: null,
+      originalHasTransparency: false,
+    };
+  });
 
   // Transparency check result cache
   const [transparencyResult, setTransparencyResult] = useState<TransparencyCheckResult | null>(null);
@@ -135,16 +144,25 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   // Hidden source file input
   const sourceFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Synchronize with initialImage when modal opens or prop updates
+  // Synchronize with initialImage and initialState when modal opens or props update
   useEffect(() => {
-    if (initialImage) {
-      setState((prev) => ({
-        ...prev,
-        originalImage: initialImage,
-        foregroundImage: prev.originalHasTransparency ? initialImage : prev.foregroundImage,
-      }));
+    if (isOpen) {
+      if (initialState) {
+        setState({
+          ...initialState,
+          originalImage: initialImage || initialState.originalImage,
+          backgroundCrop: initialState.backgroundCrop ?? null,
+          compositePreviewUrl: initialState.compositePreviewUrl ?? null,
+        });
+      } else if (initialImage) {
+        setState((prev) => ({
+          ...prev,
+          originalImage: initialImage,
+          foregroundImage: prev.originalHasTransparency ? initialImage : prev.foregroundImage,
+        }));
+      }
     }
-  }, [initialImage]);
+  }, [isOpen, initialImage, initialState]);
 
   // -------------------------------------------------------------
   // Undo / Redo History Stacks (50 Steps)
@@ -237,6 +255,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   const bgLayerRef = useRef<HTMLDivElement>(null);
   const stageContainerRef = useRef<HTMLDivElement>(null);
   const rAFRef = useRef<number | null>(null);
+  const wheelCommitTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // -------------------------------------------------------------
   // Background Removal Execution
@@ -415,20 +434,55 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
 
   // Mouse wheel zoom centered on cursor
   const handleStageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (manualRefineActive) return;
+    if (manualRefineActive || !state.backgroundImage) return;
     e.preventDefault();
 
     const currentScale = state.backgroundTransform.scale || 1;
-    const factor = e.deltaY < 0 ? 1.06 : 0.94;
+    const factor = e.deltaY < 0 ? 1.08 : 0.92;
     const newScale = Math.max(0.5, Math.min(5.0, currentScale * factor));
 
-    setState((prev) => ({
-      ...prev,
-      backgroundTransform: {
-        ...prev.backgroundTransform,
+    if (stageContainerRef.current) {
+      const rect = stageContainerRef.current.getBoundingClientRect();
+      const mouseX = e.clientX - (rect.left + rect.width / 2);
+      const mouseY = e.clientY - (rect.top + rect.height / 2);
+      const ratio = newScale / currentScale;
+      const currentX = state.backgroundTransform.x || 0;
+      const currentY = state.backgroundTransform.y || 0;
+      const newX = mouseX - (mouseX - currentX) * ratio;
+      const newY = mouseY - (mouseY - currentY) * ratio;
+
+      const updatedTransform = {
+        ...state.backgroundTransform,
+        x: Math.round(newX * 10) / 10,
+        y: Math.round(newY * 10) / 10,
         scale: Number(newScale.toFixed(3)),
-      },
-    }));
+      };
+
+      setState((prev) => ({
+        ...prev,
+        backgroundTransform: updatedTransform,
+      }));
+
+      // Debounce commit to undo history
+      if (wheelCommitTimerRef.current) {
+        clearTimeout(wheelCommitTimerRef.current);
+      }
+      wheelCommitTimerRef.current = setTimeout(() => {
+        pushHistory({
+          ...state,
+          backgroundTransform: updatedTransform,
+        });
+      }, 300);
+    } else {
+      const updatedTransform = {
+        ...state.backgroundTransform,
+        scale: Number(newScale.toFixed(3)),
+      };
+      setState((prev) => ({
+        ...prev,
+        backgroundTransform: updatedTransform,
+      }));
+    }
   };
 
   // Keyboard Shortcuts Handler
@@ -531,7 +585,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
       const arrowKeys = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
       if (arrowKeys.includes(e.key) && state.backgroundImage) {
         e.preventDefault();
-        const step = e.ctrlKey || e.metaKey ? 0.2 : e.shiftKey ? 10 : 1;
+        const step = e.ctrlKey || e.metaKey ? 0.1 : e.shiftKey ? 10 : 1;
         let dx = 0;
         let dy = 0;
         if (e.key === "ArrowUp") dy = -step;
@@ -543,8 +597,8 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
           ...prev,
           backgroundTransform: {
             ...prev.backgroundTransform,
-            x: prev.backgroundTransform.x + dx,
-            y: prev.backgroundTransform.y + dy,
+            x: Math.round((prev.backgroundTransform.x + dx) * 10) / 10,
+            y: Math.round((prev.backgroundTransform.y + dy) * 10) / 10,
           },
         }));
       }
@@ -847,13 +901,29 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
                   />
                 )}
 
-                {/* 2. Built-in Background Library (Solid Standard, Studio Gradients, Pattern Backdrops) */}
+                {/* 2. Built-in Background Library (Categorized Studio, Official, Corporate, Creative) */}
                 {leftTab === "library" && (
                   <BuiltinBackgroundLibrary
                     currentMode={state.backgroundMode}
                     currentColor={state.backgroundColor}
                     currentGradient={state.backgroundGradient}
                     currentImage={state.backgroundImage}
+                    onSelectBackdrop={(backdrop) => {
+                      pushHistory({
+                        ...state,
+                        backgroundMode: "image",
+                        backgroundImage: backdrop.dataUrl,
+                        backgroundImageName: backdrop.name,
+                        backgroundTransform: {
+                          ...state.backgroundTransform,
+                          fitMode: "cover",
+                          x: 0,
+                          y: 0,
+                          scale: 1,
+                        },
+                      });
+                      toast.success(`Applied ${backdrop.name} as background`);
+                    }}
                     onSelectColor={(hex, name) => {
                       pushHistory({
                         ...state,
@@ -980,6 +1050,12 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
                   >
                     <Undo2 className="w-3.5 h-3.5" />
                   </button>
+                  <span
+                    className="text-[10px] font-mono text-neutral-400 px-1.5 select-none"
+                    title="Undo / Redo History Position"
+                  >
+                    {history.length}/{history.length + future.length}
+                  </span>
                   <button
                     type="button"
                     onClick={handleRedo}
@@ -1147,6 +1223,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
                     transform: `translate3d(${state.backgroundTransform.x}px, ${state.backgroundTransform.y}px, 0px) scale(${(state.backgroundTransform.scale || 1) * (state.backgroundTransform.scaleX || 1)}, ${(state.backgroundTransform.scale || 1) * (state.backgroundTransform.scaleY || 1)}) rotate(${state.backgroundTransform.rotation || 0}deg)`,
                     filter: bgFilterCss,
                     opacity: state.backgroundTransform.opacity ?? 1,
+                    transition: isDraggingBg ? "none" : "transform 300ms ease",
                   }}
                 >
                   {state.backgroundMode === "image" && state.backgroundImage ? (
@@ -1450,17 +1527,13 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
         <BackgroundCropModal
           isOpen={isCropModalOpen}
           onClose={() => setIsCropModalOpen(false)}
-          imageUrl={state.backgroundImage}
-          initialCrop={state.backgroundTransform.crop}
-          aspectRatio={4 / 5}
+          imageSrc={state.backgroundImage}
+          initialCrop={state.backgroundCrop}
           onApplyCrop={(croppedUrl, cropRect) => {
             pushHistory({
               ...state,
               backgroundImage: croppedUrl,
-              backgroundTransform: {
-                ...state.backgroundTransform,
-                crop: cropRect,
-              },
+              backgroundCrop: cropRect,
             });
             setIsCropModalOpen(false);
             toast.success("Applied background image crop.");

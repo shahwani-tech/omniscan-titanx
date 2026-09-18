@@ -209,7 +209,14 @@ export async function normalizeImageExifOrientation(
 
   ctx.drawImage(img, 0, 0);
 
-  const correctedDataUrl = canvas.toDataURL("image/jpeg", 0.95);
+  const isPng =
+    fileOrBlob.type === "image/png" ||
+    (fileOrBlob instanceof File && /\.png$/i.test(fileOrBlob.name)) ||
+    rawDataUrl.startsWith("data:image/png");
+
+  const correctedDataUrl = isPng
+    ? canvas.toDataURL("image/png")
+    : canvas.toDataURL("image/jpeg", 0.95);
 
   return {
     dataUrl: correctedDataUrl,

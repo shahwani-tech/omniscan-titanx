@@ -485,7 +485,20 @@ export async function executeFilterPipeline(
 
   ctx.putImageData(imgData, 0, 0);
 
-  const processedDataUrl = canvas.toDataURL(isFast ? "image/jpeg" : "image/jpeg", isFast ? 0.78 : 0.94);
+  // Detect if RGBA transparency exists in the output canvas
+  let hasAlpha = false;
+  const pixelBytes = imgData.data;
+  const totalBytes = pixelBytes.length;
+  for (let i = 3; i < totalBytes; i += 4) {
+    if (pixelBytes[i] < 255) {
+      hasAlpha = true;
+      break;
+    }
+  }
+
+  const processedDataUrl = hasAlpha
+    ? canvas.toDataURL("image/png")
+    : canvas.toDataURL(isFast ? "image/jpeg" : "image/jpeg", isFast ? 0.78 : 0.94);
 
   return {
     processedDataUrl,

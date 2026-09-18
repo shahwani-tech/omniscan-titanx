@@ -32,10 +32,15 @@ export function applyPixelFiltersToBuffer(
   let maxLum = 0;
   if (filters.autoWhiteBalance || isMagicColor) {
     for (let i = 0; i < len; i += 16) {
+      if (data[i + 3] < 20) continue; // Skip transparent background pixels
       const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
       if (lum < minLum) minLum = lum;
       if (lum > maxLum) maxLum = lum;
     }
+  }
+  if (minLum > maxLum) {
+    minLum = 0;
+    maxLum = 255;
   }
   const lumRange = Math.max(1, maxLum - minLum);
 

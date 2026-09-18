@@ -25,12 +25,14 @@ interface BackgroundProviderConfigDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onProviderChanged?: () => void;
+  onSaved?: () => void;
 }
 
 export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDialogProps> = ({
   isOpen,
   onClose,
   onProviderChanged,
+  onSaved,
 }) => {
   const githubProvider = backgroundRemovalService.getGitHubProvider();
   const currentConfig = githubProvider.getConfig();
@@ -85,6 +87,7 @@ export const BackgroundProviderConfigDialog: React.FC<BackgroundProviderConfigDi
     });
     backgroundRemovalService.setActiveProvider(activeProviderId);
     if (onProviderChanged) onProviderChanged();
+    if (onSaved) onSaved();
     onClose();
   };
 

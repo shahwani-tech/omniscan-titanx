@@ -58,6 +58,7 @@ import {
 } from "../common/PdfImportDialog";
 import { analyzeFile } from "../../services/upload/FileTypeRegistry";
 import { parseDocumentFile, decodeImageFile } from "../../services/upload/DocumentImportService";
+import { detectImageTransparency } from "../../utils/transparencyDetector";
 import {
   X,
   Printer,
@@ -387,6 +388,18 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const [shadowRemoval, setShadowRemoval] = useState<boolean>(true);
   const [shadowStrength, setShadowStrength] = useState<number>(40);
   const [bgColorReplacement, setBgColorReplacement] = useState<"none" | "white" | "blue" | "gray" | "cream" | "transparent">("white");
+
+  // Preserve PNG transparency: when a transparent image is loaded, default to "none" (preserves original alpha)
+  const lastAnalyzedUrlRef = useRef<string>("");
+  useEffect(() => {
+    if (!rawSourceImage || rawSourceImage === lastAnalyzedUrlRef.current) return;
+    lastAnalyzedUrlRef.current = rawSourceImage;
+    detectImageTransparency(rawSourceImage).then((result) => {
+      if (result.hasTransparency) {
+        setBgColorReplacement("none");
+      }
+    });
+  }, [rawSourceImage]);
 
   // PDF Importer Dialog State
   const [isPdfImportDialogOpen, setIsPdfImportDialogOpen] = useState<boolean>(false);
@@ -801,7 +814,8 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     const ctx = cropCanvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("Crop canvas failed");
 
-    // Background color filling
+    // Background color filling (defaults to transparent/none when preserving PNG alpha)
+    ctx.clearRect(0, 0, outW, outH);
     if (bgColorReplacement === "white") {
       ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(0, 0, outW, outH);
@@ -1085,9 +1099,11 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handleDownloadSinglePhoto = () => {
+    const isPng = processedPhotoDataUrl?.startsWith("data:image/png");
+    const ext = isPng ? "png" : "jpg";
     const a = document.createElement("a");
     a.href = processedPhotoDataUrl;
-    a.download = `Passport_Photo_${currentPassportSpec.id}_${Date.now()}.jpg`;
+    a.download = `Passport_Photo_${currentPassportSpec.id}_${Date.now()}.${ext}`;
     a.click();
     showToast("Cropped Single Photo downloaded.");
   };
@@ -1616,7 +1632,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                 className="relative max-w-full max-h-full flex items-center justify-center overflow-hidden cursor-grab active:cursor-grabbing"
               >
                 {/* Source Image Frame */}
-                <div className="relative inline-block shadow-2xl rounded border border-neutral-800">
+                <div
+                  className="relative inline-block shadow-2xl rounded border border-neutral-800"
+                  style={{
+                    backgroundImage: `repeating-conic-gradient(#262626 0% 25%, #171717 0% 50%) 50% / 16px 16px`,
+                  }}
+                >
                   <img
                     ref={cropImageRef}
                     src={rawSourceImage}
@@ -1737,7 +1758,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
             {/* STAGE 2: Tone & Filter Studio Preview */}
             {studioStep === "filters" && (
               <div className="flex flex-col items-center justify-center space-y-3">
-                <div className="relative p-2 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl">
+                <div
+                  className="relative p-2 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl"
+                  style={{
+                    backgroundImage: `repeating-conic-gradient(#262626 0% 25%, #171717 0% 50%) 50% / 16px 16px`,
+                  }}
+                >
                   <img
                     src={processedPhotoDataUrl || rawSourceImage}
                     alt="Retouched Portrait"
@@ -1978,8 +2004,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                           });
                       } else {
                         decodeImageFile(file)
-                          .then((decoded) => {
+                          .then(async (decoded) => {
                             setRawSourceImage(decoded.dataUrl);
+                            const trans = await detectImageTransparency(decoded.dataUrl);
+                            if (trans.hasTransparency) {
+                              setBgColorReplacement("none");
+                            }
                             showToast(`Loaded ${file.name}`);
                           })
                           .catch((err) => {

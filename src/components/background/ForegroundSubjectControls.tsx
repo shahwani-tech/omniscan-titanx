@@ -68,18 +68,29 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
       {/* Scale & Zoom */}
       <div className="bg-neutral-950 p-2.5 rounded-lg border border-neutral-800 space-y-2.5">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-semibold text-neutral-400 uppercase">
-            Subject Scale / Zoom
-          </span>
+          <div className="flex items-center space-x-1.5">
+            <span className="text-[10px] font-semibold text-neutral-400 uppercase">
+              Subject Fine Scale
+            </span>
+            <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded ${
+              (transform.scale || 1) >= 0.9 && (transform.scale || 1) <= 1.1
+                ? "bg-emerald-950/80 text-emerald-400 border border-emerald-500/40"
+                : "bg-amber-950/80 text-amber-400 border border-amber-500/40"
+            }`}>
+              {(transform.scale || 1) >= 0.9 && (transform.scale || 1) <= 1.1
+                ? "ICAO Safe"
+                : "Check Guides"}
+            </span>
+          </div>
           <div className="flex items-center space-x-1">
             <input
               type="number"
-              min="20"
-              max="300"
+              min="50"
+              max="200"
               step="1"
               value={Math.round((transform.scale || 1) * 100)}
               onChange={(e) =>
-                onChange({ ...transform, scale: Math.max(0.1, Number(e.target.value) / 100) })
+                onChange({ ...transform, scale: Math.max(0.5, Math.min(2.0, Number(e.target.value) / 100)) })
               }
               className="w-14 bg-neutral-900 border border-neutral-750 rounded px-1.5 py-0.5 text-right font-mono text-emerald-400 text-[11px] outline-none"
             />
@@ -88,13 +99,66 @@ export const ForegroundSubjectControls: React.FC<ForegroundSubjectControlsProps>
         </div>
         <input
           type="range"
-          min="0.5"
-          max="2"
+          min="0.8"
+          max="1.3"
           step="0.01"
           value={transform.scale || 1}
           onChange={(e) => onChange({ ...transform, scale: Number(e.target.value) })}
           className="w-full accent-emerald-500 cursor-pointer"
         />
+
+        {/* Quick Fine-Tune Scale Presets (90% to 110%) */}
+        <div className="grid grid-cols-5 gap-1">
+          {[0.9, 0.95, 1.0, 1.05, 1.1].map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => onChange({ ...transform, scale: s })}
+              className={`py-1 rounded text-[10px] font-mono transition-colors border ${
+                Math.abs((transform.scale || 1) - s) < 0.01
+                  ? "bg-emerald-600 border-emerald-500 text-white font-bold"
+                  : "bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white"
+              }`}
+            >
+              {Math.round(s * 100)}%
+            </button>
+          ))}
+        </div>
+
+        {/* Headroom / Vertical Position Adjustments */}
+        <div className="pt-2 border-t border-neutral-850 space-y-1.5">
+          <div className="flex items-center justify-between text-[10px]">
+            <span className="text-neutral-400 font-semibold uppercase">
+              Headroom / Vertical Offset
+            </span>
+            <span className="font-mono text-neutral-300">
+              {Math.round(transform.y || 0)}px
+            </span>
+          </div>
+          <div className="grid grid-cols-5 gap-1">
+            {[
+              { label: "↑ 10px", dy: -10 },
+              { label: "↑ 5px", dy: -5 },
+              { label: "Reset", dy: 0, absolute: true },
+              { label: "↓ 5px", dy: 5 },
+              { label: "↓ 10px", dy: 10 },
+            ].map((btn, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...transform,
+                    y: btn.absolute ? 0 : (transform.y || 0) + btn.dy,
+                  })
+                }
+                className="py-1 rounded bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 text-neutral-300 hover:text-white text-[9px] font-mono transition-colors"
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Pan X & Y */}
         <div className="grid grid-cols-2 gap-2 pt-1 border-t border-neutral-850">
