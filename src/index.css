@@ -27,3 +27,17 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(113, 113, 122, 0.9);
 }
+
+/* Multi-person print output: hide slot labels, badges, and interactive overlays */
+.slot-person-label {
+  display: none !important;
+}
+
+@media print {
+  .slot-person-label,
+  #sheet-interactive-slot-overlay,
+  .interactive-slot-badge {
+    display: none !important;
+  }
+}
+

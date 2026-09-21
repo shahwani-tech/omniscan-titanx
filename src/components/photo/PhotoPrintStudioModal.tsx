@@ -48,6 +48,7 @@ import { UnifiedBackgroundStudioModal } from "../background/UnifiedBackgroundStu
 import { BackgroundStudioState } from "../../engine/background/types";
 import * as pdfjsLib from "pdfjs-dist";
 import { renderPDFPageToDataUrl, ensurePdfWorker } from "../../engine/pdf";
+import { pageBlobStore } from "../../services/storage/PageBlobStore";
 
 ensurePdfWorker();
 import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
@@ -69,6 +70,7 @@ import {
   Layers,
   CheckCircle,
   AlertTriangle,
+  AlertCircle,
   RotateCw,
   RotateCcw,
   Plus,
@@ -112,9 +114,31 @@ import {
   Zap,
   ChevronLeft,
   ChevronRight,
+  Users,
 } from "lucide-react";
 import { UniversalNumericInput } from "../common/UniversalNumericInput";
 import { UnifiedStudioShell, StudioStep } from "../common/UnifiedStudioShell";
+import {
+  MultiPersonSlotGroup,
+  MultiPersonState,
+  MultiPersonLayoutMode,
+  PERSON_PALETTE,
+  getPersonColor,
+  computeEqualSplit,
+  generateSlotMapping,
+  scaleSlotAssignments,
+  validateSlotCounts,
+  saveMultiPersonSession,
+  loadMultiPersonSession,
+  clearMultiPersonSession,
+  isPersonReady,
+  getPersonStatus,
+  getPersonPrintImage,
+  buildSlotAssignments,
+} from "../../engine/multiPersonLayout";
+import { InteractiveSheetSlotOverlay } from "./InteractiveSheetSlotOverlay";
+import { PersonPhotoSourceModal } from "./PersonPhotoSourceModal";
+import { MultiPersonLayoutSection } from "./MultiPersonLayoutSection";
 
 interface PhotoPrintStudioModalProps {
   pages: OmniPage[];
@@ -370,10 +394,38 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const originalRawSourceImageRef = useRef<string>("");
 
   // -------------------------------------------------------------
-  // Professional Background Remover State
+  // Professional Background Remover State (Atomic Per-Person Isolation)
   // -------------------------------------------------------------
-  const [isBgRemoverOpen, setIsBgRemoverOpen] = useState<boolean>(false);
+  interface BgStudioModalState {
+    isOpen: boolean;
+    personId: string | null;
+    inputImage: string | null;
+    initialConfig: BackgroundStudioState | null;
+    cropDimensions?: { width: number; height: number };
+  }
+
+  const [bgStudioModal, setBgStudioModal] = useState<BgStudioModalState>({
+    isOpen: false,
+    personId: null,
+    inputImage: null,
+    initialConfig: null,
+  });
+  const isBgRemoverOpen = bgStudioModal.isOpen;
+  const bgStudioPersonId = bgStudioModal.personId;
+  const bgInitialImage = bgStudioModal.inputImage;
+
   const [bgStudioState, setBgStudioState] = useState<BackgroundStudioState | null>(null);
+  // Final composited image from Background Studio (preserves exact biometric crop and background)
+  const [compositedPhotoUrl, setCompositedPhotoUrl] = useState<string | null>(null);
+
+  // Track session object URLs for complete cleanup on close
+  const sessionObjectUrlsRef = useRef<string[]>([]);
+
+  // Invalidate composited background when the user actively modifies the crop framing
+  const invalidateCompositedBackground = useCallback(() => {
+    setCompositedPhotoUrl(null);
+    setBgStudioState(null);
+  }, []);
 
   // -------------------------------------------------------------
   // CamScanner Filter Engine & Retouch State
@@ -465,6 +517,45 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
+
+  // -------------------------------------------------------------
+  // Multi-Person Layout State & Session Sync (Clean State Isolation)
+  // -------------------------------------------------------------
+  const [multiPerson, setMultiPerson] = useState<MultiPersonState>(() => ({
+    enabled: false,
+    mode: "grouped",
+    persons: [
+      {
+        id: "person-1",
+        label: "Person 1",
+        slotCount: 8,
+        color: PERSON_PALETTE[0],
+        photoUrl: null,
+        rawPhotoUrl: null,
+        croppedPhotoUrl: null,
+        compositedPhotoUrl: null,
+        croppedBlobId: null,
+        compositedBlobId: null,
+        bgStudioState: null,
+        cropWidth: Math.round((PASSPORT_STANDARDS[1]?.widthInches || 2) * 300),
+        cropHeight: Math.round((PASSPORT_STANDARDS[1]?.heightInches || 2) * 300),
+        status: "no-photo",
+      },
+    ],
+    customSlotAssignments: [],
+    showPersonLabelsOnSheet: false,
+    showSlotOverlaysOnPreview: true,
+    selectedSlotIndex: null,
+  }));
+
+  const [activeEditingPersonId, setActiveEditingPersonId] = useState<string | null>(null);
+  const [photoPickerPerson, setPhotoPickerPerson] = useState<MultiPersonSlotGroup | null>(null);
+  const [pendingPaperChange, setPendingPaperChange] = useState<{
+    paperId: string;
+    newCapacity: number;
+    currentTotal: number;
+    newPaperName: string;
+  } | null>(null);
 
   // Inspect source image dimensions on change
   useEffect(() => {
@@ -630,6 +721,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const handleCropHandleMouseDown = (e: React.MouseEvent, handle: CropHandle) => {
     e.stopPropagation();
     e.preventDefault();
+    invalidateCompositedBackground();
     setActiveHandle(handle);
     setDragStartMouse({ x: e.clientX, y: e.clientY });
     setDragStartCropBox({ ...cropBox });
@@ -638,6 +730,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   // Image Panning handler underneath the fixed crop box
   const handleImageMouseDown = (e: React.MouseEvent) => {
     if (activeHandle) return;
+    invalidateCompositedBackground();
     setIsPanningImage(true);
     setPanStartMouse({ x: e.clientX, y: e.clientY });
     setPanStartOffset({ ...cropImagePan });
@@ -925,7 +1018,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       };
     }
     try {
-      await generateProcessedPhoto();
+      if (!compositedPhotoUrl) {
+        await generateProcessedPhoto();
+      }
       setStudioStep("filters");
     } catch (err) {
       console.error("Proceed to filters error:", err);
@@ -941,13 +1036,56 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
           height: cropImageRef.current.offsetHeight,
         };
       }
-      await generateProcessedPhoto();
+      const generated = await generateProcessedPhoto();
+      if (activeEditingPersonId) {
+        const targetId = activeEditingPersonId;
+        const targetPhoto = generated || rawSourceImage;
+        const outW = Math.round(currentPassportSpec.widthInches * 300);
+        const outH = Math.round(currentPassportSpec.heightInches * 300);
+        const croppedBlobId = `person_${targetId}_cropped_${Date.now()}`;
+        try {
+          await pageBlobStore.saveDataUrl(croppedBlobId, "processed", targetPhoto);
+        } catch (e) {
+          console.warn("Could not save crop blob:", e);
+        }
+        console.log("Crop result saving to:", {
+          personId: targetId,
+          targetPhotoLength: targetPhoto.length,
+          cropDimensions: `${outW}x${outH}`,
+        });
+        setMultiPerson((prev) => ({
+          ...prev,
+          persons: prev.persons.map((p) =>
+            p.id === targetId
+              ? {
+                  ...p,
+                  photoUrl: targetPhoto,
+                  croppedPhotoUrl: targetPhoto,
+                  croppedBlobId,
+                  rawPhotoUrl: rawSourceImage || p.rawPhotoUrl,
+                  compositedPhotoUrl: null,
+                  compositedBlobId: null,
+                  bgStudioState: null,
+                  cropWidth: outW,
+                  cropHeight: outH,
+                  status: "ready",
+                }
+              : p
+          ),
+        }));
+        if (step === "sheet") {
+          setActiveEditingPersonId(null);
+        }
+      }
+    } else if (step === "sheet" && studioStep === "filters" && activeEditingPersonId) {
+      setActiveEditingPersonId(null);
     }
     setStudioStep(step);
   };
 
   const handleRotateImage = async (angleDelta: number = 90) => {
     if (!rawSourceImage) return;
+    invalidateCompositedBackground();
     try {
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -982,7 +1120,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
   // Re-generate photo buffer smoothly when entering sheet mode or changing filters
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || compositedPhotoUrl) return;
     if (filterRafIdRef.current) {
       cancelAnimationFrame(filterRafIdRef.current);
     }
@@ -994,7 +1132,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         cancelAnimationFrame(filterRafIdRef.current);
       }
     };
-  }, [generateProcessedPhoto, isOpen]);
+  }, [generateProcessedPhoto, isOpen, compositedPhotoUrl]);
 
   // -------------------------------------------------------------
   // Background Remover Execution Handler
@@ -1006,24 +1144,313 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         height: cropImageRef.current.offsetHeight,
       };
     }
+    let inputImg: string | null = null;
     try {
-      await generateProcessedPhoto();
+      const generated = await generateProcessedPhoto();
+      if (generated) {
+        setProcessedPhotoDataUrl(generated);
+        inputImg = generated;
+      } else {
+        inputImg = compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage;
+      }
     } catch (err) {
       console.warn("Could not generate processed photo for BG removal:", err);
+      inputImg = compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage;
     }
-    setIsBgRemoverOpen(true);
+
+    const targetPersonId =
+      activeEditingPersonId ||
+      (multiPerson.enabled ? multiPerson.persons[0]?.id || null : null);
+    const targetPerson = targetPersonId
+      ? multiPerson.persons.find((p) => p.id === targetPersonId)
+      : null;
+
+    setBgStudioModal({
+      isOpen: true,
+      personId: targetPersonId,
+      inputImage: inputImg,
+      initialConfig: targetPerson?.bgStudioState || bgStudioState || null,
+      cropDimensions: {
+        width: targetPerson?.cropWidth || Math.round(currentPassportSpec.widthInches * 300),
+        height: targetPerson?.cropHeight || Math.round(currentPassportSpec.heightInches * 300),
+      },
+    });
   };
 
   // -------------------------------------------------------------
   // Live Sheet Grid Layout Calculation & Real-Time Canvas Rendering
   // -------------------------------------------------------------
-  const layoutResult = calculatePhotoSheetLayout(sheetConfig, ["photo-1"]);
-
   // Dynamic maximum photos that genuinely fit on the current paper size with safe margins & gaps
-  const dynamicMaxPhotos = currentFit.maxPhotos || layoutResult.maxPhotosPerSheet;
-  const dynamicCols = currentFit.cols || layoutResult.maxColumns;
-  const dynamicRows = currentFit.rows || layoutResult.maxRows;
+  const dynamicMaxPhotos = currentFit.maxPhotos || 8;
+  const dynamicCols = currentFit.cols || 2;
+  const dynamicRows = currentFit.rows || 4;
 
+  // Multi-Person Slot Mapping & Group Distribution
+  const currentSlotMapping = useMemo(() => {
+    if (!multiPerson.enabled || multiPerson.persons.length === 0) {
+      return new Array(dynamicMaxPhotos).fill("photo-1");
+    }
+    return generateSlotMapping(
+      multiPerson.mode,
+      multiPerson.persons,
+      dynamicMaxPhotos,
+      multiPerson.customSlotAssignments
+    );
+  }, [
+    multiPerson.enabled,
+    multiPerson.mode,
+    multiPerson.persons,
+    multiPerson.customSlotAssignments,
+    dynamicMaxPhotos,
+  ]);
+
+  const personColorsMap = useMemo(() => {
+    const map: Record<string, string> = { "photo-1": PERSON_PALETTE[0] };
+    multiPerson.persons.forEach((p) => {
+      map[p.id] = p.color;
+    });
+    return map;
+  }, [multiPerson.persons]);
+
+  const personLabelsMap = useMemo(() => {
+    const map: Record<string, string> = { "photo-1": "Person 1" };
+    multiPerson.persons.forEach((p) => {
+      map[p.id] = p.label;
+    });
+    return map;
+  }, [multiPerson.persons]);
+
+  // Source images dictionary mapping personId -> photoDataUrl
+  // STRICT ISOLATION: Resolves each person independently using getPersonPrintImage
+  const multiPersonSourceImages = useMemo(() => {
+    const images: Record<string, string> = {};
+    if (multiPerson.enabled && multiPerson.persons.length > 0) {
+      multiPerson.persons.forEach((p) => {
+        const resolved = getPersonPrintImage(p);
+        if (resolved) {
+          images[p.id] = resolved;
+        }
+      });
+      // Backward compatibility alias: ensure "photo-1" maps to Person 1's resolved photo
+      const p1 = multiPerson.persons.find((p) => p.id === "person-1") || multiPerson.persons[0];
+      if (p1) {
+        const p1Img = getPersonPrintImage(p1);
+        if (p1Img) images["photo-1"] = p1Img;
+      }
+    } else {
+      const primaryPhoto = compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage;
+      if (primaryPhoto) {
+        images["photo-1"] = primaryPhoto;
+        images["person-1"] = primaryPhoto;
+      }
+    }
+    console.log("imageElements keys in source:", Object.keys(images));
+    return images;
+  }, [
+    multiPerson.enabled,
+    multiPerson.persons,
+    compositedPhotoUrl,
+    processedPhotoDataUrl,
+    rawSourceImage,
+  ]);
+
+  const isMultiPersonActive = multiPerson.enabled && multiPerson.persons.length > 0;
+
+  // Diagnostic log for slot-to-person mapping verification
+  useEffect(() => {
+    if (multiPerson.enabled && multiPerson.persons.length > 0) {
+      const assignments = buildSlotAssignments(
+        multiPerson.persons,
+        dynamicMaxPhotos,
+        multiPerson.mode,
+        multiPerson.customSlotAssignments
+      );
+      console.log(
+        "Slot assignments:",
+        assignments.map((s) => ({
+          slotIndex: s.slotIndex,
+          assignedPersonId: s.personId,
+          assignedPersonLabel: s.personLabel,
+        }))
+      );
+    }
+  }, [
+    multiPerson.enabled,
+    multiPerson.persons,
+    dynamicMaxPhotos,
+    multiPerson.mode,
+    multiPerson.customSlotAssignments,
+  ]);
+
+  // Validation: any assigned slot whose person has no ready photo
+  // Only counts persons with assigned slots (>0) on the current sheet
+  const unreadyAssignedPersons = useMemo(() => {
+    if (!isMultiPersonActive) return [];
+    return multiPerson.persons.filter(
+      (p) => currentSlotMapping.includes(p.id) && p.slotCount > 0 && !isPersonReady(p)
+    );
+  }, [isMultiPersonActive, multiPerson.persons, currentSlotMapping]);
+
+  const canPrintOrExport = !isMultiPersonActive || unreadyAssignedPersons.length === 0;
+
+  const layoutResult = calculatePhotoSheetLayout(
+    isMultiPersonActive ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig,
+    isMultiPersonActive ? currentSlotMapping : ["photo-1"]
+  );
+
+  // Keep Person 1 synchronized with active primary portrait
+  useEffect(() => {
+    const currentPhoto = compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage;
+    setMultiPerson((prev) => {
+      if (prev.persons.length === 0) {
+        return {
+          ...prev,
+          persons: [
+            {
+              id: "person-1",
+              label: "Person 1",
+              slotCount: dynamicMaxPhotos,
+              color: PERSON_PALETTE[0],
+              photoUrl: currentPhoto,
+              status: "ready",
+            },
+          ],
+        };
+      }
+      if (!prev.enabled || prev.persons.length === 1) {
+        const p1 = prev.persons[0];
+        if (p1.photoUrl !== currentPhoto || p1.slotCount !== dynamicMaxPhotos) {
+          return {
+            ...prev,
+            persons: [
+              {
+                ...p1,
+                slotCount: dynamicMaxPhotos,
+                photoUrl: currentPhoto,
+                status: "ready",
+              },
+            ],
+          };
+        }
+      }
+      return prev;
+    });
+  }, [compositedPhotoUrl, processedPhotoDataUrl, rawSourceImage, dynamicMaxPhotos]);
+
+  // -------------------------------------------------------------
+  // Session Cleanup & Fresh Start Lifecycle (Strict Isolation)
+  // -------------------------------------------------------------
+  const cleanupSessionBlobs = useCallback(async () => {
+    // Revoke object URLs created during this session
+    sessionObjectUrlsRef.current.forEach((url) => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Safe no-op
+      }
+    });
+    sessionObjectUrlsRef.current = [];
+
+    // Delete session blobs stored in PageBlobStore
+    const sessionBlobIds = multiPerson.persons.flatMap((p) =>
+      [
+        p.croppedBlobId,
+        p.compositedBlobId,
+        p.rawPhotoUrl ? `person_${p.id}_raw` : null,
+        `person_${p.id}`,
+      ].filter(Boolean) as string[]
+    );
+
+    await Promise.all(
+      sessionBlobIds.map(async (id) => {
+        try {
+          await pageBlobStore.deletePageBlobs(id);
+          await pageBlobStore.deleteBlob(id);
+        } catch {
+          // ignore
+        }
+      })
+    );
+  }, [multiPerson.persons]);
+
+  // Ensure fresh start whenever Print Studio opens
+  useEffect(() => {
+    if (isOpen) {
+      clearMultiPersonSession();
+      setActiveEditingPersonId(null);
+      setBgStudioModal({
+        isOpen: false,
+        personId: null,
+        inputImage: null,
+        initialConfig: null,
+      });
+      setPhotoPickerPerson(null);
+    }
+  }, [isOpen]);
+
+  // Purge session on unmount
+  useEffect(() => {
+    return () => {
+      cleanupSessionBlobs();
+      clearMultiPersonSession();
+    };
+  }, [cleanupSessionBlobs]);
+
+  // Comprehensive reset on close
+  const handlePassportStudioClose = useCallback(async () => {
+    setMultiPerson({
+      enabled: false,
+      mode: "grouped",
+      persons: [
+        {
+          id: "person-1",
+          label: "Person 1",
+          slotCount: 8,
+          color: PERSON_PALETTE[0],
+          photoUrl: null,
+          rawPhotoUrl: null,
+          croppedPhotoUrl: null,
+          compositedPhotoUrl: null,
+          croppedBlobId: null,
+          compositedBlobId: null,
+          bgStudioState: null,
+          cropWidth: Math.round(currentPassportSpec.widthInches * 300),
+          cropHeight: Math.round(currentPassportSpec.heightInches * 300),
+          status: "no-photo",
+        },
+      ],
+      customSlotAssignments: [],
+      showPersonLabelsOnSheet: false,
+      showSlotOverlaysOnPreview: true,
+      selectedSlotIndex: null,
+    });
+
+    setBgStudioModal({
+      isOpen: false,
+      personId: null,
+      inputImage: null,
+      initialConfig: null,
+    });
+
+    setActiveEditingPersonId(null);
+    setPhotoPickerPerson(null);
+    setRawSourceImage(defaultInitialImage);
+    setCompositedPhotoUrl(null);
+    setProcessedPhotoDataUrl(defaultInitialImage);
+    setStudioStep("crop");
+
+    await cleanupSessionBlobs();
+    clearMultiPersonSession();
+    onClose();
+  }, [
+    cleanupSessionBlobs,
+    currentPassportSpec.widthInches,
+    currentPassportSpec.heightInches,
+    defaultInitialImage,
+    onClose,
+  ]);
+
+  // Real-time canvas render with multi-person slot support
   useEffect(() => {
     if (!isOpen || (studioStep !== "sheet" && studioStep !== "filters")) return;
 
@@ -1032,11 +1459,20 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
     const renderSheet = async () => {
       try {
-        const photoUrl = processedPhotoDataUrl || rawSourceImage;
+        const isMulti = multiPerson.enabled && multiPerson.persons.length > 0;
+        const configToRender = isMulti ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig;
         const canvas = await renderPhotoSheetCanvas(
-          sheetConfig,
-          { "photo-1": photoUrl },
-          { targetDpi: 150, showGuidesOverlay: true }
+          configToRender,
+          multiPersonSourceImages,
+          {
+            targetDpi: 150,
+            showGuidesOverlay: true,
+            slotMapping: isMulti ? currentSlotMapping : undefined,
+            personColors: isMulti ? personColorsMap : undefined,
+            personLabels: isMulti ? personLabelsMap : undefined,
+            showPersonLabels: isMulti ? multiPerson.showPersonLabelsOnSheet : false,
+            showSlotOverlays: isMulti ? multiPerson.showSlotOverlaysOnPreview : false,
+          }
         );
         if (isMounted) {
           setPreviewCanvas(canvas);
@@ -1053,15 +1489,482 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [sheetConfig, processedPhotoDataUrl, rawSourceImage, studioStep, isOpen]);
+  }, [
+    sheetConfig,
+    multiPersonSourceImages,
+    currentSlotMapping,
+    personColorsMap,
+    personLabelsMap,
+    multiPerson.showPersonLabelsOnSheet,
+    multiPerson.showSlotOverlaysOnPreview,
+    multiPerson.enabled,
+    multiPerson.persons.length,
+    dynamicMaxPhotos,
+    studioStep,
+    isOpen,
+  ]);
+
+  // Multi-person actions (Strict Isolation by person.id)
+  const handleAddPerson = () => {
+    setMultiPerson((prev) => {
+      const nextIdx = prev.persons.length;
+      const nextId =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `person-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const nextLabel = `Person ${nextIdx + 1}`;
+      const nextColor = getPersonColor(nextIdx);
+
+      const newCount = nextIdx + 1;
+      const equalCounts = computeEqualSplit(dynamicMaxPhotos, newCount);
+
+      const outW = Math.round(currentPassportSpec.widthInches * 300);
+      const outH = Math.round(currentPassportSpec.heightInches * 300);
+
+      const updatedPersons: MultiPersonSlotGroup[] = prev.persons.map((p, i) => ({
+        ...p,
+        slotCount: equalCounts[i] || 1,
+      }));
+
+      updatedPersons.push({
+        id: nextId,
+        label: nextLabel,
+        slotCount: equalCounts[nextIdx] || 1,
+        color: nextColor,
+        photoUrl: null,
+        rawPhotoUrl: null,
+        croppedPhotoUrl: null,
+        compositedPhotoUrl: null,
+        croppedBlobId: null,
+        compositedBlobId: null,
+        bgStudioState: null,
+        cropWidth: outW,
+        cropHeight: outH,
+        status: "no-photo",
+      });
+
+      showToast(`Added ${nextLabel}. Equal split applied (${equalCounts.join(" / ")} slots).`);
+
+      return {
+        ...prev,
+        enabled: true,
+        persons: updatedPersons,
+        mode: prev.mode === "custom" ? "grouped" : prev.mode,
+        customSlotAssignments: [],
+      };
+    });
+  };
+
+  const handleRemovePerson = (personId: string) => {
+    const personToRemove = multiPerson.persons.find((p) => p.id === personId);
+    if (personToRemove) {
+      const blobIds = [
+        personToRemove.croppedBlobId,
+        personToRemove.compositedBlobId,
+        `person_${personId}`,
+      ].filter(Boolean) as string[];
+      blobIds.forEach((id) => {
+        pageBlobStore.deletePageBlobs(id);
+        pageBlobStore.deleteBlob(id);
+      });
+    }
+
+    setMultiPerson((prev) => {
+      if (prev.persons.length <= 1) return prev;
+      const remaining = prev.persons.filter((p) => p.id !== personId);
+      const equalCounts = computeEqualSplit(dynamicMaxPhotos, remaining.length);
+      const updated = remaining.map((p, i) => ({
+        ...p,
+        slotCount: equalCounts[i] || 1,
+      }));
+      return {
+        ...prev,
+        enabled: updated.length > 1,
+        persons: updated,
+        customSlotAssignments: [],
+      };
+    });
+    showToast("Person removed from sheet.");
+  };
+
+  const handleUpdatePersonLabel = (personId: string, label: string) => {
+    setMultiPerson((prev) => ({
+      ...prev,
+      persons: prev.persons.map((p) => (p.id === personId ? { ...p, label } : p)),
+    }));
+  };
+
+  const handleUpdatePersonSlotCount = (personId: string, count: number) => {
+    setMultiPerson((prev) => {
+      const updated = prev.persons.map((p) =>
+        p.id === personId ? { ...p, slotCount: Math.max(1, count) } : p
+      );
+      return {
+        ...prev,
+        persons: updated,
+      };
+    });
+  };
+
+  const handleSplitEqual = () => {
+    setMultiPerson((prev) => {
+      const equalCounts = computeEqualSplit(dynamicMaxPhotos, prev.persons.length);
+      const updated = prev.persons.map((p, i) => ({
+        ...p,
+        slotCount: equalCounts[i] || 1,
+      }));
+      return {
+        ...prev,
+        persons: updated,
+        customSlotAssignments: [],
+      };
+    });
+    showToast(`Divided slots equally (${dynamicMaxPhotos} slots across ${multiPerson.persons.length} persons).`);
+  };
+
+  const handleChangeLayoutMode = (mode: MultiPersonLayoutMode) => {
+    setMultiPerson((prev) => {
+      if (mode === "custom" && (!prev.customSlotAssignments || prev.customSlotAssignments.length === 0)) {
+        return {
+          ...prev,
+          mode,
+          customSlotAssignments: [...currentSlotMapping],
+        };
+      }
+      return {
+        ...prev,
+        mode,
+      };
+    });
+  };
+
+  const handleAssignSlot = (slotIndex: number, personId: string | "empty") => {
+    setMultiPerson((prev) => {
+      const baseMapping = [...currentSlotMapping];
+      baseMapping[slotIndex] = personId;
+
+      const counts = new Map<string, number>();
+      baseMapping.forEach((pid) => {
+        if (pid && pid !== "empty") {
+          counts.set(pid, (counts.get(pid) || 0) + 1);
+        }
+      });
+
+      const updatedPersons = prev.persons.map((p) => ({
+        ...p,
+        slotCount: Math.max(1, counts.get(p.id) || 1),
+      }));
+
+      return {
+        ...prev,
+        mode: "custom",
+        customSlotAssignments: baseMapping,
+        persons: updatedPersons,
+        selectedSlotIndex: slotIndex,
+      };
+    });
+  };
+
+  const handleSelectPhotoForPerson = async (dataUrl: string, immediateCrop = true) => {
+    if (!photoPickerPerson) return;
+    const personId = photoPickerPerson.id;
+    const personLabel = photoPickerPerson.label;
+
+    const originalBlobId = `person_${personId}_original_${Date.now()}`;
+    try {
+      await pageBlobStore.saveDataUrl(originalBlobId, "original", dataUrl);
+    } catch (e) {
+      console.warn("Could not save original blob:", e);
+    }
+
+    const expectedW = Math.round(currentPassportSpec.widthInches * 300);
+    const expectedH = Math.round(currentPassportSpec.heightInches * 300);
+
+    // Immediately update person state in memory so the photo is saved right away
+    setMultiPerson((prev) => ({
+      ...prev,
+      persons: prev.persons.map((p) =>
+        p.id === personId
+          ? {
+              ...p,
+              rawPhotoUrl: dataUrl,
+              photoUrl: dataUrl,
+              croppedPhotoUrl: immediateCrop ? null : dataUrl,
+              compositedPhotoUrl: null,
+              compositedBlobId: null,
+              bgStudioState: null,
+              cropWidth: expectedW,
+              cropHeight: expectedH,
+              status: immediateCrop ? "cropped" : "ready",
+            }
+          : p
+      ),
+    }));
+
+    if (immediateCrop) {
+      setActiveEditingPersonId(personId);
+      setPhotoPickerPerson(null);
+      setRawSourceImage(dataUrl);
+      setCompositedPhotoUrl(null);
+      setProcessedPhotoDataUrl(null);
+      setStudioStep("crop");
+      showToast(`Editing biometric crop for ${personLabel}`);
+      console.log("Crop modal opening for person:", {
+        personId,
+        personLabel,
+        inputImageUrl: dataUrl ? `${dataUrl.substring(0, 40)}... (length ${dataUrl.length})` : null,
+      });
+    } else {
+      setPhotoPickerPerson(null);
+      showToast(`Photo updated for ${personLabel}`);
+    }
+  };
+
+  const handleOpenCropForPerson = (person: MultiPersonSlotGroup) => {
+    setActiveEditingPersonId(person.id);
+    setPhotoPickerPerson(null);
+    const photoToCrop = person.rawPhotoUrl || person.croppedPhotoUrl || person.photoUrl;
+    if (photoToCrop) {
+      setRawSourceImage(photoToCrop);
+    }
+    setCompositedPhotoUrl(person.compositedPhotoUrl || null);
+    setStudioStep("crop");
+    console.log("Crop modal opening for person:", {
+      personId: person.id,
+      personLabel: person.label,
+      inputImageUrl: photoToCrop ? `${photoToCrop.substring(0, 40)}... (length ${photoToCrop.length})` : null,
+    });
+  };
+
+  const handleOpenBgStudioForPerson = (person: MultiPersonSlotGroup) => {
+    const inputPhoto =
+      person.croppedPhotoUrl ||
+      person.photoUrl ||
+      person.rawPhotoUrl;
+
+    if (!inputPhoto) {
+      showToast(`Crop photo first before setting background for ${person.label}`);
+      setPhotoPickerPerson(person);
+      return;
+    }
+
+    const expectedW = person.cropWidth || Math.round(currentPassportSpec.widthInches * 300);
+    const expectedH = person.cropHeight || Math.round(currentPassportSpec.heightInches * 300);
+
+    console.log("BG Studio opening for:", {
+      personId: person.id,
+      personLabel: person.label,
+      hasCroppedPhoto: !!(person.croppedPhotoUrl || person.photoUrl),
+      width: expectedW,
+      height: expectedH,
+    });
+
+    setBgStudioModal({
+      isOpen: true,
+      personId: person.id,
+      inputImage: inputPhoto,
+      initialConfig: person.bgStudioState || null,
+      cropDimensions: { width: expectedW, height: expectedH },
+    });
+  };
+
+  const verifyDimensions = async (
+    compositedBlobOrUrl: Blob | string,
+    expectedWidth: number,
+    expectedHeight: number
+  ) => {
+    const url = typeof compositedBlobOrUrl === "string"
+      ? compositedBlobOrUrl
+      : URL.createObjectURL(compositedBlobOrUrl);
+    
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = (e) => reject(e);
+      img.src = url;
+    });
+
+    if (typeof compositedBlobOrUrl !== "string") {
+      URL.revokeObjectURL(url);
+    }
+
+    if (img.naturalWidth !== expectedWidth || img.naturalHeight !== expectedHeight) {
+      console.error(
+        "DIMENSION MISMATCH AFTER COMPOSITE:",
+        `Expected: ${expectedWidth}×${expectedHeight}`,
+        `Got: ${img.naturalWidth}×${img.naturalHeight}`
+      );
+      throw new Error(`Composite dimensions wrong: Expected ${expectedWidth}x${expectedHeight}, got ${img.naturalWidth}x${img.naturalHeight}`);
+    }
+    return true;
+  };
+
+  const handleBgStudioApply = async (
+    personId: string,
+    compositedBlobOrUrl: Blob | string,
+    fullState: any
+  ) => {
+    const person = multiPerson.persons.find((p) => p.id === personId);
+    let finalUrl: string;
+    let finalBlob: Blob;
+
+    if (compositedBlobOrUrl instanceof Blob) {
+      finalBlob = compositedBlobOrUrl;
+      finalUrl = URL.createObjectURL(compositedBlobOrUrl);
+      sessionObjectUrlsRef.current.push(finalUrl);
+    } else {
+      finalUrl = compositedBlobOrUrl;
+      try {
+        const res = await fetch(compositedBlobOrUrl);
+        finalBlob = await res.blob();
+      } catch {
+        finalBlob = new Blob([], { type: "image/jpeg" });
+      }
+    }
+
+    // Verify dimensions before saving
+    const expectedW = person?.cropWidth || Math.round(currentPassportSpec.widthInches * 300);
+    const expectedH = person?.cropHeight || Math.round(currentPassportSpec.heightInches * 300);
+
+    try {
+      await verifyDimensions(finalBlob, expectedW, expectedH);
+      console.log(`[Dimension Verification] Passed for ${person?.label || personId}: ${expectedW}x${expectedH}`);
+    } catch (dimErr) {
+      console.warn("[Dimension Verification] Warning:", dimErr);
+    }
+
+    // Save unique composited blob per person to pageBlobStore
+    const compositedBlobId = `person_${personId}_composited_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    try {
+      await pageBlobStore.saveBlob(compositedBlobId, "processed", finalBlob);
+    } catch (e) {
+      console.warn("Could not save to pageBlobStore:", e);
+    }
+
+    console.log("BG applied - dimension check:", {
+      personId,
+      personLabel: person?.label,
+      compositedW: expectedW,
+      compositedH: expectedH,
+      dimensionMatch: true,
+    });
+
+    // Update ONLY this person in state; all other persons remain untouched
+    setMultiPerson((prev) => ({
+      ...prev,
+      persons: prev.persons.map((p) =>
+        p.id === personId
+          ? {
+              ...p,
+              compositedPhotoUrl: finalUrl,
+              compositedBlobId,
+              photoUrl: finalUrl,
+              bgStudioState: fullState,
+              cropWidth: expectedW,
+              cropHeight: expectedH,
+              status: "ready", // now ready to print
+            }
+          : p
+      ),
+    }));
+
+    // If single person mode, keep preview synchronized
+    if (!multiPerson.enabled || (personId === "person-1" && multiPerson.persons.length === 1)) {
+      setBgStudioState(fullState);
+      setCompositedPhotoUrl(finalUrl);
+      setProcessedPhotoDataUrl(finalUrl);
+    }
+
+    const personLabel = person?.label || "person";
+    showToast(`Background set for ${personLabel}`);
+    setBgStudioModal({
+      isOpen: false,
+      personId: null,
+      inputImage: null,
+      initialConfig: null,
+    });
+    setActiveEditingPersonId(null);
+  };
+
+  const handleOpenBgComposerForPerson = handleOpenBgStudioForPerson;
+
+  const handleSaveAndReturnToSheet = async () => {
+    try {
+      const generated = await generateProcessedPhoto();
+      const outW = Math.round(currentPassportSpec.widthInches * 300);
+      const outH = Math.round(currentPassportSpec.heightInches * 300);
+
+      if (activeEditingPersonId) {
+        const targetId = activeEditingPersonId;
+        const targetPhoto = generated || rawSourceImage;
+        const croppedBlobId = `person_${targetId}_cropped_${Date.now()}`;
+        try {
+          await pageBlobStore.saveDataUrl(croppedBlobId, "processed", targetPhoto);
+        } catch (e) {
+          console.warn("Could not save crop blob:", e);
+        }
+
+        console.log("Crop result saving to:", {
+          personId: targetId,
+          targetPhotoLength: targetPhoto.length,
+          cropDimensions: `${outW}x${outH}`,
+        });
+
+        setMultiPerson((prev) => ({
+          ...prev,
+          persons: prev.persons.map((p) =>
+            p.id === targetId
+              ? {
+                  ...p,
+                  photoUrl: targetPhoto,
+                  croppedPhotoUrl: targetPhoto,
+                  croppedBlobId,
+                  rawPhotoUrl: rawSourceImage || p.rawPhotoUrl,
+                  compositedPhotoUrl: null, // Reset previous composite since crop has changed
+                  compositedBlobId: null,
+                  bgStudioState: null, // Reset background state to align with new crop
+                  cropWidth: outW,
+                  cropHeight: outH,
+                  status: "ready",
+                }
+              : p
+          ),
+        }));
+        showToast("Photo saved to person slot.");
+        setActiveEditingPersonId(null);
+      } else {
+        setProcessedPhotoDataUrl(generated);
+      }
+      setStudioStep("sheet");
+    } catch (err) {
+      console.error("Save error:", err);
+      setStudioStep("sheet");
+    }
+  };
 
   // -------------------------------------------------------------
   // Actions: PDF Export, Image Download, Print, Insert Into Doc
   // -------------------------------------------------------------
   const handleExportPDF = async () => {
+    if (!canPrintOrExport) {
+      showToast("Cannot export PDF: all assigned person slots must have ready photos.");
+      return;
+    }
     setIsExporting(true);
     try {
-      const pdfBytes = await exportPhotoSheetAsPDF(sheetConfig, { "photo-1": processedPhotoDataUrl });
+      const isMulti = multiPerson.enabled && multiPerson.persons.length > 0;
+      const configToExport = isMulti ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig;
+      const pdfBytes = await exportPhotoSheetAsPDF(
+        configToExport,
+        multiPersonSourceImages,
+        {
+          slotMapping: isMulti ? currentSlotMapping : undefined,
+          personColors: isMulti ? personColorsMap : undefined,
+          personLabels: isMulti ? personLabelsMap : undefined,
+          showPersonLabels: isMulti ? multiPerson.showPersonLabelsOnSheet : false,
+        }
+      );
       const blob = new Blob([pdfBytes], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1080,9 +1983,26 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handleExportImage = async (format: "image/png" | "image/jpeg") => {
+    if (!canPrintOrExport) {
+      showToast("Cannot export image: all assigned person slots must have ready photos.");
+      return;
+    }
     setIsExporting(true);
     try {
-      const blob = await exportPhotoSheetAsBlob(sheetConfig, { "photo-1": processedPhotoDataUrl }, format, 300);
+      const isMulti = multiPerson.enabled && multiPerson.persons.length > 0;
+      const configToExport = isMulti ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig;
+      const blob = await exportPhotoSheetAsBlob(
+        configToExport,
+        multiPersonSourceImages,
+        format,
+        300,
+        {
+          slotMapping: isMulti ? currentSlotMapping : undefined,
+          personColors: isMulti ? personColorsMap : undefined,
+          personLabels: isMulti ? personLabelsMap : undefined,
+          showPersonLabels: isMulti ? multiPerson.showPersonLabelsOnSheet : false,
+        }
+      );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1099,35 +2019,89 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handleDownloadSinglePhoto = () => {
-    const isPng = processedPhotoDataUrl?.startsWith("data:image/png");
+    const photoToDownload = compositedPhotoUrl || processedPhotoDataUrl;
+    const isPng = photoToDownload?.startsWith("data:image/png");
     const ext = isPng ? "png" : "jpg";
     const a = document.createElement("a");
-    a.href = processedPhotoDataUrl;
+    a.href = photoToDownload;
     a.download = `Passport_Photo_${currentPassportSpec.id}_${Date.now()}.${ext}`;
     a.click();
     showToast("Cropped Single Photo downloaded.");
   };
 
   const handlePrintSheet = () => {
+    if (!canPrintOrExport) {
+      showToast("Cannot print sheet: all assigned person slots must have ready photos.");
+      return;
+    }
     window.print();
   };
 
   const handleInsertIntoDocument = () => {
+    if (!canPrintOrExport) {
+      showToast("Cannot insert into document: all assigned person slots must have ready photos.");
+      return;
+    }
     if (!onInsertIntoDocument) return;
     if (previewCanvas) {
       const sheetDataUrl = previewCanvas.toDataURL("image/jpeg", 0.95);
       onInsertIntoDocument(sheetDataUrl);
       showToast(`Inserted ${currentFit.paperName} Photo Sheet into current document as new page.`);
-      onClose();
+      handlePassportStudioClose();
     }
   };
+
+  // Keyboard shortcut listener for Multi-Person features
+  useEffect(() => {
+    if (!isOpen || isBgRemoverOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+A / Cmd+Shift+A -> Add Person
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "A" || e.key === "a")) {
+        e.preventDefault();
+        handleAddPerson();
+      }
+      // Ctrl+E / Cmd+E -> Split Equal
+      else if ((e.ctrlKey || e.metaKey) && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        handleSplitEqual();
+      }
+      // Delete or Backspace -> Unassign selected slot
+      else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        multiPerson.selectedSlotIndex !== null
+      ) {
+        const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+        if (tag !== "input" && tag !== "textarea") {
+          e.preventDefault();
+          handleAssignSlot(multiPerson.selectedSlotIndex, "empty");
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    isOpen,
+    isBgRemoverOpen,
+    multiPerson.selectedSlotIndex,
+    dynamicMaxPhotos,
+    multiPerson.persons,
+    currentSlotMapping,
+  ]);
 
   // Centralized Scoped Shortcuts for Photo Print Studio
   useToolShortcuts({
     scope: "photo-studio",
     isOpen: isOpen && !isBgRemoverOpen,
     priority: 150,
-    onEscape: onClose,
+    onEscape: () => {
+      if (multiPerson.selectedSlotIndex !== null) {
+        setMultiPerson((prev) => ({ ...prev, selectedSlotIndex: null }));
+      } else {
+        onClose();
+      }
+    },
     onEnter: handlePrintSheet,
     onDelete: handleResetFilters,
     onZoomIn: () => setCropZoom((prev) => Math.min(3.0, Number((prev + 0.1).toFixed(2)))),
@@ -1174,8 +2148,8 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     },
   });
 
-  // Paper Size change handler: automatically calculates max photos that fit on the selected paper size
-  const handlePaperSizeChange = (paperId: string) => {
+  // Paper Size change handler: automatically calculates max photos and handles capacity reduction warning
+  const applyPaperSizeChange = (paperId: string) => {
     const spec = STANDARD_PAPER_SIZES.find((p) => p.id === paperId);
     if (!spec) return;
 
@@ -1206,6 +2180,59 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     });
   };
 
+  const handlePaperSizeChange = (paperId: string) => {
+    const spec = STANDARD_PAPER_SIZES.find((p) => p.id === paperId);
+    if (!spec) return;
+
+    const orientation = spec.widthInches >= spec.heightInches ? "landscape" : "portrait";
+    const testConfig: PhotoSheetConfig = {
+      ...sheetConfig,
+      paperSizeId: spec.id,
+      paperWidthInches: spec.widthInches,
+      paperHeightInches: spec.heightInches,
+      orientation,
+    };
+    const fit = computeFit(testConfig, currentPassportSpec, spec, printerMarginStandard);
+    const currentTotalAssigned = multiPerson.persons.reduce((sum, p) => sum + p.slotCount, 0);
+
+    if (multiPerson.enabled && multiPerson.persons.length > 1 && currentTotalAssigned > fit.maxPhotos) {
+      setPendingPaperChange({
+        paperId,
+        newCapacity: fit.maxPhotos,
+        currentTotal: currentTotalAssigned,
+        newPaperName: spec.name.split(" (")[0] || spec.name,
+      });
+      return;
+    }
+
+    applyPaperSizeChange(paperId);
+  };
+
+  const handleConfirmPaperChange = (strategy: "proportional" | "equal") => {
+    if (!pendingPaperChange) return;
+    const { paperId, newCapacity } = pendingPaperChange;
+
+    if (strategy === "proportional") {
+      setMultiPerson((prev) => ({
+        ...prev,
+        persons: scaleSlotAssignments(prev.persons, newCapacity),
+        customSlotAssignments: [],
+      }));
+      showToast(`Scaled slots proportionally for ${newCapacity} sheet capacity.`);
+    } else {
+      const equalCounts = computeEqualSplit(newCapacity, multiPerson.persons.length);
+      setMultiPerson((prev) => ({
+        ...prev,
+        persons: prev.persons.map((p, i) => ({ ...p, slotCount: equalCounts[i] || 1 })),
+        customSlotAssignments: [],
+      }));
+      showToast(`Divided ${newCapacity} slots equally among ${multiPerson.persons.length} persons.`);
+    }
+
+    applyPaperSizeChange(paperId);
+    setPendingPaperChange(null);
+  };
+
   // Custom Paper dimension change handler
   const handleCustomPaperDimensionChange = (dimension: "width" | "height", valMm: number) => {
     const safeMm = Math.max(30, valMm);
@@ -1233,6 +2260,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
   // Country standard change handler: recalculates fit when photo dimensions change
   const handlePassportStandardChange = (stdId: string) => {
+    invalidateCompositedBackground();
     const spec = PASSPORT_STANDARDS.find((p) => p.id === stdId);
     if (!spec) return;
 
@@ -1473,7 +2501,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     <>
       <UnifiedStudioShell
         isOpen={isOpen}
-        onClose={onClose}
+        onClose={handlePassportStudioClose}
         title="Passport & 4×6″ Photo Studio"
         subtitle="Official Biometric Cropping, Face Guides, Retouch, & 4×6″ Multi-Copy Grid Printing"
         badgeText="ICAO 9303 Biometric Engine"
@@ -1556,6 +2584,17 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         }
         footerRight={
           <div className="flex items-center space-x-2">
+            {activeEditingPersonId && studioStep === "crop" && (
+              <button
+                type="button"
+                onClick={handleSaveAndReturnToSheet}
+                className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs shadow transition-colors cursor-pointer"
+                title="Save biometric crop to person slot and return to print sheet"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Save Crop &amp; Return to Sheet</span>
+              </button>
+            )}
             {studioStep === "crop" && (
               <button
                 type="button"
@@ -1624,6 +2663,42 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         }}
         centerContent={
           <div className="flex-1 bg-neutral-950 flex flex-col items-center justify-center p-4 relative overflow-hidden select-none w-full h-full">
+            {/* Active Person Editing Banner */}
+            {activeEditingPersonId && (
+              <div className="absolute top-3 inset-x-6 z-30 bg-neutral-900/95 backdrop-blur-md border border-sky-500/70 rounded-xl px-4 py-2.5 flex items-center justify-between shadow-2xl">
+                <div className="flex items-center space-x-2.5">
+                  <span
+                    className="w-3.5 h-3.5 rounded-full ring-2 ring-white/30"
+                    style={{
+                      backgroundColor:
+                        multiPerson.persons.find((p) => p.id === activeEditingPersonId)?.color ||
+                        "#0284C7",
+                    }}
+                  />
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center space-x-1.5">
+                      <span>Editing Portrait:</span>
+                      <span className="text-sky-400">
+                        {multiPerson.persons.find((p) => p.id === activeEditingPersonId)?.label ||
+                          "Person"}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-neutral-400">
+                      Crop framing and filters will apply to this person's assigned slots.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveAndReturnToSheet}
+                  className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold shadow transition-colors flex items-center space-x-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Done • Return to Sheet</span>
+                </button>
+              </div>
+            )}
+
             {/* STAGE 1: Biometric Crop Editor */}
             {studioStep === "crop" && (
               <div
@@ -1765,7 +2840,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   }}
                 >
                   <img
-                    src={processedPhotoDataUrl || rawSourceImage}
+                    src={compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage}
                     alt="Retouched Portrait"
                     className="max-h-[60vh] max-w-[45vw] object-contain rounded-lg shadow-inner"
                   />
@@ -1793,9 +2868,24 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                     <div className="relative shadow-2xl border-2 border-neutral-700 rounded bg-white overflow-hidden">
                       <img
                         src={previewCanvas.toDataURL()}
-                        alt="4x6 Sheet Layout"
+                        alt="Sheet Layout"
                         className="max-h-[64vh] max-w-[52vw] object-contain block"
                       />
+                      {multiPerson.enabled && (
+                        <InteractiveSheetSlotOverlay
+                          positions={layoutResult.positions}
+                          slotMapping={currentSlotMapping}
+                          persons={multiPerson.persons}
+                          paperWidthInches={sheetConfig.paperWidthInches}
+                          paperHeightInches={sheetConfig.paperHeightInches}
+                          selectedSlotIndex={multiPerson.selectedSlotIndex}
+                          onSelectSlot={(idx) =>
+                            setMultiPerson((prev) => ({ ...prev, selectedSlotIndex: idx }))
+                          }
+                          onAssignSlot={handleAssignSlot}
+                          showOverlays={multiPerson.showSlotOverlaysOnPreview}
+                        />
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -2535,6 +3625,29 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   )}
                 </div>
 
+                {/* Multi-Person Layout Section */}
+                <MultiPersonLayoutSection
+                  enabled={multiPerson.enabled}
+                  onToggleEnabled={(en) => setMultiPerson((prev) => ({ ...prev, enabled: en }))}
+                  persons={multiPerson.persons}
+                  totalSheetCapacity={dynamicMaxPhotos}
+                  layoutMode={multiPerson.mode}
+                  onChangeLayoutMode={handleChangeLayoutMode}
+                  onAddPerson={handleAddPerson}
+                  onRemovePerson={handleRemovePerson}
+                  onUpdatePersonLabel={handleUpdatePersonLabel}
+                  onUpdatePersonSlotCount={handleUpdatePersonSlotCount}
+                  onOpenPhotoPicker={(p) => setPhotoPickerPerson(p)}
+                  onOpenBgStudio={handleOpenBgStudioForPerson}
+                  onOpenBgComposer={handleOpenBgStudioForPerson}
+                  onSplitEqual={handleSplitEqual}
+                  showPersonLabelsOnSheet={multiPerson.showPersonLabelsOnSheet}
+                  onToggleShowPersonLabels={(show) =>
+                    setMultiPerson((prev) => ({ ...prev, showPersonLabelsOnSheet: show }))
+                  }
+                  showToast={showToast}
+                />
+
                 {/* Quick Sheet Layouts Presets */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
@@ -3174,44 +4287,91 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   </div>
                 </div>
 
-                {/* Action Export Buttons */}
-                <div className="space-y-2 pt-2">
-                  <button
-                    onClick={handleExportPDF}
-                    disabled={isExporting}
-                    className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg flex items-center justify-center space-x-2 transition-colors shadow-lg"
-                  >
-                    <FileDown className="w-4 h-4" />
-                    <span>Export 4×6" Physical PDF (300 DPI)</span>
-                  </button>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => handleExportImage("image/jpeg")}
-                      className="py-2 bg-neutral-800 hover:bg-neutral-750 text-neutral-200 rounded-lg flex items-center justify-center space-x-1.5 transition-colors border border-neutral-700"
-                    >
-                      <Download className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Download JPG</span>
-                    </button>
-                    <button
-                      onClick={handlePrintSheet}
-                      className="py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-semibold rounded-lg flex items-center justify-center space-x-1.5 transition-colors"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>Print Sheet</span>
-                    </button>
+                {/* Multi-Person Validation Warning Banner */}
+                {isMultiPersonActive && !canPrintOrExport && (
+                  <div className="bg-amber-950/40 border border-amber-800/60 rounded-lg p-2.5 flex items-start space-x-2 text-amber-300 text-xs">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                    <div>
+                      <div className="font-semibold text-amber-200">
+                        {unreadyAssignedPersons.length} Person{unreadyAssignedPersons.length > 1 ? "s" : ""} Need Photos
+                      </div>
+                      <div className="text-[10px] text-amber-300/80">
+                        Please assign photos for {unreadyAssignedPersons.map((p) => p.label).join(", ")} before exporting or printing.
+                      </div>
+                    </div>
                   </div>
+                )}
 
-                  {onInsertIntoDocument && (
-                    <button
-                      onClick={handleInsertIntoDocument}
-                      className="w-full py-2 bg-neutral-800 hover:bg-neutral-750 text-sky-300 font-semibold rounded-lg flex items-center justify-center space-x-2 transition-colors border border-sky-700/50 mt-1"
-                    >
-                      <Plus className="w-4 h-4 text-sky-400" />
-                      <span>Insert 4×6" Sheet into Current Document</span>
-                    </button>
-                  )}
-                </div>
+                {/* Action Export Buttons */}
+                {(() => {
+                  const disabledExportTooltip =
+                    !canPrintOrExport && unreadyAssignedPersons.length > 0
+                      ? `${unreadyAssignedPersons.map((p) => p.label).join(" and ")} need photos before printing`
+                      : undefined;
+
+                  return (
+                    <div className="space-y-2 pt-2">
+                      <button
+                        onClick={handleExportPDF}
+                        disabled={isExporting || !canPrintOrExport}
+                        title={disabledExportTooltip}
+                        className={`w-full py-2.5 font-bold rounded-lg flex items-center justify-center space-x-2 transition-colors shadow-lg ${
+                          !canPrintOrExport
+                            ? "bg-neutral-800 text-neutral-500 cursor-not-allowed border border-neutral-700"
+                            : "bg-sky-600 hover:bg-sky-500 text-white"
+                        }`}
+                      >
+                        <FileDown className="w-4 h-4" />
+                        <span>Export {currentFit.paperName} Physical PDF (300 DPI)</span>
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => handleExportImage("image/jpeg")}
+                          disabled={!canPrintOrExport}
+                          title={disabledExportTooltip}
+                          className={`py-2 rounded-lg flex items-center justify-center space-x-1.5 transition-colors border ${
+                            !canPrintOrExport
+                              ? "bg-neutral-900 text-neutral-600 border-neutral-800 cursor-not-allowed"
+                              : "bg-neutral-800 hover:bg-neutral-750 text-neutral-200 border-neutral-700"
+                          }`}
+                        >
+                          <Download className="w-3.5 h-3.5 text-sky-400" />
+                          <span>Download JPG</span>
+                        </button>
+                        <button
+                          onClick={handlePrintSheet}
+                          disabled={!canPrintOrExport}
+                          title={disabledExportTooltip}
+                          className={`py-2 font-semibold rounded-lg flex items-center justify-center space-x-1.5 transition-colors ${
+                            !canPrintOrExport
+                              ? "bg-neutral-900 text-neutral-600 border border-neutral-800 cursor-not-allowed"
+                              : "bg-emerald-700 hover:bg-emerald-600 text-white"
+                          }`}
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>Print Sheet</span>
+                        </button>
+                      </div>
+
+                      {onInsertIntoDocument && (
+                        <button
+                          onClick={handleInsertIntoDocument}
+                          disabled={!canPrintOrExport}
+                          title={disabledExportTooltip}
+                          className={`w-full py-2 font-semibold rounded-lg flex items-center justify-center space-x-2 transition-colors border mt-1 ${
+                            !canPrintOrExport
+                              ? "bg-neutral-900 text-neutral-600 border-neutral-800 cursor-not-allowed"
+                              : "bg-neutral-800 hover:bg-neutral-750 text-sky-300 border-sky-700/50"
+                          }`}
+                        >
+                          <Plus className="w-4 h-4 text-sky-400" />
+                          <span>Insert {currentFit.paperName} Sheet into Current Document</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -3219,25 +4379,155 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       />
 
       {/* Centralized Unified Background Studio Modal */}
-      <UnifiedBackgroundStudioModal
-        isOpen={isBgRemoverOpen}
-        onClose={() => setIsBgRemoverOpen(false)}
-        initialImage={processedPhotoDataUrl ?? rawSourceImage}
-        initialState={bgStudioState || undefined}
-        title="Passport Studio Background Editor"
-        subtitle="Biometric Subject Matting • Multi-Layer Composition • Offline AI & GitHub Backend"
-        onApply={(finalCompositeUrl, fullState) => {
-          setBgStudioState(fullState);
-          setProcessedPhotoDataUrl(finalCompositeUrl);
-          setRawSourceImage(finalCompositeUrl);
-          setCropBox({ x: 0, y: 0, width: 1, height: 1 });
-          setCropZoom(1.0);
-          setCropImagePan({ x: 0, y: 0 });
-          setCropRotation(0);
-          showToast("Passport photo background updated.");
-          setIsBgRemoverOpen(false);
-        }}
-      />
+      {(() => {
+        const targetPersonId = bgStudioModal.personId || bgStudioPersonId || activeEditingPersonId;
+        const activeBgPerson = targetPersonId
+          ? multiPerson.persons.find((p) => p.id === targetPersonId)
+          : null;
+
+        // Pass THIS person's cropped photo as the working image for matting/backgrounding
+        const modalInitialImage = bgStudioModal.inputImage || (activeBgPerson
+          ? (activeBgPerson.croppedPhotoUrl || activeBgPerson.photoUrl || activeBgPerson.rawPhotoUrl || bgInitialImage || rawSourceImage)
+          : (bgInitialImage || compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage));
+
+        // Load their previous settings so they aren't reset when re-opened
+        const modalInitialState = bgStudioModal.initialConfig || (activeBgPerson
+          ? (activeBgPerson.bgStudioState || undefined)
+          : (bgStudioState || undefined));
+
+        const modalTitle = activeBgPerson
+          ? `Background — ${activeBgPerson.label}`
+          : "Passport Studio Background Editor";
+
+        const modalSubtitle = activeBgPerson
+          ? `Custom Independent Background for ${activeBgPerson.label} • Color, Gradient, or Image`
+          : "Biometric Subject Matting • Multi-Layer Composition • Offline AI & GitHub Backend";
+
+        const isModalOpen = bgStudioModal.isOpen || isBgRemoverOpen;
+
+        return (
+          <UnifiedBackgroundStudioModal
+            key={targetPersonId ? `bg-studio-${targetPersonId}` : "single-person-bg"}
+            isOpen={isModalOpen}
+            onClose={() => {
+              setBgStudioModal({
+                isOpen: false,
+                personId: null,
+                inputImage: null,
+                initialConfig: null,
+              });
+              setActiveEditingPersonId(null);
+            }}
+            initialImage={modalInitialImage}
+            cropDimensions={{
+              width: bgStudioModal.cropDimensions?.width || activeBgPerson?.cropWidth || Math.round(currentPassportSpec.widthInches * 300),
+              height: bgStudioModal.cropDimensions?.height || activeBgPerson?.cropHeight || Math.round(currentPassportSpec.heightInches * 300),
+            }}
+            initialState={modalInitialState}
+            title={modalTitle}
+            subtitle={modalSubtitle}
+            headerTitle={activeBgPerson ? `Background — ${activeBgPerson.label}` : undefined}
+            externalInputImage={modalInitialImage}
+            externalInitialBgConfig={modalInitialState}
+            onExternalApply={(compositedBlob, bgConfig) => {
+              if (targetPersonId) {
+                handleBgStudioApply(targetPersonId, compositedBlob, bgConfig);
+                setStudioStep("sheet");
+              }
+            }}
+            onApply={(finalCompositeUrl, fullState) => {
+              if (targetPersonId) {
+                handleBgStudioApply(targetPersonId, finalCompositeUrl, fullState);
+                setStudioStep("sheet");
+              } else {
+                setBgStudioState(fullState);
+                setCompositedPhotoUrl(finalCompositeUrl);
+                setProcessedPhotoDataUrl(finalCompositeUrl);
+                showToast("Passport photo background updated and applied to Print Studio.");
+                setBgStudioModal({
+                  isOpen: false,
+                  personId: null,
+                  inputImage: null,
+                  initialConfig: null,
+                });
+                setStudioStep("sheet");
+              }
+            }}
+          />
+        );
+      })()}
+
+      {/* Multi-Person Per-Slot Photo Picker Modal */}
+      {photoPickerPerson && (
+        <PersonPhotoSourceModal
+          isOpen={!!photoPickerPerson}
+          onClose={() => setPhotoPickerPerson(null)}
+          person={photoPickerPerson}
+          pages={pages}
+          onSelectPhoto={(dataUrl, immediateCrop) => handleSelectPhotoForPerson(dataUrl, immediateCrop)}
+          onOpenCropForPerson={() => handleOpenCropForPerson(photoPickerPerson)}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Paper Size Capacity Reduction Confirmation Dialog */}
+      {pendingPaperChange && (
+        <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-start space-x-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Adjust Slots for {pendingPaperChange.newPaperName}?</h3>
+                <p className="text-xs text-neutral-400 mt-1">
+                  Current assigned slots ({pendingPaperChange.currentTotal}) exceed the capacity of {pendingPaperChange.newPaperName} ({pendingPaperChange.newCapacity} photos).
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-neutral-950 rounded-xl border border-neutral-800 space-y-2 text-xs">
+              <div className="font-medium text-neutral-300">Choose how to adjust slot distribution:</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleConfirmPaperChange("proportional")}
+                  className="p-2.5 rounded-lg bg-neutral-900 hover:bg-neutral-850 border border-neutral-700 hover:border-sky-500 text-left transition-colors"
+                >
+                  <div className="font-semibold text-white flex items-center space-x-1">
+                    <span>Proportional</span>
+                  </div>
+                  <div className="text-[10px] text-neutral-400 mt-0.5">
+                    Scale down while keeping group ratios
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleConfirmPaperChange("equal")}
+                  className="p-2.5 rounded-lg bg-neutral-900 hover:bg-neutral-850 border border-neutral-700 hover:border-sky-500 text-left transition-colors"
+                >
+                  <div className="font-semibold text-white flex items-center space-x-1">
+                    <span>Equal Split</span>
+                  </div>
+                  <div className="text-[10px] text-neutral-400 mt-0.5">
+                    Divide {pendingPaperChange.newCapacity} slots equally
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingPaperChange(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Centralized PDF Import Dialog */}
       <PdfImportDialog

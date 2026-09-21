@@ -783,14 +783,25 @@ export function calculatePhotoSheetLayout(
 /**
  * Render High-Resolution or Preview Photo Sheet to an HTMLCanvasElement
  */
+export interface RenderPhotoSheetOptions {
+  targetDpi?: number;
+  showGuidesOverlay?: boolean;
+  scaleMultiplier?: number;
+  slotMapping?: Record<number, string> | string[];
+  personColors?: Record<string, string>;
+  personLabels?: Record<string, string>;
+  showPersonLabels?: boolean;
+  showSlotOverlays?: boolean;
+}
+
+/**
+ * Render Photo Sheet to an offscreen HTMLCanvasElement.
+ * Pure mathematical renderer: dpi accurate, precise mm positions.
+ */
 export async function renderPhotoSheetCanvas(
   config: PhotoSheetConfig,
   sourceImages: Record<string, string>, // photoId -> dataUrl (CamScanner processed at 0°)
-  options: {
-    targetDpi?: number;
-    showGuidesOverlay?: boolean;
-    scaleMultiplier?: number;
-  } = {}
+  options: RenderPhotoSheetOptions = {}
 ): Promise<HTMLCanvasElement> {
   const dpi = options.targetDpi || config.dpi;
   const paperW =
@@ -815,19 +826,38 @@ export async function renderPhotoSheetCanvas(
   ctx.fillStyle = config.backgroundColor || "#FFFFFF";
   ctx.fillRect(0, 0, canvasW, canvasH);
 
-  // Step 2: Solve layout
+  // Step 2: Solve layout with explicit slot assignments
   const photoIds = Object.keys(sourceImages);
-  const layout = calculatePhotoSheetLayout(config, photoIds.length > 0 ? photoIds : ["photo-1"]);
+  let slotAssignments: string[] = [];
+  if (options.slotMapping) {
+    if (Array.isArray(options.slotMapping)) {
+      slotAssignments = [...options.slotMapping];
+    } else {
+      const keys = Object.keys(options.slotMapping).map(Number).sort((a, b) => a - b);
+      slotAssignments = keys.map((k) => (options.slotMapping as Record<number, string>)[k] || "empty");
+    }
+  }
 
   // Pre-load images to avoid re-decoding per cell
   const imageElements: Record<string, HTMLImageElement> = {};
   for (const [id, url] of Object.entries(sourceImages)) {
+    if (!url) continue;
     try {
       imageElements[id] = await loadImage(url);
     } catch (e) {
       console.warn("Failed to load source image for layout:", id, e);
     }
   }
+
+  console.log("imageElements keys:", Object.keys(imageElements));
+
+  const layoutSourceIds =
+    slotAssignments.length > 0
+      ? slotAssignments
+      : photoIds.length > 0
+      ? photoIds
+      : ["photo-1"];
+  const layout = calculatePhotoSheetLayout(config, layoutSourceIds);
 
   // Step 3: Draw Photos with Print Rotation
   for (const pos of layout.positions) {
@@ -836,7 +866,10 @@ export async function renderPhotoSheetCanvas(
     const pxW = Math.round(pos.widthInches * dpi);
     const pxH = Math.round(pos.heightInches * dpi);
 
-    const img = imageElements[pos.sourcePhotoId] || Object.values(imageElements)[0];
+    // EXACT person for THIS slot (Strict Isolation)
+    const assignedPersonId = slotAssignments[pos.index] || pos.sourcePhotoId;
+    const isUnassigned = !assignedPersonId || assignedPersonId === "empty";
+    const img = !isUnassigned && assignedPersonId ? imageElements[assignedPersonId] || null : null;
     const rotation = pos.rotationDeg ?? config.printInstanceRotation ?? 0;
 
     if (img) {
@@ -876,7 +909,7 @@ export async function renderPhotoSheetCanvas(
       } else if (config.fitMode === "stretch") {
         ctx.drawImage(img, -localW / 2, -localH / 2, localW, localH);
       } else {
-        // Crop / Fill centered
+        // Crop / Fill centered with 1:1 precision when matching passport spec aspect ratio
         const aspectImg = img.width / img.height;
         const aspectTarget = localW / localH;
         let sx = 0;
@@ -884,12 +917,15 @@ export async function renderPhotoSheetCanvas(
         let sw = img.width;
         let sh = img.height;
 
-        if (aspectImg > aspectTarget) {
-          sw = img.height * aspectTarget;
-          sx = (img.width - sw) / 2;
-        } else {
-          sh = img.width / aspectTarget;
-          sy = (img.height - sh) / 2;
+        // When image dimensions match slot aspect ratio (tolerance 0.005), draw exact 1:1 without cropping
+        if (Math.abs(aspectImg - aspectTarget) > 0.005) {
+          if (aspectImg > aspectTarget) {
+            sw = img.height * aspectTarget;
+            sx = (img.width - sw) / 2;
+          } else {
+            sh = img.width / aspectTarget;
+            sy = (img.height - sh) / 2;
+          }
         }
 
         ctx.drawImage(img, sx, sy, sw, sh, -localW / 2, -localH / 2, localW, localH);
@@ -897,13 +933,9 @@ export async function renderPhotoSheetCanvas(
 
       ctx.restore();
     } else {
-      // Placeholder photo box
-      ctx.fillStyle = "#F1F5F9";
+      // Clean empty/unassigned slot - NEVER draw person text or labels on print canvas!
+      ctx.fillStyle = config.backgroundColor || "#FFFFFF";
       ctx.fillRect(pxX, pxY, pxW, pxH);
-      ctx.fillStyle = "#94A3B8";
-      ctx.font = `${Math.round(14 * (dpi / 150))}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillText(`Photo #${pos.index + 1}`, pxX + pxW / 2, pxY + pxH / 2);
     }
 
     // Step 4: Photo Border around each print instance
@@ -996,7 +1028,13 @@ function drawCuttingGuides(
  */
 export async function exportPhotoSheetAsPDF(
   config: PhotoSheetConfig,
-  sourceImages: Record<string, string>
+  sourceImages: Record<string, string>,
+  options: {
+    slotMapping?: Record<number, string> | string[];
+    personColors?: Record<string, string>;
+    personLabels?: Record<string, string>;
+    showPersonLabels?: boolean;
+  } = {}
 ): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
 
@@ -1010,7 +1048,13 @@ export async function exportPhotoSheetAsPDF(
   const page = pdfDoc.addPage([ptWidth, ptHeight]);
 
   // Render high DPI 300/600 raster of the sheet
-  const highResCanvas = await renderPhotoSheetCanvas(config, sourceImages, { targetDpi: Math.max(300, config.dpi) });
+  const highResCanvas = await renderPhotoSheetCanvas(config, sourceImages, {
+    targetDpi: Math.max(300, config.dpi),
+    slotMapping: options.slotMapping,
+    personColors: options.personColors,
+    personLabels: options.personLabels,
+    showPersonLabels: options.showPersonLabels,
+  });
   const highResDataUrl = highResCanvas.toDataURL("image/jpeg", 0.96);
 
   const embeddedJpg = await pdfDoc.embedJpg(highResDataUrl);
@@ -1031,9 +1075,21 @@ export async function exportPhotoSheetAsBlob(
   config: PhotoSheetConfig,
   sourceImages: Record<string, string>,
   format: "image/png" | "image/jpeg" = "image/jpeg",
-  dpi = 300
+  dpi = 300,
+  options: {
+    slotMapping?: Record<number, string> | string[];
+    personColors?: Record<string, string>;
+    personLabels?: Record<string, string>;
+    showPersonLabels?: boolean;
+  } = {}
 ): Promise<Blob> {
-  const canvas = await renderPhotoSheetCanvas(config, sourceImages, { targetDpi: dpi });
+  const canvas = await renderPhotoSheetCanvas(config, sourceImages, {
+    targetDpi: dpi,
+    slotMapping: options.slotMapping,
+    personColors: options.personColors,
+    personLabels: options.personLabels,
+    showPersonLabels: options.showPersonLabels,
+  });
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
       (blob) => {

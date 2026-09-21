@@ -18,7 +18,10 @@ import {
   BackgroundGradient,
   ImageFitMode,
 } from "../../engine/background/types";
-import { BackgroundCompositor } from "../../engine/background/BackgroundCompositor";
+import {
+  BackgroundCompositor,
+  preloadImageElement,
+} from "../../engine/background/BackgroundCompositor";
 import { toast } from "../../services/toast/toastService";
 import { backgroundRemovalService } from "../../engine/background/BackgroundRemovalService";
 import {
@@ -79,30 +82,47 @@ import {
 interface UnifiedBackgroundStudioModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialImage: string; // The cropped photo from PhotoPrintStudioModal
+  initialImage?: string; // The cropped photo from PhotoPrintStudioModal
+  cropDimensions?: { width: number; height: number }; // Exact biometric crop dimensions (e.g. 413x531)
   initialState?: BackgroundStudioState;
-  onApply: (finalCompositeUrl: string, fullState: BackgroundStudioState) => void;
+  onApply?: (finalCompositeUrl: string, fullState: BackgroundStudioState) => void;
   title?: string;
   subtitle?: string;
+
+  // NEW — optional, for multi-person use:
+  externalInputImage?: Blob | string | null;
+  externalInitialBgConfig?: BackgroundStudioState | null;
+  headerTitle?: string;
+  onExternalApply?: (
+    compositedBlob: Blob,
+    bgConfig: BackgroundStudioState
+  ) => void;
 }
 
 export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModalProps> = ({
   isOpen,
   onClose,
-  initialImage,
+  initialImage = "",
+  cropDimensions,
   initialState,
   onApply,
   title = "Passport Photo Background Composer",
   subtitle = "Two-Layer Studio: Position background freely behind your centered passport portrait",
+  externalInputImage,
+  externalInitialBgConfig,
+  headerTitle,
+  onExternalApply,
 }) => {
   // -------------------------------------------------------------
   // Primary State Engine
   // -------------------------------------------------------------
   const [state, setState] = useState<BackgroundStudioState>(() => {
     if (initialState) {
+      const isSameCrop = !initialImage || initialState.originalImage === initialImage;
       return {
         ...initialState,
         originalImage: initialImage || initialState.originalImage,
+        foregroundImage: isSameCrop ? initialState.foregroundImage : null,
         backgroundCrop: initialState.backgroundCrop ?? null,
         compositePreviewUrl: initialState.compositePreviewUrl ?? null,
       };
@@ -148,21 +168,146 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   useEffect(() => {
     if (isOpen) {
       if (initialState) {
+        const isSameCrop = !initialImage || initialState.originalImage === initialImage;
         setState({
           ...initialState,
           originalImage: initialImage || initialState.originalImage,
+          foregroundImage: isSameCrop ? initialState.foregroundImage : null,
           backgroundCrop: initialState.backgroundCrop ?? null,
           compositePreviewUrl: initialState.compositePreviewUrl ?? null,
         });
       } else if (initialImage) {
-        setState((prev) => ({
-          ...prev,
+        setState({
           originalImage: initialImage,
-          foregroundImage: prev.originalHasTransparency ? initialImage : prev.foregroundImage,
-        }));
+          foregroundImage: null,
+          backgroundMode: "transparent",
+          backgroundColor: "#FFFFFF",
+          backgroundGradient: {
+            type: "linear",
+            color1: "#FFFFFF",
+            color2: "#E2E8F0",
+            angle: 180,
+          },
+          backgroundImage: null,
+          backgroundImageName: undefined,
+          backgroundTransform: { ...DEFAULT_BACKGROUND_TRANSFORM },
+          backgroundCrop: null,
+          foregroundTransform: { ...DEFAULT_FOREGROUND_TRANSFORM },
+          removalOptions: {
+            ...DEFAULT_BG_REMOVAL_OPTIONS,
+          },
+          manualStrokes: [],
+          removalState: {
+            status: "idle",
+            confidenceScore: 98,
+            providerId: "local",
+          },
+          compositePreviewUrl: null,
+          originalHasTransparency: false,
+        });
       }
     }
   }, [isOpen, initialImage, initialState]);
+
+  // Handle externalInputImage when provided (e.g. multi-person per-person layout)
+  useEffect(() => {
+    if (!isOpen || !externalInputImage) return;
+
+    if (externalInputImage instanceof Blob) {
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const dataUrl = evt.target?.result as string;
+        if (dataUrl) {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+              setMeasuredCropDimensions({
+                width: img.naturalWidth,
+                height: img.naturalHeight,
+              });
+            }
+          };
+          img.src = dataUrl;
+          setState((prev) => ({
+            ...prev,
+            originalImage: dataUrl,
+            foregroundImage: prev.originalHasTransparency ? dataUrl : prev.foregroundImage,
+          }));
+        }
+      };
+      reader.readAsDataURL(externalInputImage);
+    } else if (typeof externalInputImage === "string" && externalInputImage) {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          setMeasuredCropDimensions({
+            width: img.naturalWidth,
+            height: img.naturalHeight,
+          });
+        }
+      };
+      img.src = externalInputImage;
+      setState((prev) => ({
+        ...prev,
+        originalImage: externalInputImage,
+        foregroundImage: prev.originalHasTransparency ? externalInputImage : prev.foregroundImage,
+      }));
+    }
+  }, [isOpen, externalInputImage]);
+
+  // Restore previous background configuration if provided
+  useEffect(() => {
+    if (!isOpen || !externalInitialBgConfig) return;
+    setState((prev) => ({
+      ...externalInitialBgConfig,
+      originalImage: prev.originalImage || externalInitialBgConfig.originalImage,
+      foregroundImage: externalInitialBgConfig.foregroundImage ?? prev.foregroundImage,
+    }));
+  }, [isOpen, externalInitialBgConfig]);
+
+  const displayTitle = headerTitle ?? title;
+
+  // Measured natural dimensions of cropped subject
+  const [measuredCropDimensions, setMeasuredCropDimensions] = useState<{ width: number; height: number }>({
+    width: cropDimensions?.width || 413,
+    height: cropDimensions?.height || 531,
+  });
+
+  useEffect(() => {
+    if (cropDimensions && cropDimensions.width > 0 && cropDimensions.height > 0) {
+      setMeasuredCropDimensions(cropDimensions);
+    }
+  }, [cropDimensions?.width, cropDimensions?.height]);
+
+  useEffect(() => {
+    const src = initialImage || state.foregroundImage || state.originalImage;
+    if (!src) return;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        setMeasuredCropDimensions({
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
+      }
+    };
+    img.src = src;
+  }, [initialImage, state.originalImage, state.foregroundImage]);
+
+  // Dynamic stage sizing preserving the exact aspect ratio of the cropped photo
+  const cropAspect = measuredCropDimensions.width / Math.max(1, measuredCropDimensions.height);
+  let stageW = 400;
+  let stageH = 500;
+  if (cropAspect <= 400 / 500) {
+    stageH = 500;
+    stageW = Math.round(500 * cropAspect);
+  } else {
+    stageW = 400;
+    stageH = Math.round(400 / cropAspect);
+  }
 
   // -------------------------------------------------------------
   // Undo / Redo History Stacks (50 Steps)
@@ -613,14 +758,46 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
   // -------------------------------------------------------------
   const handleApplyToStudio = async () => {
     try {
-      const isTransparentBg = state.backgroundMode === "transparent";
-      const finalCompositeUrl = await BackgroundCompositor.renderToDataUrl(state, {
-        width: 1200,
-        height: 1500,
-        exportFormat: isTransparentBg ? "png" : "jpeg",
-        exportQuality: 0.98,
-      });
-      onApply(finalCompositeUrl, state);
+      const subjectSource = state.foregroundImage || state.originalImage;
+      if (!subjectSource) {
+        toast.error("No cropped photo available to apply.");
+        return;
+      }
+
+      // Step 1: Determine exact cropped photo dimensions
+      const fgImg = await preloadImageElement(subjectSource);
+      const cropW = fgImg.naturalWidth || measuredCropDimensions.width || 413;
+      const cropH = fgImg.naturalHeight || measuredCropDimensions.height || 531;
+
+      // Stage dimensions to accurately scale user drag offset to canvas
+      const currentStageW = stageContainerRef.current?.clientWidth || stageW;
+      const currentStageH = stageContainerRef.current?.clientHeight || stageH;
+
+      // Step 2, 3, 4: Composite canvas MUST be created at CROPPED PHOTO dimensions
+      const { dataUrl, blob } = await BackgroundCompositor.compositeForPrint(
+        state,
+        { width: cropW, height: cropH },
+        { stageWidth: currentStageW, stageHeight: currentStageH }
+      );
+
+      // Verify dimensions match crop exactly with console.assert
+      const verifyImg = await preloadImageElement(dataUrl);
+      console.assert(
+        verifyImg.naturalWidth === cropW && verifyImg.naturalHeight === cropH,
+        `SIZE MISMATCH: Expected ${cropW}×${cropH}, got ${verifyImg.naturalWidth}×${verifyImg.naturalHeight}`
+      );
+      if (verifyImg.naturalWidth !== cropW || verifyImg.naturalHeight !== cropH) {
+        console.error(
+          `[BackgroundCompositor] Assertion failed: Expected ${cropW}x${cropH}, got ${verifyImg.naturalWidth}x${verifyImg.naturalHeight}`
+        );
+      } else {
+        console.log(
+          `[BackgroundCompositor] Verified composite dimensions match crop: ${cropW}x${cropH}`
+        );
+      }
+
+      onExternalApply?.(blob, state);
+      onApply?.(dataUrl, state);
       onClose();
     } catch (err) {
       console.error("Could not export final composite:", err);
@@ -630,9 +807,18 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
 
   const handleExportPNG = async () => {
     try {
+      const subjectSource = state.foregroundImage || state.originalImage;
+      const fgImg = subjectSource ? await preloadImageElement(subjectSource) : null;
+      const cropW = fgImg?.naturalWidth || measuredCropDimensions.width || 413;
+      const cropH = fgImg?.naturalHeight || measuredCropDimensions.height || 531;
+      const currentStageW = stageContainerRef.current?.clientWidth || stageW;
+      const currentStageH = stageContainerRef.current?.clientHeight || stageH;
+
       const url = await BackgroundCompositor.renderToDataUrl(state, {
-        width: 1200,
-        height: 1500,
+        width: cropW,
+        height: cropH,
+        stageWidth: currentStageW,
+        stageHeight: currentStageH,
         exportFormat: "png",
       });
       const link = document.createElement("a");
@@ -647,9 +833,18 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
 
   const handleExportJPG = async () => {
     try {
+      const subjectSource = state.foregroundImage || state.originalImage;
+      const fgImg = subjectSource ? await preloadImageElement(subjectSource) : null;
+      const cropW = fgImg?.naturalWidth || measuredCropDimensions.width || 413;
+      const cropH = fgImg?.naturalHeight || measuredCropDimensions.height || 531;
+      const currentStageW = stageContainerRef.current?.clientWidth || stageW;
+      const currentStageH = stageContainerRef.current?.clientHeight || stageH;
+
       const url = await BackgroundCompositor.renderToDataUrl(state, {
-        width: 1200,
-        height: 1500,
+        width: cropW,
+        height: cropH,
+        stageWidth: currentStageW,
+        stageHeight: currentStageH,
         exportFormat: "jpeg",
         exportQuality: 0.98,
         forceSolidBackgroundForPrint: true,
@@ -712,7 +907,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
             <div>
               <div className="flex items-center space-x-2">
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  {title}
+                  {displayTitle}
                 </h3>
                 {isCheckingTransparency ? (
                   <div className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700 text-[10px] text-neutral-400">
@@ -1192,10 +1387,12 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
                 onPointerUp={handleStagePointerUp}
                 onWheel={handleStageWheel}
                 style={{
+                  width: `${stageW}px`,
+                  height: `${stageH}px`,
                   transform: `scale(${zoomLevel})`,
                   transformOrigin: "center center",
                 }}
-                className={`relative w-[360px] h-[450px] sm:w-[400px] sm:h-[500px] rounded-xl border border-neutral-700 shadow-2xl overflow-hidden select-none transition-transform duration-75 ${
+                className={`relative max-w-full rounded-xl border border-neutral-700 shadow-2xl overflow-hidden select-none transition-transform duration-75 ${
                   manualRefineActive
                     ? "cursor-crosshair"
                     : isDraggingBg
@@ -1290,7 +1487,8 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
                     <img
                       src={state.originalImage}
                       alt="Original Reference"
-                      className="w-[400px] h-[500px] object-contain max-w-none block bg-black/60"
+                      style={{ width: `${stageW}px`, height: `${stageH}px` }}
+                      className="object-fill max-w-none block bg-black/60"
                     />
                     <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-black/80 rounded text-[9px] font-bold text-white uppercase tracking-wider">
                       Original

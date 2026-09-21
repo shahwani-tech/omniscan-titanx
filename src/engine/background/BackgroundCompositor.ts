@@ -15,6 +15,8 @@ import { calculateFitDimensions } from "./backgroundTransforms";
 export interface CompositorRenderOptions {
   width: number;
   height: number;
+  stageWidth?: number;  // Interactive stage CSS display width (for drag/pan scaling)
+  stageHeight?: number; // Interactive stage CSS display height
   dpi?: number;
   exportFormat?: "png" | "jpeg" | "webp";
   exportQuality?: number;
@@ -126,9 +128,14 @@ export class BackgroundCompositor {
         ctx.save();
         ctx.globalAlpha = Math.max(0, Math.min(1, bgTransform.opacity ?? 1));
 
-        // Container center
-        const centerX = width / 2 + (bgTransform.x || 0);
-        const centerY = height / 2 + (bgTransform.y || 0);
+        // Container center with drag offset scaled from interactive stage display pixels
+        const scaleFactorX = options.stageWidth && options.stageWidth > 0 ? width / options.stageWidth : 1;
+        const scaleFactorY = options.stageHeight && options.stageHeight > 0 ? height / options.stageHeight : 1;
+        const offsetX = (bgTransform.x || 0) * scaleFactorX;
+        const offsetY = (bgTransform.y || 0) * scaleFactorY;
+
+        const centerX = width / 2 + offsetX;
+        const centerY = height / 2 + offsetY;
 
         ctx.translate(centerX, centerY);
 
@@ -208,8 +215,13 @@ export class BackgroundCompositor {
         ctx.save();
         ctx.globalAlpha = Math.max(0, Math.min(1, fgTransform.opacity ?? 1));
 
-        const fgCenterX = width / 2 + (fgTransform.x || 0);
-        const fgCenterY = height / 2 + (fgTransform.y || 0);
+        const scaleFactorX = options.stageWidth && options.stageWidth > 0 ? width / options.stageWidth : 1;
+        const scaleFactorY = options.stageHeight && options.stageHeight > 0 ? height / options.stageHeight : 1;
+        const fgOffsetX = (fgTransform.x || 0) * scaleFactorX;
+        const fgOffsetY = (fgTransform.y || 0) * scaleFactorY;
+
+        const fgCenterX = width / 2 + fgOffsetX;
+        const fgCenterY = height / 2 + fgOffsetY;
 
         ctx.translate(fgCenterX, fgCenterY);
 
@@ -221,13 +233,15 @@ export class BackgroundCompositor {
         const fsy = (fgTransform.scaleY || 1) * (fgTransform.scale || 1);
         ctx.scale(fsx, fsy);
 
-        // Subject covers or fits natural container
+        // Foreground subject drawn at exact 1:1 natural pixel size (no stretching or scaling)
+        const fgDrawW = fgImg.naturalWidth > 0 ? fgImg.naturalWidth : width;
+        const fgDrawH = fgImg.naturalHeight > 0 ? fgImg.naturalHeight : height;
         ctx.drawImage(
           fgImg,
-          -width / 2,
-          -height / 2,
-          width,
-          height
+          -fgDrawW / 2,
+          -fgDrawH / 2,
+          fgDrawW,
+          fgDrawH
         );
 
         ctx.restore();
@@ -296,5 +310,86 @@ export class BackgroundCompositor {
     } else {
       return canvas.toDataURL("image/jpeg", quality);
     }
+  }
+
+  /**
+   * Dedicated composite function for Passport Photo Print Studio.
+   * THE GOLDEN RULE:
+   * 1. Canvas MUST be created at CROPPED PHOTO dimensions — always.
+   * 2. Background scales to fit/fill the canvas.
+   * 3. Foreground is drawn at exact 1:1 pixel size (no scaling, no zoom).
+   */
+  static async compositeForPrint(
+    state: BackgroundStudioState,
+    cropDimensions: { width: number; height: number },
+    stageDimensions?: { stageWidth: number; stageHeight: number }
+  ): Promise<{ dataUrl: string; blob: Blob; width: number; height: number }> {
+    const subjectSource = state.foregroundImage || state.originalImage;
+    let actualW = cropDimensions.width;
+    let actualH = cropDimensions.height;
+    let fgImg: HTMLImageElement | null = null;
+    let bgImg: HTMLImageElement | null = null;
+
+    if (subjectSource) {
+      try {
+        fgImg = await preloadImageElement(subjectSource);
+        if (fgImg.naturalWidth > 0 && fgImg.naturalHeight > 0) {
+          actualW = fgImg.naturalWidth;
+          actualH = fgImg.naturalHeight;
+        }
+      } catch (err) {
+        console.warn("Could not preload subjectSource in compositeForPrint:", err);
+      }
+    }
+
+    if (state.backgroundMode === "image" && state.backgroundImage) {
+      try {
+        bgImg = await preloadImageElement(state.backgroundImage);
+      } catch (err) {
+        console.warn("Could not preload backgroundImage in compositeForPrint:", err);
+      }
+    }
+
+    const canvas = document.createElement("canvas");
+    // ALWAYS use cropped photo dimensions — NEVER background image dimensions
+    canvas.width = actualW;
+    canvas.height = actualH;
+
+    console.log("BG Studio composite dimensions:", {
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      fgImageWidth: fgImg?.naturalWidth,
+      fgImageHeight: fgImg?.naturalHeight,
+      bgImageWidth: bgImg?.naturalWidth,
+      bgImageHeight: bgImg?.naturalHeight,
+    });
+
+    const isTransparentBg = state.backgroundMode === "transparent";
+    await this.renderToCanvas(canvas, state, {
+      width: actualW,
+      height: actualH,
+      stageWidth: stageDimensions?.stageWidth,
+      stageHeight: stageDimensions?.stageHeight,
+      exportFormat: isTransparentBg ? "png" : "jpeg",
+      exportQuality: 0.98,
+      forceSolidBackgroundForPrint: !isTransparentBg,
+    });
+
+    const format = isTransparentBg ? "image/png" : "image/jpeg";
+    const dataUrl = canvas.toDataURL(format, 0.98);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("Canvas toBlob failed"))),
+        format,
+        0.98
+      );
+    });
+
+    return {
+      dataUrl,
+      blob,
+      width: actualW,
+      height: actualH,
+    };
   }
 }

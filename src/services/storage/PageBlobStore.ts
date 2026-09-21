@@ -385,6 +385,28 @@ class PageBlobStore {
   }
 
   /**
+   * Delete a stored Blob by ID
+   */
+  async deleteBlob(blobId: string): Promise<void> {
+    if (!blobId) return;
+    this.revokeBlobUrl(blobId);
+    this.memoryFallback.delete(blobId);
+
+    try {
+      const db = await this.getDB();
+      return new Promise<void>((resolve) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.delete(blobId);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+      });
+    } catch {
+      // Safe ignore
+    }
+  }
+
+  /**
    * Delete blobs for a given page
    */
   async deletePageBlobs(pageId: string): Promise<void> {
