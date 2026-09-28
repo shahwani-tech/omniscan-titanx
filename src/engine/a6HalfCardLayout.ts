@@ -357,7 +357,9 @@ export function loadA6CardImage(src: string): Promise<HTMLImageElement> {
 
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       imageCache.set(src, img);
       resolve(img);

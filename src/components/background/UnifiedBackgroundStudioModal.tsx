@@ -95,7 +95,8 @@ interface UnifiedBackgroundStudioModalProps {
   headerTitle?: string;
   onExternalApply?: (
     compositedBlob: Blob,
-    bgConfig: BackgroundStudioState
+    bgConfig: BackgroundStudioState,
+    dataUrl?: string
   ) => void;
 }
 
@@ -219,7 +220,9 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
         const dataUrl = evt.target?.result as string;
         if (dataUrl) {
           const img = new Image();
-          img.crossOrigin = "anonymous";
+          if (!dataUrl.startsWith("data:") && !dataUrl.startsWith("blob:")) {
+            img.crossOrigin = "anonymous";
+          }
           img.onload = () => {
             if (img.naturalWidth > 0 && img.naturalHeight > 0) {
               setMeasuredCropDimensions({
@@ -239,7 +242,9 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
       reader.readAsDataURL(externalInputImage);
     } else if (typeof externalInputImage === "string" && externalInputImage) {
       const img = new Image();
-      img.crossOrigin = "anonymous";
+      if (!externalInputImage.startsWith("data:") && !externalInputImage.startsWith("blob:")) {
+        img.crossOrigin = "anonymous";
+      }
       img.onload = () => {
         if (img.naturalWidth > 0 && img.naturalHeight > 0) {
           setMeasuredCropDimensions({
@@ -285,7 +290,9 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
     const src = initialImage || state.foregroundImage || state.originalImage;
     if (!src) return;
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
         setMeasuredCropDimensions({
@@ -796,7 +803,7 @@ export const UnifiedBackgroundStudioModal: React.FC<UnifiedBackgroundStudioModal
         );
       }
 
-      onExternalApply?.(blob, state);
+      onExternalApply?.(blob, state, dataUrl);
       onApply?.(dataUrl, state);
       onClose();
     } catch (err) {

@@ -117,7 +117,9 @@ export async function applyBackgroundCrop(
   let img: HTMLImageElement;
   if (typeof imageSource === "string") {
     img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!imageSource.startsWith("data:") && !imageSource.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.src = imageSource;
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();

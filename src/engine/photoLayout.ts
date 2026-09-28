@@ -838,15 +838,22 @@ export async function renderPhotoSheetCanvas(
     }
   }
 
-  // Pre-load images to avoid re-decoding per cell
+  // Pre-load images with concurrency batching (BATCH_SIZE = 5) to handle 30+ persons smoothly
+  const BATCH_SIZE = 5;
+  const imageEntries = Object.entries(sourceImages).filter(([, url]) => Boolean(url));
   const imageElements: Record<string, HTMLImageElement> = {};
-  for (const [id, url] of Object.entries(sourceImages)) {
-    if (!url) continue;
-    try {
-      imageElements[id] = await loadImage(url);
-    } catch (e) {
-      console.warn("Failed to load source image for layout:", id, e);
-    }
+  for (let i = 0; i < imageEntries.length; i += BATCH_SIZE) {
+    const batch = imageEntries.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async ([id, url]) => {
+        try {
+          const loaded = await loadImage(url);
+          if (loaded) imageElements[id] = loaded;
+        } catch (e) {
+          console.warn("Failed to load source image for layout:", id, e);
+        }
+      })
+    );
   }
 
   console.log("imageElements keys:", Object.keys(imageElements));
@@ -859,15 +866,25 @@ export async function renderPhotoSheetCanvas(
       : ["photo-1"];
   const layout = calculatePhotoSheetLayout(config, layoutSourceIds);
 
-  // Step 3: Draw Photos with Print Rotation
-  for (const pos of layout.positions) {
+  const renderEmptySlot = (pxX: number, pxY: number, pxW: number, pxH: number) => {
+    ctx.fillStyle = config.backgroundColor || "#FFFFFF";
+    ctx.fillRect(pxX, pxY, pxW, pxH);
+  };
+
+  // Step 3: Draw Photos with Print Rotation (Safely handles up to totalSlots persons)
+  const totalSlots = layout.positions.length;
+  for (let i = 0; i < totalSlots; i++) {
+    const pos = layout.positions[i];
+    if (!pos) continue;
+
     const pxX = Math.round(pos.xInches * dpi);
     const pxY = Math.round(pos.yInches * dpi);
     const pxW = Math.round(pos.widthInches * dpi);
     const pxH = Math.round(pos.heightInches * dpi);
 
-    // EXACT person for THIS slot (Strict Isolation)
-    const assignedPersonId = slotAssignments[pos.index] || pos.sourcePhotoId;
+    // EXACT person for THIS slot (Strict Isolation + Safe Bounds Fallback)
+    const assignedPersonId =
+      i < slotAssignments.length ? slotAssignments[i] : pos.sourcePhotoId;
     const isUnassigned = !assignedPersonId || assignedPersonId === "empty";
     const img = !isUnassigned && assignedPersonId ? imageElements[assignedPersonId] || null : null;
     const rotation = pos.rotationDeg ?? config.printInstanceRotation ?? 0;
@@ -933,9 +950,8 @@ export async function renderPhotoSheetCanvas(
 
       ctx.restore();
     } else {
-      // Clean empty/unassigned slot - NEVER draw person text or labels on print canvas!
-      ctx.fillStyle = config.backgroundColor || "#FFFFFF";
-      ctx.fillRect(pxX, pxY, pxW, pxH);
+      // Safe fallback for empty/unassigned or unready slot
+      renderEmptySlot(pxX, pxY, pxW, pxH);
     }
 
     // Step 4: Photo Border around each print instance

@@ -53,7 +53,9 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   }
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       // Keep cache bounded to prevent memory leaks
       if (decodedImageCache.size > 40) {

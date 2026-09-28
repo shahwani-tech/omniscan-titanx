@@ -98,7 +98,9 @@ export async function removeBackground(
 
   if (typeof imageSource === "string") {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!imageSource.startsWith("data:") && !imageSource.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.src = imageSource;
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();

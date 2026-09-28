@@ -46,6 +46,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
+  Minus,
 } from "lucide-react";
 import { UnifiedStudioShell, StudioStep } from "../common/UnifiedStudioShell";
 import { useShortcuts, useToolShortcuts } from "../../commands/ShortcutContext";
@@ -55,6 +56,8 @@ import {
   ID_CARD_PRESETS,
   ID_CARD_PAPER_SIZES,
   calculateIdCardLayout,
+  calculateMaxIdCardCopies,
+  getIdCardPaperShortName,
   renderIdCardSheetCanvas,
   exportIdCardSheetAsPDF,
   exportIdCardSheetAsBlob,
@@ -89,7 +92,9 @@ import { parseDocumentFile, decodeImageFile } from "../../services/upload/Docume
 const loadImage = (src: string): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => resolve(img);
     img.onerror = (e) => reject(e);
     img.src = src;
@@ -470,13 +475,52 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   }, [backBaseImage, executeFilterPipelineScheduled]);
 
   // -------------------------------------------------------------
-  // Layout Calculation (Memoized)
+  // Layout & Dynamic Max Copies Calculation (Memoized)
   // -------------------------------------------------------------
+  const maxCopiesInfo = useMemo(() => {
+    const rawW = config.paperWidthMm;
+    const rawH = config.paperHeightMm;
+    const paperW = config.orientation === "landscape" ? Math.max(rawW, rawH) : Math.min(rawW, rawH);
+    const paperH = config.orientation === "landscape" ? Math.min(rawW, rawH) : Math.max(rawW, rawH);
+    const marginVal =
+      config.marginMode === "manual"
+        ? Math.max(config.marginLeftMm, config.marginRightMm, config.marginTopMm, config.marginBottomMm)
+        : 5;
+    const gapHVal = config.gapMode === "manual" ? config.gapHMm : 3;
+    const gapVVal = config.gapMode === "manual" ? config.gapVMm : undefined;
+    return calculateMaxIdCardCopies(
+      paperW,
+      paperH,
+      config.docWidthMm,
+      config.docHeightMm,
+      marginVal,
+      gapHVal,
+      gapVVal
+    );
+  }, [
+    config.paperWidthMm,
+    config.paperHeightMm,
+    config.orientation,
+    config.docWidthMm,
+    config.docHeightMm,
+    config.marginMode,
+    config.marginLeftMm,
+    config.marginRightMm,
+    config.marginTopMm,
+    config.marginBottomMm,
+    config.gapMode,
+    config.gapHMm,
+    config.gapVMm,
+  ]);
+
+  const maxCopiesForPaper = maxCopiesInfo.total;
+  const shortPaperName = getIdCardPaperShortName(config.paperSizeId);
+
   const layout = useMemo(() => {
     return calculateIdCardLayout(config);
   }, [config]);
 
-  // Derived counts
+  // Derived counts (Front copies and Back copies always match)
   const frontCopiesCount = useMemo(() => {
     return layout.positions.filter((p) => p.pageIndex === 0).length;
   }, [layout]);
@@ -484,6 +528,54 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
   const backCopiesCount = useMemo(() => {
     return layout.positions.filter((p) => p.pageIndex === 1).length;
   }, [layout]);
+
+  const currentQuantity = Math.max(1, Math.min(maxCopiesForPaper, frontCopiesCount || config.manualTotalCopies || 1));
+  const unusedSlotsCount = Math.max(0, maxCopiesForPaper - currentQuantity);
+
+  const [quantityInputText, setQuantityInputText] = useState<string>(String(config.manualTotalCopies));
+  const [quantityAdjustmentInfo, setQuantityAdjustmentInfo] = useState<string | null>(null);
+
+  const handleSetQuantity = useCallback(
+    (rawQty: number) => {
+      const clamped = Math.max(1, Math.min(maxCopiesForPaper, Math.floor(Number.isFinite(rawQty) ? rawQty : 1)));
+      setQuantityInputText(String(clamped));
+      setQuantityAdjustmentInfo(null);
+      setConfig((prev) => ({
+        ...prev,
+        manualColumns: maxCopiesInfo.cols,
+        manualRows: maxCopiesInfo.rows,
+        manualTotalCopies: clamped,
+      }));
+    },
+    [maxCopiesForPaper, maxCopiesInfo.cols, maxCopiesInfo.rows]
+  );
+
+  // Auto-clamp quantity silently whenever paper size, orientation, card size, or margins change
+  useEffect(() => {
+    if (config.manualTotalCopies > maxCopiesForPaper) {
+      const clamped = Math.max(1, maxCopiesForPaper);
+      const infoMsg = `Quantity adjusted to ${clamped} (maximum for ${shortPaperName})`;
+      setQuantityAdjustmentInfo(infoMsg);
+      setStatusMessage(infoMsg);
+      setQuantityInputText(String(clamped));
+      setConfig((prev) => ({
+        ...prev,
+        manualColumns: maxCopiesInfo.cols,
+        manualRows: maxCopiesInfo.rows,
+        manualTotalCopies: clamped,
+      }));
+    } else if (config.manualTotalCopies < 1) {
+      setQuantityInputText("1");
+      setConfig((prev) => ({
+        ...prev,
+        manualColumns: maxCopiesInfo.cols,
+        manualRows: maxCopiesInfo.rows,
+        manualTotalCopies: 1,
+      }));
+    } else {
+      setQuantityInputText(String(config.manualTotalCopies));
+    }
+  }, [maxCopiesForPaper, maxCopiesInfo.cols, maxCopiesInfo.rows, shortPaperName]);
 
   // Dimension calculations for zero-layout-shift preview canvases
   const rawPaperW = config.paperWidthMm;
@@ -757,38 +849,93 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
     const preset = ID_CARD_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
 
-    // Dynamically calculate optimal grid layout for the selected document preset on current paper
-    const testConfig: IdCardStudioConfig = {
-      ...config,
-      presetId,
-      docWidthMm: preset.widthMm,
-      docHeightMm: preset.heightMm,
-      copyCountMode: "auto",
-    };
-    const autoLayout = calculateIdCardLayout(testConfig);
-    const manualCols = autoLayout.columns > 0 ? autoLayout.columns : 1;
-    const manualRows = autoLayout.rows > 0 ? autoLayout.rows : 1;
-    const manualCopies = manualCols * manualRows;
+    const rawW = config.paperWidthMm;
+    const rawH = config.paperHeightMm;
+    const paperW = config.orientation === "landscape" ? Math.max(rawW, rawH) : Math.min(rawW, rawH);
+    const paperH = config.orientation === "landscape" ? Math.min(rawW, rawH) : Math.max(rawW, rawH);
+    const marginVal =
+      config.marginMode === "manual"
+        ? Math.max(config.marginLeftMm, config.marginRightMm, config.marginTopMm, config.marginBottomMm)
+        : 5;
+    const gapHVal = config.gapMode === "manual" ? config.gapHMm : 3;
+    const gapVVal = config.gapMode === "manual" ? config.gapVMm : undefined;
+    const nextMax = calculateMaxIdCardCopies(
+      paperW,
+      paperH,
+      preset.widthMm,
+      preset.heightMm,
+      marginVal,
+      gapHVal,
+      gapVVal
+    );
+
+    const prevQty = config.manualTotalCopies;
+    const clampedQty = Math.max(1, Math.min(nextMax.total, prevQty));
+    if (prevQty > nextMax.total) {
+      const infoMsg = `Quantity adjusted to ${nextMax.total} (maximum for ${shortPaperName})`;
+      setQuantityAdjustmentInfo(infoMsg);
+      setStatusMessage(infoMsg);
+    } else {
+      setQuantityAdjustmentInfo(null);
+    }
+    setQuantityInputText(String(clampedQty));
 
     setConfig((prev) => ({
       ...prev,
       presetId,
       docWidthMm: preset.widthMm,
       docHeightMm: preset.heightMm,
-      manualColumns: manualCols,
-      manualRows: manualRows,
-      manualTotalCopies: manualCopies,
+      manualColumns: nextMax.cols,
+      manualRows: nextMax.rows,
+      manualTotalCopies: clampedQty,
     }));
   };
 
   const handleSelectPaper = (paperId: string) => {
     const paper = ID_CARD_PAPER_SIZES.find((p) => p.id === paperId);
     if (!paper) return;
+
+    const rawW = paper.widthMm;
+    const rawH = paper.heightMm;
+    const paperW = config.orientation === "landscape" ? Math.max(rawW, rawH) : Math.min(rawW, rawH);
+    const paperH = config.orientation === "landscape" ? Math.min(rawW, rawH) : Math.max(rawW, rawH);
+    const marginVal =
+      config.marginMode === "manual"
+        ? Math.max(config.marginLeftMm, config.marginRightMm, config.marginTopMm, config.marginBottomMm)
+        : 5;
+    const gapHVal = config.gapMode === "manual" ? config.gapHMm : 3;
+    const gapVVal = config.gapMode === "manual" ? config.gapVMm : undefined;
+
+    const nextMax = calculateMaxIdCardCopies(
+      paperW,
+      paperH,
+      config.docWidthMm,
+      config.docHeightMm,
+      marginVal,
+      gapHVal,
+      gapVVal
+    );
+    const nextPaperShort = getIdCardPaperShortName(paperId);
+    const prevQty = config.manualTotalCopies;
+    const clampedQty = Math.max(1, Math.min(nextMax.total, prevQty));
+
+    if (prevQty > nextMax.total) {
+      const infoMsg = `Quantity adjusted to ${nextMax.total} (maximum for ${nextPaperShort})`;
+      setQuantityAdjustmentInfo(infoMsg);
+      setStatusMessage(infoMsg);
+    } else {
+      setQuantityAdjustmentInfo(null);
+    }
+
+    setQuantityInputText(String(clampedQty));
     setConfig((prev) => ({
       ...prev,
       paperSizeId: paperId,
       paperWidthMm: paper.widthMm,
       paperHeightMm: paper.heightMm,
+      manualColumns: nextMax.cols,
+      manualRows: nextMax.rows,
+      manualTotalCopies: clampedQty,
     }));
   };
 
@@ -2230,93 +2377,135 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
             </div>
           </div>
 
-          {/* Copy Count & Grid Modes */}
-          <div className="p-3 border-b border-neutral-800 space-y-3">
+          {/* Copies Per Sheet Quantity Control */}
+          <div className="p-3 border-b border-neutral-800 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="font-bold text-neutral-200 uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
                 <Grid className="w-3.5 h-3.5 text-sky-400" />
-                <span>Copies &amp; Grid Alignment</span>
+                <span>Copies Per Sheet</span>
               </span>
               <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 rounded">
-                {layout.columns} cols × {layout.rows} rows ({frontCopiesCount}/page)
+                {currentQuantity} {currentQuantity === 1 ? "copy" : "copies"} on {shortPaperName}
               </span>
             </div>
 
-            {/* Copy Count Mode Switch */}
-            <div className="grid grid-cols-2 gap-1 bg-neutral-950 p-0.5 rounded border border-neutral-800">
+            {/* Stepper + Direct Input + Max Info + Fill Max Button */}
+            <div className="flex items-center justify-between gap-2 bg-neutral-950 p-2 rounded-lg border border-neutral-800">
+              <div className="flex items-center space-x-1">
+                <button
+                  type="button"
+                  disabled={currentQuantity <= 1}
+                  onClick={() => handleSetQuantity(currentQuantity - 1)}
+                  className="w-7 h-7 rounded bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 flex items-center justify-center transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                  title="Decrease copies by 1 (minimum 1)"
+                  aria-label="Decrease copies"
+                >
+                  <Minus className="w-3.5 h-3.5" />
+                </button>
+
+                <input
+                  type="number"
+                  min={1}
+                  max={maxCopiesForPaper}
+                  value={quantityInputText}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "" || raw === "-") {
+                      setQuantityInputText(raw);
+                      return;
+                    }
+                    const parsed = parseInt(raw, 10);
+                    if (isNaN(parsed)) {
+                      setQuantityInputText(raw);
+                      return;
+                    }
+                    // Silently clamp <= 0 to 1, and > max to maxCopiesForPaper
+                    if (parsed <= 0) {
+                      handleSetQuantity(1);
+                    } else if (parsed > maxCopiesForPaper) {
+                      handleSetQuantity(maxCopiesForPaper);
+                    } else {
+                      handleSetQuantity(parsed);
+                    }
+                  }}
+                  onBlur={() => {
+                    const parsed = parseInt(quantityInputText, 10);
+                    if (isNaN(parsed) || parsed < 1) {
+                      handleSetQuantity(1);
+                    } else if (parsed > maxCopiesForPaper) {
+                      handleSetQuantity(maxCopiesForPaper);
+                    } else {
+                      handleSetQuantity(parsed);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const parsed = parseInt(quantityInputText, 10);
+                      if (isNaN(parsed) || parsed < 1) {
+                        handleSetQuantity(1);
+                      } else if (parsed > maxCopiesForPaper) {
+                        handleSetQuantity(maxCopiesForPaper);
+                      } else {
+                        handleSetQuantity(parsed);
+                      }
+                    }
+                  }}
+                  className="w-12 h-7 bg-neutral-900 border border-neutral-700 focus:border-sky-500 focus:outline-none rounded text-center text-xs font-bold text-sky-400 font-mono"
+                  aria-label="Copies per sheet"
+                />
+
+                <button
+                  type="button"
+                  disabled={currentQuantity >= maxCopiesForPaper}
+                  onClick={() => handleSetQuantity(currentQuantity + 1)}
+                  className="w-7 h-7 rounded bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 flex items-center justify-center transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                  title={`Increase copies by 1 (max ${maxCopiesForPaper} on ${shortPaperName})`}
+                  aria-label="Increase copies"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <span className="text-[10px] text-neutral-400 flex-1 text-center">
+                (out of max <strong className="text-neutral-200">{maxCopiesForPaper}</strong> on{" "}
+                <strong className="text-neutral-200">{shortPaperName}</strong>)
+              </span>
+
               <button
-                onClick={() => setConfig((prev) => ({ ...prev, copyCountMode: "auto" }))}
-                className={`py-1 rounded font-medium text-center transition-colors ${
-                  config.copyCountMode === "auto"
-                    ? "bg-sky-600 text-white shadow-sm"
-                    : "text-neutral-400 hover:text-white"
-                }`}
+                type="button"
+                disabled={currentQuantity >= maxCopiesForPaper}
+                onClick={() => handleSetQuantity(maxCopiesForPaper)}
+                className="px-2 py-1 rounded bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 text-sky-300 text-[10px] font-semibold transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer shrink-0"
+                title={`Fill all ${maxCopiesForPaper} slots on ${shortPaperName}`}
               >
-                Auto Calculation
-              </button>
-              <button
-                onClick={() => setConfig((prev) => ({ ...prev, copyCountMode: "manual" }))}
-                className={`py-1 rounded font-medium text-center transition-colors ${
-                  config.copyCountMode === "manual"
-                    ? "bg-sky-600 text-white shadow-sm"
-                    : "text-neutral-400 hover:text-white"
-                }`}
-              >
-                Manual Grid
+                Fill Max
               </button>
             </div>
 
-            {/* Manual Controls */}
-            {config.copyCountMode === "manual" && (
-              <div className="grid grid-cols-3 gap-1.5 pt-1">
-                <div>
-                  <span className="block text-[10px] text-neutral-400 mb-0.5">Columns</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    value={config.manualColumns}
-                    onChange={(e) =>
-                      setConfig((prev) => ({
-                        ...prev,
-                        manualColumns: Math.max(1, parseInt(e.target.value) || 1),
-                      }))
-                    }
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-center text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="block text-[10px] text-neutral-400 mb-0.5">Rows</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="12"
-                    value={config.manualRows}
-                    onChange={(e) =>
-                      setConfig((prev) => ({
-                        ...prev,
-                        manualRows: Math.max(1, parseInt(e.target.value) || 1),
-                      }))
-                    }
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-center text-xs"
-                  />
-                </div>
-                <div>
-                  <span className="block text-[10px] text-neutral-400 mb-0.5">Total Copies</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="50"
-                    value={config.manualTotalCopies}
-                    onChange={(e) =>
-                      setConfig((prev) => ({
-                        ...prev,
-                        manualTotalCopies: Math.max(1, parseInt(e.target.value) || 1),
-                      }))
-                    }
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-center text-xs font-bold text-sky-400"
-                  />
-                </div>
+            {/* Live Slot Status Summary */}
+            <div className="flex items-center justify-between text-[11px] bg-neutral-900/70 px-2.5 py-1.5 rounded border border-neutral-800/80">
+              <span className="text-neutral-300 font-medium">
+                {currentQuantity} of {maxCopiesForPaper} slots used —{" "}
+                <span className="text-neutral-400">{unusedSlotsCount} will print blank</span>
+              </span>
+              <span className="text-[10px] font-mono text-neutral-400">
+                {maxCopiesInfo.cols}×{maxCopiesInfo.rows} grid
+              </span>
+            </div>
+
+            {/* Paper Change Auto-Clamp Adjustment Info */}
+            {quantityAdjustmentInfo && (
+              <div className="px-2.5 py-1.5 rounded bg-sky-950/60 border border-sky-700/50 text-sky-300 text-[10px] flex items-center justify-between">
+                <span>{quantityAdjustmentInfo}</span>
+                <button
+                  type="button"
+                  onClick={() => setQuantityAdjustmentInfo(null)}
+                  className="text-sky-400 hover:text-white ml-2"
+                  title="Dismiss info"
+                >
+                  <X className="w-3 h-3" />
+                </button>
               </div>
             )}
           </div>
@@ -2612,7 +2801,7 @@ export const IdCardPrintStudioModal: React.FC<IdCardPrintStudioModalProps> = ({
               </span>
               <span className="text-neutral-500">|</span>
               <span className="text-neutral-400">
-                A4 ({config.orientation}) • {config.docWidthMm} × {config.docHeightMm} mm
+                {shortPaperName} ({config.orientation}) • {config.docWidthMm} × {config.docHeightMm} mm
               </span>
               {layout.warningMessage && (
                 <span className="text-amber-400 font-medium flex items-center space-x-1 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">

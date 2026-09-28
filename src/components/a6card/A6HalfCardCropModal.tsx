@@ -217,7 +217,9 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
   useEffect(() => {
     if (!isOpen || !imageSrc) return;
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!imageSrc.startsWith("data:") && !imageSrc.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
       setIsImageLoaded(true);
@@ -792,7 +794,9 @@ export const A6HalfCardCropModal: React.FC<A6HalfCardCropModalProps> = ({
   // -------------------------------------------------------------
   const handleApply = () => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!imageSrc.startsWith("data:") && !imageSrc.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       const dpi = 300;
       const targetCanvasW = Math.round((targetWidthMm * dpi) / 25.4);

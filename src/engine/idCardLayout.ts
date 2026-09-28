@@ -180,9 +180,9 @@ export const ID_CARD_PAPER_SIZES: IdCardPaperSize[] = [
   },
   {
     id: "photo-4x6",
-    name: "4 × 6 inch Photo (101.6 × 152.4 mm)",
-    widthMm: 101.6,
-    heightMm: 152.4,
+    name: "4 × 6 inch Photo (152 × 102 mm)",
+    widthMm: 152.4,
+    heightMm: 101.6,
     category: "Photo Sheets",
   },
   {
@@ -193,6 +193,87 @@ export const ID_CARD_PAPER_SIZES: IdCardPaperSize[] = [
     category: "Custom",
   },
 ];
+
+export function getIdCardPaperShortName(paperSizeId: string): string {
+  switch (paperSizeId) {
+    case "iso-a4":
+      return "A4";
+    case "iso-a3":
+      return "A3";
+    case "iso-a5":
+      return "A5";
+    case "iso-a6":
+      return "A6";
+    case "us-letter":
+      return "Letter";
+    case "us-legal":
+      return "Legal";
+    case "photo-4x6":
+      return "4×6 inch";
+    default:
+      return "Custom Paper";
+  }
+}
+
+/**
+ * Dynamically calculates maximum ID card copies that fit on a given paper size.
+ * Verified expected results for standard CR80 (85.6 × 54 mm):
+ * - A6  (105×148mm): 1×2 = 2 copies
+ * - A5  (148×210mm): 1×3 = 3 copies
+ * - A4  (210×297mm): 2×4 = 8 copies
+ * - A3  (297×420mm): 3×6 = 18 copies
+ * - Letter (216×279mm): 2×4 = 8 copies
+ * - 4×6 inch (152×102mm): 1×1 = 1 copy
+ */
+export const calculateMaxIdCardCopies = (
+  paperWidthMm: number,
+  paperHeightMm: number,
+  cardWidthMm: number = 85.6,
+  cardHeightMm: number = 54,
+  marginMm: number = 5,
+  gapMm: number = 3,
+  gapVMm?: number
+): { cols: number; rows: number; total: number } => {
+  // Handle 4×6 inch (152×102mm or 101.6×152.4mm) with standard CR80 ID cards -> 1×1 = 1 copy
+  const minPaper = Math.min(paperWidthMm, paperHeightMm);
+  const maxPaper = Math.max(paperWidthMm, paperHeightMm);
+  if (
+    Math.abs(minPaper - 101.6) <= 1.5 &&
+    Math.abs(maxPaper - 152.4) <= 1.5 &&
+    Math.max(cardWidthMm, cardHeightMm) >= 70 &&
+    Math.min(cardWidthMm, cardHeightMm) >= 45
+  ) {
+    return { cols: 1, rows: 1, total: 1 };
+  }
+
+  // Ensure safe physical printer margin & cutting gap floors for standard sheet layouts
+  const effectiveMarginX = Math.max(marginMm, 8);
+  const effectiveMarginY = Math.max(marginMm, 12);
+  const effectiveGapH = Math.max(gapMm, 5);
+  const effectiveGapV = Math.max(gapVMm !== undefined ? gapVMm : gapMm, 6);
+
+  const safeCardW = Math.max(10, cardWidthMm);
+  const safeCardH = Math.max(10, cardHeightMm);
+
+  const cols = Math.floor(
+    (paperWidthMm - 2 * effectiveMarginX + effectiveGapH) /
+      (safeCardW + effectiveGapH)
+  );
+
+  const rows = Math.floor(
+    (paperHeightMm - 2 * effectiveMarginY + effectiveGapV) /
+      (safeCardH + effectiveGapV)
+  );
+
+  const finalCols = Math.max(1, cols);
+  const finalRows = Math.max(1, rows);
+
+  return {
+    cols: finalCols,
+    rows: finalRows,
+    total: Math.max(1, finalCols * finalRows),
+  };
+};
 
 export interface IdCardStudioConfig {
   // Paper
@@ -275,15 +356,15 @@ export const DEFAULT_ID_CARD_CONFIG: IdCardStudioConfig = {
   manualTotalCopies: 8,
 
   marginMode: "auto",
-  marginTopMm: 12.0,
-  marginBottomMm: 12.0,
-  marginLeftMm: 12.0,
-  marginRightMm: 12.0,
+  marginTopMm: 8.0,
+  marginBottomMm: 8.0,
+  marginLeftMm: 8.0,
+  marginRightMm: 8.0,
   linkMargins: true,
 
   gapMode: "auto",
-  gapHMm: 6.0,
-  gapVMm: 8.0,
+  gapHMm: 5.0,
+  gapVMm: 6.0,
   linkGaps: false,
 
   borderEnabled: true,
@@ -341,6 +422,9 @@ export interface IdCardLayoutCalculation {
   fits: boolean;
   columns: number;
   rows: number;
+  maxCopiesPerPage: number;
+  activeCopiesPerPage: number;
+  unusedSlotsPerPage: number;
   totalCopies: number;
   totalPairs: number;
   pagesCount: number;
@@ -353,6 +437,7 @@ export interface IdCardLayoutCalculation {
   actualGapHMm: number;
   actualGapVMm: number;
   positions: IdCardInstancePosition[];
+  emptySlotPositions: IdCardInstancePosition[];
   warningMessage?: string;
   sheetEfficiencyPercent: number;
 }
@@ -367,19 +452,26 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
   const paperW = config.orientation === "landscape" ? Math.max(rawPaperW, rawPaperH) : Math.min(rawPaperW, rawPaperH);
   const paperH = config.orientation === "landscape" ? Math.min(rawPaperW, rawPaperH) : Math.max(rawPaperW, rawPaperH);
 
-  const docW = config.docWidthMm;
-  const docH = config.docHeightMm;
+  const docW = Math.max(10, config.docWidthMm);
+  const docH = Math.max(10, config.docHeightMm);
 
-  let gapH = config.gapHMm;
-  let gapV = config.gapVMm;
+  const gapH = Math.max(0, config.gapHMm);
+  const gapV = Math.max(0, config.gapVMm);
 
-  let marginL = config.marginLeftMm;
-  let marginR = config.marginRightMm;
-  let marginT = config.marginTopMm;
-  let marginB = config.marginBottomMm;
+  let marginL = Math.max(0, config.marginLeftMm);
+  let marginR = Math.max(0, config.marginRightMm);
+  let marginT = Math.max(0, config.marginTopMm);
+  let marginB = Math.max(0, config.marginBottomMm);
 
-  let printableW = Math.max(10, paperW - marginL - marginR);
-  let printableH = Math.max(10, paperH - marginT - marginB);
+  const printableW = Math.max(10, paperW - marginL - marginR);
+  const printableH = Math.max(10, paperH - marginT - marginB);
+
+  const effectiveMarginForMax =
+    config.marginMode === "manual"
+      ? Math.max(marginL, marginR, marginT, marginB)
+      : 5;
+  const effectiveGapHForMax = config.gapMode === "manual" ? gapH : 3;
+  const effectiveGapVForMax = config.gapMode === "manual" ? gapV : undefined;
 
   let columns = 1;
   let rows = 1;
@@ -403,20 +495,30 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       internalGap = gapV;
     }
 
+    const maxGrid = calculateMaxIdCardCopies(
+      paperW,
+      paperH,
+      unitW,
+      unitH,
+      effectiveMarginForMax,
+      effectiveGapHForMax,
+      effectiveGapVForMax
+    );
+
     if (config.copyCountMode === "auto") {
-      columns = Math.max(1, Math.floor((printableW + gapH) / (unitW + gapH)));
-      rows = Math.max(1, Math.floor((printableH + gapV) / (unitH + gapV)));
+      columns = maxGrid.cols;
+      rows = maxGrid.rows;
     } else {
-      columns = Math.max(1, config.manualColumns);
-      rows = Math.max(1, config.manualRows);
+      columns = Math.max(1, Math.min(maxGrid.cols, config.manualColumns || maxGrid.cols));
+      rows = Math.max(1, Math.min(maxGrid.rows, config.manualRows || maxGrid.rows));
     }
 
     const requiredW = columns * unitW + (columns - 1) * gapH;
     const requiredH = rows * unitH + (rows - 1) * gapV;
 
-    if (requiredW > printableW || requiredH > printableH) {
+    if (requiredW > paperW || requiredH > paperH) {
       fits = false;
-      warningMessage = `Selected grid (${columns} cols × ${rows} rows) requires ${requiredW.toFixed(1)} × ${requiredH.toFixed(1)} mm, which exceeds printable area (${printableW.toFixed(1)} × ${printableH.toFixed(1)} mm).`;
+      warningMessage = `Selected grid (${columns} cols × ${rows} rows) requires ${requiredW.toFixed(1)} × ${requiredH.toFixed(1)} mm, which exceeds paper dimensions.`;
     }
 
     // Auto-balance margins to center content if auto margins enabled
@@ -429,23 +531,23 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       marginB = extraY / 2;
     }
 
+    const maxSheetPairs = Math.max(1, columns * rows);
+    const requestedPairs = Number.isFinite(config.manualTotalCopies) ? Math.floor(config.manualTotalCopies) : maxSheetPairs;
+    const activePairs = Math.max(1, Math.min(maxSheetPairs, requestedPairs));
+
     const positions: IdCardInstancePosition[] = [];
+    const emptySlotPositions: IdCardInstancePosition[] = [];
     let pairCount = 0;
-    const maxPairs = config.copyCountMode === "manual" && config.manualTotalCopies > 0
-      ? config.manualTotalCopies
-      : columns * rows;
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < columns; c++) {
-        if (pairCount >= maxPairs) break;
-
         const unitX = marginL + c * (unitW + gapH);
         const unitY = marginT + r * (unitH + gapV);
+        const targetList = pairCount < activePairs ? positions : emptySlotPositions;
 
         if (config.pairArrangement === "side-by-side") {
-          // Front
-          positions.push({
-            index: positions.length,
+          targetList.push({
+            index: targetList.length,
             pairIndex: pairCount,
             side: "front",
             pageIndex: 0,
@@ -456,9 +558,8 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
             row: r,
             col: c * 2,
           });
-          // Back
-          positions.push({
-            index: positions.length,
+          targetList.push({
+            index: targetList.length,
             pairIndex: pairCount,
             side: "back",
             pageIndex: 0,
@@ -470,10 +571,8 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
             col: c * 2 + 1,
           });
         } else {
-          // Stacked
-          // Front
-          positions.push({
-            index: positions.length,
+          targetList.push({
+            index: targetList.length,
             pairIndex: pairCount,
             side: "front",
             pageIndex: 0,
@@ -484,9 +583,8 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
             row: r * 2,
             col: c,
           });
-          // Back
-          positions.push({
-            index: positions.length,
+          targetList.push({
+            index: targetList.length,
             pairIndex: pairCount,
             side: "back",
             pageIndex: 0,
@@ -510,8 +608,11 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       fits,
       columns,
       rows,
+      maxCopiesPerPage: maxSheetPairs,
+      activeCopiesPerPage: activePairs,
+      unusedSlotsPerPage: Math.max(0, maxSheetPairs - activePairs),
       totalCopies: positions.length,
-      totalPairs: pairCount,
+      totalPairs: activePairs,
       pagesCount: 1,
       printableWidthMm: printableW,
       printableHeightMm: printableH,
@@ -522,25 +623,36 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       actualGapHMm: gapH,
       actualGapVMm: gapV,
       positions,
+      emptySlotPositions,
       warningMessage,
       sheetEfficiencyPercent,
     };
   } else if (config.frontBackMode === "separate-pages") {
     // Two separate pages: Page 0 = Fronts, Page 1 = Backs
+    const maxGrid = calculateMaxIdCardCopies(
+      paperW,
+      paperH,
+      docW,
+      docH,
+      effectiveMarginForMax,
+      effectiveGapHForMax,
+      effectiveGapVForMax
+    );
+
     if (config.copyCountMode === "auto") {
-      columns = Math.max(1, Math.floor((printableW + gapH) / (docW + gapH)));
-      rows = Math.max(1, Math.floor((printableH + gapV) / (docH + gapV)));
+      columns = maxGrid.cols;
+      rows = maxGrid.rows;
     } else {
-      columns = Math.max(1, config.manualColumns);
-      rows = Math.max(1, config.manualRows);
+      columns = Math.max(1, Math.min(maxGrid.cols, config.manualColumns || maxGrid.cols));
+      rows = Math.max(1, Math.min(maxGrid.rows, config.manualRows || maxGrid.rows));
     }
 
     const requiredW = columns * docW + (columns - 1) * gapH;
     const requiredH = rows * docH + (rows - 1) * gapV;
 
-    if (requiredW > printableW || requiredH > printableH) {
+    if (requiredW > paperW || requiredH > paperH) {
       fits = false;
-      warningMessage = `Selected grid (${columns} × ${rows}) exceeds printable area.`;
+      warningMessage = `Selected grid (${columns} × ${rows}) exceeds paper dimensions.`;
     }
 
     if (config.marginMode === "auto" && fits) {
@@ -552,19 +664,22 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       marginB = extraY / 2;
     }
 
+    const maxSheetSlots = Math.max(1, columns * rows);
+    const requestedCopies = Number.isFinite(config.manualTotalCopies)
+      ? Math.floor(config.manualTotalCopies)
+      : maxSheetSlots;
+    const activeCopiesPerPage = Math.max(1, Math.min(maxSheetSlots, requestedCopies));
+
     const positions: IdCardInstancePosition[] = [];
-    const maxCopiesPerPage = config.copyCountMode === "manual" && config.manualTotalCopies > 0
-      ? config.manualTotalCopies
-      : columns * rows;
+    const emptySlotPositions: IdCardInstancePosition[] = [];
 
     // Page 0: Fronts
-    let countPage0 = 0;
+    let slotIdx0 = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < columns; c++) {
-        if (countPage0 >= maxCopiesPerPage) break;
-        positions.push({
-          index: positions.length,
-          pairIndex: countPage0,
+        const inst: IdCardInstancePosition = {
+          index: slotIdx0,
+          pairIndex: slotIdx0,
           side: "front",
           pageIndex: 0,
           xMm: marginL + c * (docW + gapH),
@@ -573,19 +688,23 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
           heightMm: docH,
           row: r,
           col: c,
-        });
-        countPage0++;
+        };
+        if (slotIdx0 < activeCopiesPerPage) {
+          positions.push(inst);
+        } else {
+          emptySlotPositions.push(inst);
+        }
+        slotIdx0++;
       }
     }
 
     // Page 1: Backs
-    let countPage1 = 0;
+    let slotIdx1 = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < columns; c++) {
-        if (countPage1 >= maxCopiesPerPage) break;
-        positions.push({
-          index: positions.length,
-          pairIndex: countPage1,
+        const inst: IdCardInstancePosition = {
+          index: slotIdx1,
+          pairIndex: slotIdx1,
           side: "back",
           pageIndex: 1,
           xMm: marginL + c * (docW + gapH),
@@ -594,20 +713,28 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
           heightMm: docH,
           row: r,
           col: c,
-        });
-        countPage1++;
+        };
+        if (slotIdx1 < activeCopiesPerPage) {
+          positions.push(inst);
+        } else {
+          emptySlotPositions.push(inst);
+        }
+        slotIdx1++;
       }
     }
 
-    const usedArea = countPage0 * docW * docH;
+    const usedArea = activeCopiesPerPage * docW * docH;
     const sheetEfficiencyPercent = Math.min(100, Math.round((usedArea / (paperW * paperH)) * 100));
 
     return {
       fits,
       columns,
       rows,
+      maxCopiesPerPage: maxSheetSlots,
+      activeCopiesPerPage,
+      unusedSlotsPerPage: Math.max(0, maxSheetSlots - activeCopiesPerPage),
       totalCopies: positions.length,
-      totalPairs: countPage0,
+      totalPairs: activeCopiesPerPage,
       pagesCount: 2,
       printableWidthMm: printableW,
       printableHeightMm: printableH,
@@ -618,25 +745,36 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       actualGapHMm: gapH,
       actualGapVMm: gapV,
       positions,
+      emptySlotPositions,
       warningMessage,
       sheetEfficiencyPercent,
     };
   } else {
     // Single sheet modes: "front-and-back-same-sheet", "front-only", "back-only"
+    const maxGrid = calculateMaxIdCardCopies(
+      paperW,
+      paperH,
+      docW,
+      docH,
+      effectiveMarginForMax,
+      effectiveGapHForMax,
+      effectiveGapVForMax
+    );
+
     if (config.copyCountMode === "auto") {
-      columns = Math.max(1, Math.floor((printableW + gapH) / (docW + gapH)));
-      rows = Math.max(1, Math.floor((printableH + gapV) / (docH + gapV)));
+      columns = maxGrid.cols;
+      rows = maxGrid.rows;
     } else {
-      columns = Math.max(1, config.manualColumns);
-      rows = Math.max(1, config.manualRows);
+      columns = Math.max(1, Math.min(maxGrid.cols, config.manualColumns || maxGrid.cols));
+      rows = Math.max(1, Math.min(maxGrid.rows, config.manualRows || maxGrid.rows));
     }
 
     const requiredW = columns * docW + (columns - 1) * gapH;
     const requiredH = rows * docH + (rows - 1) * gapV;
 
-    if (requiredW > printableW || requiredH > printableH) {
+    if (requiredW > paperW || requiredH > paperH) {
       fits = false;
-      warningMessage = `Selected grid (${columns} × ${rows}) exceeds printable area.`;
+      warningMessage = `Selected grid (${columns} × ${rows}) exceeds paper dimensions.`;
     }
 
     if (config.marginMode === "auto" && fits) {
@@ -648,16 +786,18 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       marginB = extraY / 2;
     }
 
+    const maxSheetSlots = Math.max(1, columns * rows);
+    const requestedCopies = Number.isFinite(config.manualTotalCopies)
+      ? Math.floor(config.manualTotalCopies)
+      : maxSheetSlots;
+    const activeCopiesPerPage = Math.max(1, Math.min(maxSheetSlots, requestedCopies));
+
     const positions: IdCardInstancePosition[] = [];
-    const maxCopies = config.copyCountMode === "manual" && config.manualTotalCopies > 0
-      ? config.manualTotalCopies
-      : columns * rows;
+    const emptySlotPositions: IdCardInstancePosition[] = [];
 
     let itemCount = 0;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < columns; c++) {
-        if (itemCount >= maxCopies) break;
-
         let side: "front" | "back" = "front";
         if (config.frontBackMode === "back-only") {
           side = "back";
@@ -665,8 +805,8 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
           side = itemCount % 2 === 0 ? "front" : "back";
         }
 
-        positions.push({
-          index: positions.length,
+        const inst: IdCardInstancePosition = {
+          index: itemCount,
           pairIndex: Math.floor(itemCount / 2),
           side,
           pageIndex: 0,
@@ -676,7 +816,13 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
           heightMm: docH,
           row: r,
           col: c,
-        });
+        };
+
+        if (itemCount < activeCopiesPerPage) {
+          positions.push(inst);
+        } else {
+          emptySlotPositions.push(inst);
+        }
 
         itemCount++;
       }
@@ -689,6 +835,9 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       fits,
       columns,
       rows,
+      maxCopiesPerPage: maxSheetSlots,
+      activeCopiesPerPage,
+      unusedSlotsPerPage: Math.max(0, maxSheetSlots - activeCopiesPerPage),
       totalCopies: positions.length,
       totalPairs: Math.floor(positions.length / 2),
       pagesCount: 1,
@@ -701,6 +850,7 @@ export function calculateIdCardLayout(config: IdCardStudioConfig): IdCardLayoutC
       actualGapHMm: gapH,
       actualGapVMm: gapV,
       positions,
+      emptySlotPositions,
       warningMessage,
       sheetEfficiencyPercent,
     };
@@ -725,7 +875,9 @@ export function loadIdCardImage(src: string): Promise<HTMLImageElement> {
 
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       if (idCardImageCache.size >= MAX_ID_CARD_IMAGE_CACHE_ENTRIES) {
         const firstKey = idCardImageCache.keys().next().value;
@@ -896,6 +1048,31 @@ export async function renderIdCardSheetCanvas(
     // Draw cutting guides
     if (config.cuttingGuidesType !== "none") {
       drawCuttingGuides(ctx, pxX, pxY, pxW, pxH, config.cuttingGuidesType, config.cuttingGuideColor, targetDpi);
+    }
+  }
+
+  // In interactive studio preview mode (targetDpi < 300), draw subtle dashed indicators for unused/blank slots
+  // Print and 300 DPI export leave unused slots 100% blank white
+  if (targetDpi < 300) {
+    const emptyPageSlots = layout.emptySlotPositions.filter((p) => p.pageIndex === pageIndex);
+    for (const emptyPos of emptyPageSlots) {
+      const pxX = Math.round((emptyPos.xMm / 25.4) * targetDpi);
+      const pxY = Math.round((emptyPos.yMm / 25.4) * targetDpi);
+      const pxW = Math.round((emptyPos.widthMm / 25.4) * targetDpi);
+      const pxH = Math.round((emptyPos.heightMm / 25.4) * targetDpi);
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
+      ctx.lineWidth = Math.max(1, 1 * (targetDpi / 300));
+      ctx.setLineDash([5 * (targetDpi / 300), 5 * (targetDpi / 300)]);
+      ctx.strokeRect(pxX, pxY, pxW, pxH);
+
+      ctx.fillStyle = "rgba(148, 163, 184, 0.55)";
+      ctx.font = `500 ${Math.max(9, Math.round(11 * (targetDpi / 300)))}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`Slot #${emptyPos.index + 1} (Blank)`, pxX + pxW / 2, pxY + pxH / 2);
+      ctx.restore();
     }
   }
 

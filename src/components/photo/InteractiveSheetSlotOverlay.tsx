@@ -203,14 +203,14 @@ export const InteractiveSheetSlotOverlay: React.FC<InteractiveSheetSlotOverlayPr
           </div>
 
           {/* Quick person selector */}
-          <div className="flex items-center space-x-1">
+          <div className="flex items-center space-x-1 max-w-[65vw] overflow-x-auto custom-scrollbar pb-0.5">
             {persons.map((p) => {
               const isAssigned = slotMapping[selectedSlotIndex] === p.id;
               return (
                 <button
                   key={p.id}
                   onClick={() => onAssignSlot(selectedSlotIndex, p.id)}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center space-x-1 transition-colors border ${
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center space-x-1 transition-colors border shrink-0 ${
                     isAssigned
                       ? "text-white border-white shadow"
                       : "text-neutral-300 border-transparent hover:border-neutral-700 hover:text-white"
@@ -232,7 +232,7 @@ export const InteractiveSheetSlotOverlay: React.FC<InteractiveSheetSlotOverlayPr
 
             <button
               onClick={() => onAssignSlot(selectedSlotIndex, "empty")}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors border ${
+              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors border shrink-0 ${
                 slotMapping[selectedSlotIndex] === "empty"
                   ? "bg-neutral-800 text-white border-neutral-600 font-bold"
                   : "text-neutral-400 hover:text-white border-neutral-800 hover:bg-neutral-800"
@@ -270,7 +270,7 @@ export const InteractiveSheetSlotOverlay: React.FC<InteractiveSheetSlotOverlayPr
             </button>
           </div>
 
-          <div className="space-y-0.5">
+          <div className="space-y-0.5 max-h-60 overflow-y-auto custom-scrollbar pr-0.5">
             {persons.map((p) => {
               const isAssigned = slotMapping[contextMenu.slotIndex] === p.id;
               return (

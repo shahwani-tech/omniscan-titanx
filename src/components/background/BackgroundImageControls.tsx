@@ -42,7 +42,9 @@ interface BackgroundImageControlsProps {
 async function downscaleImageIfLarge(dataUrl: string, maxDimension = 4096): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!dataUrl.startsWith("data:") && !dataUrl.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       if (img.naturalWidth <= maxDimension && img.naturalHeight <= maxDimension) {
         resolve(dataUrl);

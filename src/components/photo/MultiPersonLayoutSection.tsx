@@ -35,6 +35,7 @@ interface MultiPersonLayoutSectionProps {
   onToggleEnabled: (enabled: boolean) => void;
   persons: MultiPersonSlotGroup[];
   totalSheetCapacity: number;
+  paperName?: string;
   layoutMode: MultiPersonLayoutMode;
   onChangeLayoutMode: (mode: MultiPersonLayoutMode) => void;
   onAddPerson: () => void;
@@ -55,6 +56,7 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
   onToggleEnabled,
   persons,
   totalSheetCapacity,
+  paperName,
   layoutMode,
   onChangeLayoutMode,
   onAddPerson,
@@ -69,40 +71,48 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
   onToggleShowPersonLabels,
   showToast,
 }) => {
-  const [promptResplit, setPromptResplit] = useState<{
-    current: string;
-    equal: string;
-  } | null>(null);
-
   const validation = validateSlotCounts(persons, totalSheetCapacity);
   const remainingSlots = validation.remainingSlots;
-  const isFull = validation.totalAssigned >= totalSheetCapacity;
-  const maxPersonsAllowed = Math.min(MAX_PERSONS_PER_SHEET, totalSheetCapacity);
+  const maxPersonsAllowed = totalSheetCapacity;
+  const isAtMaxPersons = persons.length >= maxPersonsAllowed;
+  const minSlotsPerPerson = isAtMaxPersons ? 1 : 0;
 
-  // Check how many persons have "Ready" status
-  const readyCount = persons.filter((p) => p.status === "ready" && p.photoUrl).length;
-  const allReady = persons.length > 0 && readyCount === persons.length;
+  // Check how many persons with assigned slots (>0) have "Ready" status
+  const assignedPersons = persons.filter((p) => p.slotCount > 0);
+  const readyAssignedCount = assignedPersons.filter((p) => p.status === "ready" && p.photoUrl).length;
+  const allReady = assignedPersons.length > 0 && readyAssignedCount === assignedPersons.length;
 
   const handleSlotCountChange = (person: MultiPersonSlotGroup, delta: number) => {
     const nextVal = person.slotCount + delta;
-    if (nextVal < 1) {
-      showToast("Minimum 1 slot per person. Use the (×) button to remove.");
+    if (nextVal < minSlotsPerPerson) {
       return;
     }
-    if (delta > 0 && remainingSlots <= 0) {
-      showToast(`Only ${totalSheetCapacity} slots available on this sheet.`);
+    if (delta < 0) {
+      onUpdatePersonSlotCount(person.id, Math.max(minSlotsPerPerson, nextVal));
       return;
     }
-    const maxPossible = person.slotCount + remainingSlots;
+    const rawRemaining = totalSheetCapacity - validation.totalAssigned;
+    if (delta > 0 && rawRemaining <= 0) {
+      return;
+    }
+    const maxPossible = person.slotCount + Math.max(0, rawRemaining);
     const finalVal = Math.min(nextVal, maxPossible);
     onUpdatePersonSlotCount(person.id, finalVal);
   };
 
   const handleManualSlotCountInput = (person: MultiPersonSlotGroup, val: number) => {
-    if (isNaN(val) || val < 1) return;
-    const maxPossible = person.slotCount + remainingSlots;
+    if (isNaN(val) || val < minSlotsPerPerson) return;
+    if (val <= person.slotCount) {
+      onUpdatePersonSlotCount(person.id, Math.max(minSlotsPerPerson, val));
+      return;
+    }
+    const otherPersonsTotal = persons.reduce(
+      (sum, p) => (p.id === person.id ? sum : sum + Math.max(0, p.slotCount)),
+      0
+    );
+    const maxPossible = Math.max(minSlotsPerPerson, totalSheetCapacity - otherPersonsTotal);
     if (val > maxPossible) {
-      showToast(`Only ${maxPossible} slots can be allocated to this person.`);
+      showToast(`Only ${maxPossible} slots can be allocated to ${person.label}.`);
       onUpdatePersonSlotCount(person.id, maxPossible);
     } else {
       onUpdatePersonSlotCount(person.id, val);
@@ -181,48 +191,88 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
         </div>
 
         {/* Add Person Button */}
-        <button
-          onClick={onAddPerson}
-          disabled={persons.length >= maxPersonsAllowed || remainingSlots <= 0}
-          className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow ${
-            persons.length >= maxPersonsAllowed || remainingSlots <= 0
-              ? "bg-neutral-800 text-neutral-500 cursor-not-allowed border border-neutral-700"
-              : "bg-sky-600 hover:bg-sky-500 text-white hover:shadow-sky-500/20 active:scale-98"
-          }`}
+        <span
           title={
-            remainingSlots <= 0
-              ? "Sheet full: reduce slots on other persons first"
-              : `Add new person (Max ${maxPersonsAllowed})`
+            isAtMaxPersons
+              ? "All slots are assigned. Remove a person to add another."
+              : `Add new person (starts with 0 slots — ${remainingSlots} slots remaining)`
           }
+          className="inline-block"
         >
-          <Plus className="w-3.5 h-3.5" />
-          <span>+ Add Person</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (isAtMaxPersons) return;
+              onAddPerson();
+            }}
+            disabled={isAtMaxPersons}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow ${
+              isAtMaxPersons
+                ? "bg-neutral-800 text-neutral-500 cursor-not-allowed border border-neutral-700"
+                : "bg-sky-600 hover:bg-sky-500 text-white hover:shadow-sky-500/20 active:scale-98"
+            }`}
+            title={
+              isAtMaxPersons
+                ? "All slots are assigned. Remove a person to add another."
+                : `Add new person (starts with 0 slots — ${remainingSlots} slots remaining)`
+            }
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Add Person</span>
+          </button>
+        </span>
       </div>
+
+      {/* Over-Capacity Warning Banner (e.g. when Paper Size changed to smaller capacity) */}
+      {validation.exceeds && (
+        <div className="p-2.5 bg-rose-950/50 border border-rose-700/70 rounded-lg flex items-start space-x-2 text-rose-200 text-xs">
+          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+          <div>
+            <div className="font-bold text-rose-300">
+              Slot Capacity Exceeded ({validation.totalAssigned} / {totalSheetCapacity})
+            </div>
+            <div className="text-[11px] text-rose-200/90 mt-0.5">
+              Changing to {paperName || "this paper size"} reduces capacity to {totalSheetCapacity}. Current assignments ({validation.totalAssigned} slots) exceed this. Please reduce slot counts manually.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Visual Slot Distribution Bar */}
       <div className="space-y-1.5 bg-neutral-900/60 p-2.5 rounded-lg border border-neutral-850">
         <div className="flex items-center justify-between text-[11px]">
           <span className="text-neutral-400 font-medium">Slot Distribution</span>
-          <span className="font-mono text-xs">
-            <span
-              className={
-                validation.exceeds
-                  ? "text-rose-400 font-bold"
-                  : remainingSlots === 0
-                  ? "text-emerald-400 font-bold"
-                  : "text-neutral-300"
-              }
-            >
-              {validation.totalAssigned}
-            </span>
-            <span className="text-neutral-500"> / {totalSheetCapacity} slots used</span>
-            {remainingSlots > 0 && (
-              <span className="text-amber-400/90 ml-1.5 font-sans text-[10px]">
-                ({remainingSlots} unassigned)
+          <div className="flex items-center space-x-2">
+            <span className="font-mono text-xs">
+              <span
+                className={
+                  validation.exceeds
+                    ? "text-rose-400 font-bold"
+                    : remainingSlots === 0
+                    ? "text-emerald-400 font-bold"
+                    : "text-neutral-300"
+                }
+              >
+                {validation.totalAssigned}
               </span>
-            )}
-          </span>
+              <span className="text-neutral-500"> / {totalSheetCapacity} slots used</span>
+            </span>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                validation.exceeds
+                  ? "bg-rose-950/80 text-rose-300 border-rose-700/70"
+                  : remainingSlots > 0
+                  ? "bg-amber-950/70 text-amber-300 border-amber-700/60"
+                  : "bg-emerald-950/60 text-emerald-300 border-emerald-800/60"
+              }`}
+            >
+              {validation.exceeds
+                ? `Reduce by ${validation.totalAssigned - totalSheetCapacity}`
+                : remainingSlots === 0
+                ? "0 remaining"
+                : `Remaining: ${remainingSlots} slot${remainingSlots === 1 ? "" : "s"} available`}
+            </span>
+          </div>
         </div>
 
         {/* Multi-Segment Color Bar */}
@@ -358,6 +408,15 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
               person.croppedPhotoUrl ||
               person.rawPhotoUrl;
             const hasPhoto = Boolean(displayPhoto);
+            const needsSlotsAssigned = person.slotCount === 0;
+            const otherPersonsTotal = persons.reduce(
+              (sum, p) => (p.id === person.id ? sum : sum + Math.max(0, p.slotCount)),
+              0
+            );
+            const maxAllowedForPerson = Math.max(
+              person.slotCount,
+              totalSheetCapacity - otherPersonsTotal
+            );
 
             return (
               <div
@@ -368,7 +427,11 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
                   e.dataTransfer.setData("application/x-person-id", person.id);
                   e.dataTransfer.effectAllowed = "copy";
                 }}
-                className="bg-neutral-900 border border-neutral-800 hover:border-neutral-700 rounded-xl p-2.5 flex items-center justify-between space-x-2.5 transition-colors group cursor-grab active:cursor-grabbing shadow-sm"
+                className={`rounded-xl p-2.5 flex items-center justify-between space-x-2.5 transition-colors group cursor-grab active:cursor-grabbing shadow-sm border ${
+                  needsSlotsAssigned
+                    ? "bg-amber-950/20 border-amber-500/60 hover:border-amber-400"
+                    : "bg-neutral-900 border-neutral-800 hover:border-neutral-700"
+                }`}
               >
                 {/* Left: Person Photo Thumbnail */}
                 <div
@@ -451,52 +514,69 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
                       className="w-full bg-neutral-950/80 border border-neutral-750 focus:border-sky-500 rounded px-2 py-0.5 text-xs text-white font-medium focus:outline-none transition-colors"
                     />
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center flex-wrap gap-1.5">
                     {getStatusBadge(person)}
-                    <span className="text-[10px] text-neutral-400 font-mono">
-                      {person.slotCount} slot{person.slotCount > 1 ? "s" : ""}
-                    </span>
+                    {needsSlotsAssigned ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/50 font-mono">
+                        0 slots ← assign slots
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-emerald-400/90 font-mono font-semibold">
+                        {person.slotCount} slot{person.slotCount > 1 ? "s" : ""} ✓
+                      </span>
+                    )}
                   </div>
                 </div>
 
                 {/* Right: Slot Count Stepper */}
-                <div className="flex items-center space-x-1 shrink-0 bg-neutral-950 p-1 rounded-lg border border-neutral-800">
+                <div
+                  className={`flex items-center space-x-1 shrink-0 bg-neutral-950 p-1 rounded-lg border ${
+                    needsSlotsAssigned ? "border-amber-500/60" : "border-neutral-800"
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => handleSlotCountChange(person, -1)}
-                    disabled={person.slotCount <= 1}
+                    disabled={person.slotCount <= minSlotsPerPerson}
                     className={`w-6 h-6 rounded flex items-center justify-center text-sm font-bold transition-colors ${
-                      person.slotCount <= 1
+                      person.slotCount <= minSlotsPerPerson
                         ? "text-neutral-600 cursor-not-allowed"
                         : "text-neutral-300 hover:text-white hover:bg-neutral-800"
                     }`}
-                    title="Decrease slots"
+                    title={
+                      isAtMaxPersons && person.slotCount <= 1
+                        ? "Each person requires at least 1 slot when at maximum person capacity"
+                        : "Decrease slots"
+                    }
                   >
                     -
                   </button>
 
                   <input
                     type="number"
-                    min="1"
-                    max={person.slotCount + remainingSlots}
+                    min={minSlotsPerPerson}
+                    max={maxAllowedForPerson}
+                    disabled={isAtMaxPersons && remainingSlots <= 0 && person.slotCount <= 1}
                     value={person.slotCount}
                     onChange={(e) => handleManualSlotCountInput(person, Number(e.target.value))}
-                    className="w-10 bg-transparent text-center text-xs font-mono font-bold text-white focus:outline-none"
+                    className={`w-10 bg-transparent text-center text-xs font-mono font-bold focus:outline-none ${
+                      needsSlotsAssigned ? "text-amber-300" : "text-white"
+                    } disabled:cursor-not-allowed`}
                   />
 
                   <button
                     type="button"
                     onClick={() => handleSlotCountChange(person, 1)}
-                    disabled={remainingSlots <= 0}
+                    disabled={remainingSlots <= 0 || validation.exceeds}
                     className={`w-6 h-6 rounded flex items-center justify-center text-sm font-bold transition-colors ${
-                      remainingSlots <= 0
+                      remainingSlots <= 0 || validation.exceeds
                         ? "text-neutral-600 cursor-not-allowed"
                         : "text-neutral-300 hover:text-white hover:bg-neutral-800"
                     }`}
                     title={
-                      remainingSlots <= 0
-                        ? "Sheet full: reduce other persons first"
-                        : "Increase slots"
+                      remainingSlots <= 0 || validation.exceeds
+                        ? "No remaining slots: reduce other persons' slots first"
+                        : `Increase slots (${remainingSlots} available)`
                     }
                   >
                     +
@@ -525,10 +605,7 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
                   const isCropped = Boolean(
                     person.croppedPhotoUrl ||
                     person.compositedPhotoUrl ||
-                    (person.photoUrl && person.photoUrl !== person.rawPhotoUrl) ||
-                    person.status === "cropped" ||
-                    person.status === "needs-background" ||
-                    person.status === "ready"
+                    (person.photoUrl && person.photoUrl !== person.rawPhotoUrl)
                   );
 
                   const isBgSet = Boolean(
@@ -607,16 +684,16 @@ export const MultiPersonLayoutSection: React.FC<MultiPersonLayoutSectionProps> =
           </span>
         </label>
         <span className="text-[10px] text-neutral-500">
-          {readyCount}/{persons.length} ready
+          {readyAssignedCount}/{assignedPersons.length} assigned ready
         </span>
       </div>
 
-      {/* Print Readiness Warning (if any person lacks photo) */}
-      {!allReady && (
+      {/* Print Readiness Warning (if any assigned person lacks photo) */}
+      {assignedPersons.length > 0 && !allReady && (
         <div className="p-2 bg-amber-950/30 border border-amber-800/50 rounded-lg flex items-center space-x-2 text-amber-300 text-[11px]">
           <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
           <span>
-            {persons.length - readyCount} person(s) still need a photo before printing.
+            {assignedPersons.length - readyAssignedCount} assigned person(s) still need a photo before printing.
           </span>
         </div>
       )}

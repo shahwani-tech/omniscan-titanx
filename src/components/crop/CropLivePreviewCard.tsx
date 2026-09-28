@@ -148,7 +148,9 @@ export const CropLivePreviewCard: React.FC<CropLivePreviewCardProps> = ({
         }
 
         const img = new Image();
-        img.crossOrigin = "anonymous";
+        if (!url.startsWith("data:") && !url.startsWith("blob:")) {
+          img.crossOrigin = "anonymous";
+        }
 
         img.onload = () => {
           if (!isMounted) return;

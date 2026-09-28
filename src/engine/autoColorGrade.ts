@@ -175,7 +175,9 @@ export async function analyzeImageAndComputeAutoGrade(
   if (typeof imageSource === "string") {
     imgElement = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
-      img.crossOrigin = "anonymous";
+      if (!imageSource.startsWith("data:") && !imageSource.startsWith("blob:")) {
+        img.crossOrigin = "anonymous";
+      }
       img.onload = () => resolve(img);
       img.onerror = (err) => reject(err);
       img.src = imageSource;

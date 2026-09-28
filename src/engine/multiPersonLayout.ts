@@ -13,7 +13,7 @@ export type MultiPersonLayoutMode = "grouped" | "alternating" | "custom";
 export interface MultiPersonSlotGroup {
   id: string; // e.g. "person-1", "person-2"
   label: string; // e.g. "Person 1", "Person 2", or user custom name
-  slotCount: number; // min: 1, max: sheet capacity
+  slotCount: number; // min: 0, max: sheet capacity (new persons start at 0)
   color: string; // Distinct border / tag color
   photoUrl: string | null; // Final photo URL
   rawPhotoUrl?: string | null; // Original uncropped photo
@@ -30,16 +30,22 @@ export interface MultiPersonSlotGroup {
 
 /**
  * STRICT PRIORITY photo resolver for a person.
- * Ensures composited photo (photo + background) is ALWAYS prioritized over raw/cropped.
+ * Ensures composited photo (photo + background) is ALWAYS prioritized over cropped.
+ * STRICT CROP ENFORCEMENT: Never falls back to rawPhotoUrl for printing!
  */
 export function getPersonPrintImage(person: MultiPersonSlotGroup): string | null {
-  return (
-    person.compositedPhotoUrl ||
-    person.croppedPhotoUrl ||
-    person.photoUrl ||
-    person.rawPhotoUrl ||
-    null
-  );
+  if (person.compositedPhotoUrl) {
+    return person.compositedPhotoUrl;
+  }
+  if (person.croppedPhotoUrl) {
+    return person.croppedPhotoUrl;
+  }
+  // Allow photoUrl only if it is a processed/cropped photo (not the raw uncropped original)
+  if (person.photoUrl && person.photoUrl !== person.rawPhotoUrl) {
+    return person.photoUrl;
+  }
+  // STRICT: Do NOT return rawPhotoUrl. Uncropped raw photos must never appear on print sheet.
+  return null;
 }
 
 export interface SlotAssignment {
@@ -138,15 +144,14 @@ export function buildSlotAssignments(
 
 /**
  * Check if a person has a valid photo ready for sheet preview or printing.
- * A person is ready if they have a final composited photo, a photoUrl,
- * a cropped photo, or at minimum an uploaded photo.
+ * A person is ready ONLY if they have a final composited photo or a cropped photo.
+ * Raw uncropped photos NEVER count as ready for print.
  */
 export function isPersonReady(person: MultiPersonSlotGroup): boolean {
   return !!(
     person.compositedPhotoUrl ||
-    person.photoUrl ||
     person.croppedPhotoUrl ||
-    person.rawPhotoUrl
+    (person.photoUrl && person.photoUrl !== person.rawPhotoUrl)
   );
 }
 
@@ -161,11 +166,11 @@ export function getPersonStatus(person: MultiPersonSlotGroup): PersonPhotoStatus
   if (person.compositedPhotoUrl || person.bgStudioState?.foregroundImage) {
     return "ready";
   }
-  if (person.croppedPhotoUrl || (person.photoUrl && person.cropState)) {
+  if (
+    person.croppedPhotoUrl ||
+    (person.photoUrl && person.photoUrl !== person.rawPhotoUrl)
+  ) {
     return "needs-background";
-  }
-  if (person.photoUrl) {
-    return person.status === "ready" ? "ready" : "needs-background";
   }
   if (person.rawPhotoUrl) {
     return "uploaded";
@@ -183,7 +188,12 @@ export interface MultiPersonState {
   selectedSlotIndex: number | null;
 }
 
-export const MAX_PERSONS_PER_SHEET = 10;
+// Dynamic max persons per sheet equals total sheet slots (A6/6x4=8, A4=30, A3=66)
+export const MAX_PERSONS_PER_SHEET = 66;
+
+export function getMaxPersonsAllowed(totalSheetSlots: number): number {
+  return Math.max(1, totalSheetSlots);
+}
 
 export const PERSON_PALETTE = [
   "#0284C7", // 1: Sky Blue
@@ -196,10 +206,61 @@ export const PERSON_PALETTE = [
   "#84CC16", // 8: Lime
   "#D946EF", // 9: Fuchsia
   "#14B8A6", // 10: Teal
+  "#EF4444", // 11: Red
+  "#3B82F6", // 12: Blue
+  "#22C55E", // 13: Green
+  "#EAB308", // 14: Yellow
+  "#A855F7", // 15: Purple
+  "#F43F5E", // 16: Rose
+  "#0EA5E9", // 17: Light Blue
+  "#10B981", // 18: Mint
+  "#F97316", // 19: Orange
+  "#6366F1", // 20: Royal Indigo
+  "#65A30D", // 21: Olive Lime
+  "#C026D3", // 22: Magenta
+  "#0D9488", // 23: Deep Teal
+  "#DC2626", // 24: Crimson
+  "#2563EB", // 25: Cobalt
+  "#16A34A", // 26: Forest Green
+  "#CA8A04", // 27: Gold
+  "#9333EA", // 28: Amethyst
+  "#E11D48", // 29: Ruby
+  "#0891B2", // 30: Cerulean
 ];
 
 export function getPersonColor(index: number): string {
   return PERSON_PALETTE[index % PERSON_PALETTE.length];
+}
+
+/**
+ * Concurrency-limited image loader for multi-person print sheets.
+ * Prevents 30+ simultaneous image loads from overwhelming the browser.
+ */
+export async function buildImageElements(
+  persons: MultiPersonSlotGroup[],
+  loadImgFn: (url: string) => Promise<HTMLImageElement>
+): Promise<Record<string, HTMLImageElement>> {
+  const BATCH_SIZE = 5;
+  const elements: Record<string, HTMLImageElement> = {};
+
+  for (let i = 0; i < persons.length; i += BATCH_SIZE) {
+    const batch = persons.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (person) => {
+        if (!isPersonReady(person)) return;
+        const imgUrl = getPersonPrintImage(person);
+        if (!imgUrl) return;
+        try {
+          const img = await loadImgFn(imgUrl);
+          if (img) elements[person.id] = img;
+        } catch (err) {
+          console.warn("Failed to load image for person:", person.id, err);
+        }
+      })
+    );
+  }
+
+  return elements;
 }
 
 /**

@@ -30,7 +30,9 @@ export async function detectImageTransparency(imageUrlOrDataUrl: string): Promis
 
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!imageUrlOrDataUrl.startsWith("data:") && !imageUrlOrDataUrl.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
 
     img.onload = () => {
       try {

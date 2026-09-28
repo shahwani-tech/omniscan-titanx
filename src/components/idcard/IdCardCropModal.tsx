@@ -281,7 +281,9 @@ export const IdCardCropModal: React.FC<IdCardCropModalProps> = ({
   useEffect(() => {
     if (!isOpen || !imageSrc) return;
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!imageSrc.startsWith("data:") && !imageSrc.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       setNaturalWidth(img.naturalWidth);
       setNaturalHeight(img.naturalHeight);

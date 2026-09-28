@@ -818,7 +818,9 @@ export async function securelyFlattenPageRedactions(
   if (!redactions || redactions.length === 0) return imageDataUrl;
 
   const img = new Image();
-  img.crossOrigin = "anonymous";
+  if (!imageDataUrl.startsWith("data:") && !imageDataUrl.startsWith("blob:")) {
+    img.crossOrigin = "anonymous";
+  }
   await new Promise((res, rej) => {
     img.onload = res;
     img.onerror = rej;
@@ -1243,7 +1245,9 @@ export async function exportPageAsImage(
   }
 
   const img = new Image();
-  img.crossOrigin = "anonymous";
+  if (!sourceUrl.startsWith("data:") && !sourceUrl.startsWith("blob:")) {
+    img.crossOrigin = "anonymous";
+  }
   await new Promise((res, rej) => {
     img.onload = res;
     img.onerror = rej;

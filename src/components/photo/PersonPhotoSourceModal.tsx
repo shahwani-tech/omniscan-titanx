@@ -27,7 +27,7 @@ interface PersonPhotoSourceModalProps {
   person: MultiPersonSlotGroup | null;
   pages?: OmniPage[];
   onSelectPhoto: (dataUrl: string, immediateCrop?: boolean) => void;
-  onOpenCropForPerson?: () => void;
+  onOpenCropForPerson?: (person: MultiPersonSlotGroup) => void;
   showToast?: (message: string) => void;
 }
 
@@ -184,8 +184,8 @@ export const PersonPhotoSourceModal: React.FC<PersonPhotoSourceModalProps> = ({
             {onOpenCropForPerson && (
               <button
                 onClick={() => {
+                  onOpenCropForPerson(person);
                   onClose();
-                  onOpenCropForPerson();
                 }}
                 className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold flex items-center space-x-1 transition-colors"
               >

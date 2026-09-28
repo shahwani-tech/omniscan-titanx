@@ -36,7 +36,9 @@ export async function preloadImageElement(src: string): Promise<HTMLImageElement
 
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!src.startsWith("data:") && !src.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.onload = () => {
       imageElementCache.set(src, img);
       resolve(img);

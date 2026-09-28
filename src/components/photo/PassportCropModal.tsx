@@ -59,7 +59,9 @@ export const PassportCropModal: React.FC<PassportCropModalProps> = ({
     if (!ctx) return;
 
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!sourceImageUrl.startsWith("data:") && !sourceImageUrl.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     img.src = sourceImageUrl;
     await new Promise((res) => {
       img.onload = res;

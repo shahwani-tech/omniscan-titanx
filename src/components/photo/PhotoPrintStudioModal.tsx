@@ -887,7 +887,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     let img = cachedSourceImgRef.current;
     if (!img || cachedSourceUrlRef.current !== rawSourceImage) {
       img = new Image();
-      img.crossOrigin = "anonymous";
+      if (!rawSourceImage.startsWith("data:") && !rawSourceImage.startsWith("blob:")) {
+        img.crossOrigin = "anonymous";
+      }
       img.src = rawSourceImage;
       await new Promise((res) => {
         img!.onload = () => res(true);
@@ -1011,21 +1013,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
   // Smooth transitions between studio steps with synchronized crop generation
   const handleProceedToFilters = async () => {
-    if (cropImageRef.current && cropImageRef.current.offsetWidth > 0) {
-      cropStageLayoutRef.current = {
-        width: cropImageRef.current.offsetWidth,
-        height: cropImageRef.current.offsetHeight,
-      };
-    }
-    try {
-      if (!compositedPhotoUrl) {
-        await generateProcessedPhoto();
-      }
-      setStudioStep("filters");
-    } catch (err) {
-      console.error("Proceed to filters error:", err);
-      showToast("Failed to process crop. Please try again.");
-    }
+    await handleSelectStep("filters");
   };
 
   const handleSelectStep = async (step: "crop" | "filters" | "sheet") => {
@@ -1037,9 +1025,13 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         };
       }
       const generated = await generateProcessedPhoto();
+      if (!generated) {
+        showToast("Crop generation failed. Please try again.");
+        return;
+      }
       if (activeEditingPersonId) {
         const targetId = activeEditingPersonId;
-        const targetPhoto = generated || rawSourceImage;
+        const targetPhoto = generated;
         const outW = Math.round(currentPassportSpec.widthInches * 300);
         const outH = Math.round(currentPassportSpec.heightInches * 300);
         const croppedBlobId = `person_${targetId}_cropped_${Date.now()}`;
@@ -1076,6 +1068,8 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         if (step === "sheet") {
           setActiveEditingPersonId(null);
         }
+      } else {
+        setProcessedPhotoDataUrl(generated);
       }
     } else if (step === "sheet" && studioStep === "filters" && activeEditingPersonId) {
       setActiveEditingPersonId(null);
@@ -1088,7 +1082,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     invalidateCompositedBackground();
     try {
       const img = new Image();
-      img.crossOrigin = "anonymous";
+      if (!rawSourceImage.startsWith("data:") && !rawSourceImage.startsWith("blob:")) {
+        img.crossOrigin = "anonymous";
+      }
       img.src = rawSourceImage;
       await new Promise((resolve, reject) => {
         img.onload = () => resolve(true);
@@ -1291,14 +1287,20 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     );
   }, [isMultiPersonActive, multiPerson.persons, currentSlotMapping]);
 
-  const canPrintOrExport = !isMultiPersonActive || unreadyAssignedPersons.length === 0;
+  const slotValidation = useMemo(
+    () => validateSlotCounts(multiPerson.persons, dynamicMaxPhotos),
+    [multiPerson.persons, dynamicMaxPhotos]
+  );
+
+  const canPrintOrExport =
+    !isMultiPersonActive || (unreadyAssignedPersons.length === 0 && !slotValidation.exceeds);
 
   const layoutResult = calculatePhotoSheetLayout(
-    isMultiPersonActive ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig,
+    isMultiPersonActive ? { ...sheetConfig, copies: dynamicMaxPhotos, autoFit: true } : sheetConfig,
     isMultiPersonActive ? currentSlotMapping : ["photo-1"]
   );
 
-  // Keep Person 1 synchronized with active primary portrait
+  // Keep Person 1's photo synchronized with active primary portrait WITHOUT touching slotCount
   useEffect(() => {
     const currentPhoto = compositedPhotoUrl || processedPhotoDataUrl || rawSourceImage;
     setMultiPerson((prev) => {
@@ -1317,15 +1319,14 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
           ],
         };
       }
-      if (!prev.enabled || prev.persons.length === 1) {
+      if (!prev.enabled && prev.persons.length === 1) {
         const p1 = prev.persons[0];
-        if (p1.photoUrl !== currentPhoto || p1.slotCount !== dynamicMaxPhotos) {
+        if (!p1.croppedPhotoUrl && !p1.compositedPhotoUrl && !p1.rawPhotoUrl && p1.photoUrl !== currentPhoto) {
           return {
             ...prev,
             persons: [
               {
                 ...p1,
-                slotCount: dynamicMaxPhotos,
                 photoUrl: currentPhoto,
                 status: "ready",
               },
@@ -1388,13 +1389,16 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     }
   }, [isOpen]);
 
-  // Purge session on unmount
+  const cleanupSessionBlobsRef = useRef(cleanupSessionBlobs);
+  cleanupSessionBlobsRef.current = cleanupSessionBlobs;
+
+  // Purge session on unmount ONLY (not on every state change of persons)
   useEffect(() => {
     return () => {
-      cleanupSessionBlobs();
+      cleanupSessionBlobsRef.current();
       clearMultiPersonSession();
     };
-  }, [cleanupSessionBlobs]);
+  }, []);
 
   // Comprehensive reset on close
   const handlePassportStudioClose = useCallback(async () => {
@@ -1460,7 +1464,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     const renderSheet = async () => {
       try {
         const isMulti = multiPerson.enabled && multiPerson.persons.length > 0;
-        const configToRender = isMulti ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig;
+        const configToRender = isMulti
+          ? { ...sheetConfig, copies: dynamicMaxPhotos, autoFit: true }
+          : sheetConfig;
         const canvas = await renderPhotoSheetCanvas(
           configToRender,
           multiPersonSourceImages,
@@ -1504,9 +1510,14 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     isOpen,
   ]);
 
-  // Multi-person actions (Strict Isolation by person.id)
+  // Multi-person actions (Strict Isolation by person.id — NEVER auto-redistribute slots on normal add)
   const handleAddPerson = () => {
     setMultiPerson((prev) => {
+      if (prev.persons.length >= dynamicMaxPhotos) {
+        // Silently ignore when at maximum sheet slot capacity — no error toast needed
+        return prev;
+      }
+
       const nextIdx = prev.persons.length;
       const nextId =
         typeof crypto !== "undefined" && crypto.randomUUID
@@ -1515,21 +1526,13 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       const nextLabel = `Person ${nextIdx + 1}`;
       const nextColor = getPersonColor(nextIdx);
 
-      const newCount = nextIdx + 1;
-      const equalCounts = computeEqualSplit(dynamicMaxPhotos, newCount);
-
       const outW = Math.round(currentPassportSpec.widthInches * 300);
       const outH = Math.round(currentPassportSpec.heightInches * 300);
 
-      const updatedPersons: MultiPersonSlotGroup[] = prev.persons.map((p, i) => ({
-        ...p,
-        slotCount: equalCounts[i] || 1,
-      }));
-
-      updatedPersons.push({
+      const newPerson: MultiPersonSlotGroup = {
         id: nextId,
         label: nextLabel,
-        slotCount: equalCounts[nextIdx] || 1,
+        slotCount: 0, // NEW person starts at 0 slots — existing persons remain unchanged
         color: nextColor,
         photoUrl: null,
         rawPhotoUrl: null,
@@ -1541,16 +1544,30 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
         cropWidth: outW,
         cropHeight: outH,
         status: "no-photo",
-      });
+      };
 
-      showToast(`Added ${nextLabel}. Equal split applied (${equalCounts.join(" / ")} slots).`);
+      const updatedPersons = [...prev.persons, newPerson];
 
+      // Extreme case: when total persons equals total sheet slots (e.g. 30 persons on 30-slot A4),
+      // force each person to exactly 1 slot so every person has 1 slot with 0 remaining.
+      if (updatedPersons.length === dynamicMaxPhotos && dynamicMaxPhotos > 0) {
+        const slotsPerPerson = Math.max(1, Math.floor(dynamicMaxPhotos / updatedPersons.length));
+        return {
+          ...prev,
+          enabled: true,
+          persons: updatedPersons.map((p) => ({
+            ...p,
+            slotCount: slotsPerPerson,
+          })),
+          customSlotAssignments: [],
+        };
+      }
+
+      // Normal case: ONLY append new person with 0 slots — NEVER touch existing persons' slot counts
       return {
         ...prev,
         enabled: true,
         persons: updatedPersons,
-        mode: prev.mode === "custom" ? "grouped" : prev.mode,
-        customSlotAssignments: [],
       };
     });
   };
@@ -1571,20 +1588,19 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
     setMultiPerson((prev) => {
       if (prev.persons.length <= 1) return prev;
+      // Remove person without redistributing remaining persons' slots (their slots become unassigned)
       const remaining = prev.persons.filter((p) => p.id !== personId);
-      const equalCounts = computeEqualSplit(dynamicMaxPhotos, remaining.length);
-      const updated = remaining.map((p, i) => ({
-        ...p,
-        slotCount: equalCounts[i] || 1,
-      }));
+      const updatedCustom = prev.customSlotAssignments.map((pid) =>
+        pid === personId ? "empty" : pid
+      );
       return {
         ...prev,
-        enabled: updated.length > 1,
-        persons: updated,
-        customSlotAssignments: [],
+        enabled: true,
+        persons: remaining,
+        customSlotAssignments: updatedCustom,
       };
     });
-    showToast("Person removed from sheet.");
+    showToast("Person removed. Their slots are now unassigned and available.");
   };
 
   const handleUpdatePersonLabel = (personId: string, label: string) => {
@@ -1596,11 +1612,27 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
   const handleUpdatePersonSlotCount = (personId: string, count: number) => {
     setMultiPerson((prev) => {
+      const target = prev.persons.find((p) => p.id === personId);
+      const isAtMaxPersons = prev.persons.length >= dynamicMaxPhotos;
+      const minSlots = isAtMaxPersons ? 1 : 0;
+      const safeCount = Math.max(minSlots, count);
+      // Allow decreasing freely down to minSlots; clamp increases to remaining capacity
+      let finalCount = safeCount;
+      if (target && safeCount > target.slotCount) {
+        const otherTotal = prev.persons.reduce(
+          (sum, p) => (p.id === personId ? sum : sum + Math.max(0, p.slotCount)),
+          0
+        );
+        const maxForThisPerson = Math.max(minSlots, dynamicMaxPhotos - otherTotal);
+        finalCount = Math.min(safeCount, maxForThisPerson);
+      }
+
       const updated = prev.persons.map((p) =>
-        p.id === personId ? { ...p, slotCount: Math.max(1, count) } : p
+        p.id === personId ? { ...p, slotCount: finalCount } : p
       );
       return {
         ...prev,
+        enabled: true,
         persons: updated,
       };
     });
@@ -1615,6 +1647,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       }));
       return {
         ...prev,
+        enabled: true,
         persons: updated,
         customSlotAssignments: [],
       };
@@ -1652,11 +1685,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
       const updatedPersons = prev.persons.map((p) => ({
         ...p,
-        slotCount: Math.max(1, counts.get(p.id) || 1),
+        slotCount: counts.get(p.id) ?? 0,
       }));
 
       return {
         ...prev,
+        enabled: true,
         mode: "custom",
         customSlotAssignments: baseMapping,
         persons: updatedPersons,
@@ -1680,7 +1714,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     const expectedW = Math.round(currentPassportSpec.widthInches * 300);
     const expectedH = Math.round(currentPassportSpec.heightInches * 300);
 
-    // Immediately update person state in memory so the photo is saved right away
+    // Immediately update person state in memory with the newly uploaded raw photo
     setMultiPerson((prev) => ({
       ...prev,
       persons: prev.persons.map((p) =>
@@ -1688,14 +1722,14 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
           ? {
               ...p,
               rawPhotoUrl: dataUrl,
-              photoUrl: dataUrl,
-              croppedPhotoUrl: immediateCrop ? null : dataUrl,
+              photoUrl: immediateCrop ? null : dataUrl,
+              croppedPhotoUrl: null,
               compositedPhotoUrl: null,
               compositedBlobId: null,
               bgStudioState: null,
               cropWidth: expectedW,
               cropHeight: expectedH,
-              status: immediateCrop ? "cropped" : "ready",
+              status: immediateCrop ? "uploaded" : "ready",
             }
           : p
       ),
@@ -1737,14 +1771,15 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   };
 
   const handleOpenBgStudioForPerson = (person: MultiPersonSlotGroup) => {
+    // Only allow setting background on an actual cropped or composited photo
     const inputPhoto =
+      person.compositedPhotoUrl ||
       person.croppedPhotoUrl ||
-      person.photoUrl ||
-      person.rawPhotoUrl;
+      (person.photoUrl && person.photoUrl !== person.rawPhotoUrl ? person.photoUrl : null);
 
     if (!inputPhoto) {
-      showToast(`Crop photo first before setting background for ${person.label}`);
-      setPhotoPickerPerson(person);
+      showToast(`Please crop photo first before setting background for ${person.label}`);
+      handleOpenCropForPerson(person);
       return;
     }
 
@@ -1778,7 +1813,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       : URL.createObjectURL(compositedBlobOrUrl);
     
     const img = new Image();
-    img.crossOrigin = "anonymous";
+    if (!url.startsWith("data:") && !url.startsWith("blob:")) {
+      img.crossOrigin = "anonymous";
+    }
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve();
       img.onerror = (e) => reject(e);
@@ -1811,8 +1848,12 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
 
     if (compositedBlobOrUrl instanceof Blob) {
       finalBlob = compositedBlobOrUrl;
-      finalUrl = URL.createObjectURL(compositedBlobOrUrl);
-      sessionObjectUrlsRef.current.push(finalUrl);
+      // Convert Blob to data URL so the URL never expires or gets revoked
+      finalUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(compositedBlobOrUrl);
+      });
     } else {
       finalUrl = compositedBlobOrUrl;
       try {
@@ -1892,12 +1933,16 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
   const handleSaveAndReturnToSheet = async () => {
     try {
       const generated = await generateProcessedPhoto();
+      if (!generated) {
+        showToast("Crop generation failed. Please try again.");
+        return;
+      }
       const outW = Math.round(currentPassportSpec.widthInches * 300);
       const outH = Math.round(currentPassportSpec.heightInches * 300);
 
       if (activeEditingPersonId) {
         const targetId = activeEditingPersonId;
-        const targetPhoto = generated || rawSourceImage;
+        const targetPhoto = generated;
         const croppedBlobId = `person_${targetId}_cropped_${Date.now()}`;
         try {
           await pageBlobStore.saveDataUrl(croppedBlobId, "processed", targetPhoto);
@@ -1939,7 +1984,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       setStudioStep("sheet");
     } catch (err) {
       console.error("Save error:", err);
-      setStudioStep("sheet");
+      showToast("Could not save crop: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -1954,7 +1999,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     setIsExporting(true);
     try {
       const isMulti = multiPerson.enabled && multiPerson.persons.length > 0;
-      const configToExport = isMulti ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig;
+      const configToExport = isMulti
+        ? { ...sheetConfig, copies: dynamicMaxPhotos, autoFit: true }
+        : sheetConfig;
       const pdfBytes = await exportPhotoSheetAsPDF(
         configToExport,
         multiPersonSourceImages,
@@ -1990,7 +2037,9 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
     setIsExporting(true);
     try {
       const isMulti = multiPerson.enabled && multiPerson.persons.length > 0;
-      const configToExport = isMulti ? { ...sheetConfig, copies: dynamicMaxPhotos } : sheetConfig;
+      const configToExport = isMulti
+        ? { ...sheetConfig, copies: dynamicMaxPhotos, autoFit: true }
+        : sheetConfig;
       const blob = await exportPhotoSheetAsBlob(
         configToExport,
         multiPersonSourceImages,
@@ -2099,7 +2148,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       if (multiPerson.selectedSlotIndex !== null) {
         setMultiPerson((prev) => ({ ...prev, selectedSlotIndex: null }));
       } else {
-        onClose();
+        handlePassportStudioClose();
       }
     },
     onEnter: handlePrintSheet,
@@ -2144,7 +2193,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       "photo.resetAll": handleResetFilters,
       "photo.print": handlePrintSheet,
       "photo.export": handleExportPDF,
-      "photo.close": onClose,
+      "photo.close": handlePassportStudioClose,
     },
   });
 
@@ -2193,19 +2242,21 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
       orientation,
     };
     const fit = computeFit(testConfig, currentPassportSpec, spec, printerMarginStandard);
-    const currentTotalAssigned = multiPerson.persons.reduce((sum, p) => sum + p.slotCount, 0);
+    const currentTotalAssigned = multiPerson.persons.reduce(
+      (sum, p) => sum + Math.max(0, p.slotCount),
+      0
+    );
+    const newPaperName = spec.name.split(" (")[0] || spec.name;
 
-    if (multiPerson.enabled && multiPerson.persons.length > 1 && currentTotalAssigned > fit.maxPhotos) {
-      setPendingPaperChange({
-        paperId,
-        newCapacity: fit.maxPhotos,
-        currentTotal: currentTotalAssigned,
-        newPaperName: spec.name.split(" (")[0] || spec.name,
-      });
-      return;
-    }
-
+    // Apply paper size change WITHOUT auto-redistributing person slot counts
     applyPaperSizeChange(paperId);
+    setPendingPaperChange(null);
+
+    if (currentTotalAssigned > fit.maxPhotos) {
+      showToast(
+        `Changing to ${newPaperName} reduces capacity to ${fit.maxPhotos}. Current assignments (${currentTotalAssigned} slots) exceed this. Please reduce slot counts manually.`
+      );
+    }
   };
 
   const handleConfirmPaperChange = (strategy: "proportional" | "equal") => {
@@ -3549,13 +3600,13 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                 {/* Step Navigation */}
                 <div className="flex items-center space-x-2 pt-2">
                   <button
-                    onClick={() => setStudioStep("crop")}
+                    onClick={() => handleSelectStep("crop")}
                     className="w-1/2 py-2 bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-lg transition-colors"
                   >
                     Back to Crop
                   </button>
                   <button
-                    onClick={() => setStudioStep("sheet")}
+                    onClick={() => handleSelectStep("sheet")}
                     className="w-1/2 py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-lg transition-colors shadow"
                   >
                     4×6" Print Sheet
@@ -3631,6 +3682,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
                   onToggleEnabled={(en) => setMultiPerson((prev) => ({ ...prev, enabled: en }))}
                   persons={multiPerson.persons}
                   totalSheetCapacity={dynamicMaxPhotos}
+                  paperName={currentFit.paperName}
                   layoutMode={multiPerson.mode}
                   onChangeLayoutMode={handleChangeLayoutMode}
                   onAddPerson={handleAddPerson}
@@ -4429,17 +4481,14 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
             headerTitle={activeBgPerson ? `Background — ${activeBgPerson.label}` : undefined}
             externalInputImage={modalInitialImage}
             externalInitialBgConfig={modalInitialState}
-            onExternalApply={(compositedBlob, bgConfig) => {
+            onExternalApply={(compositedBlob, bgConfig, compositedDataUrl) => {
               if (targetPersonId) {
-                handleBgStudioApply(targetPersonId, compositedBlob, bgConfig);
+                handleBgStudioApply(targetPersonId, compositedDataUrl || compositedBlob, bgConfig);
                 setStudioStep("sheet");
               }
             }}
             onApply={(finalCompositeUrl, fullState) => {
-              if (targetPersonId) {
-                handleBgStudioApply(targetPersonId, finalCompositeUrl, fullState);
-                setStudioStep("sheet");
-              } else {
+              if (!targetPersonId) {
                 setBgStudioState(fullState);
                 setCompositedPhotoUrl(finalCompositeUrl);
                 setProcessedPhotoDataUrl(finalCompositeUrl);
@@ -4465,7 +4514,7 @@ export const PhotoPrintStudioModal: React.FC<PhotoPrintStudioModalProps> = ({
           person={photoPickerPerson}
           pages={pages}
           onSelectPhoto={(dataUrl, immediateCrop) => handleSelectPhotoForPerson(dataUrl, immediateCrop)}
-          onOpenCropForPerson={() => handleOpenCropForPerson(photoPickerPerson)}
+          onOpenCropForPerson={(p) => handleOpenCropForPerson(p || photoPickerPerson)}
           showToast={showToast}
         />
       )}

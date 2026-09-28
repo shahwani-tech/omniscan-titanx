@@ -417,9 +417,18 @@ Return JSON:
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`OmniScan Titan X Server running on http://0.0.0.0:${PORT}`);
   });
+
+  const shutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 }
 
 // Local Heuristics Helpers (Offline Resilience)
@@ -505,4 +514,7 @@ function detectHeuristicPII(text: string) {
   return pii;
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Failed to start OmniScan server:", err);
+  process.exit(1);
+});

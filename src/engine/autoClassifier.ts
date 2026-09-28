@@ -62,7 +62,9 @@ export async function classifyImageContent(
   if (typeof imageSource === "string") {
     img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
-      el.crossOrigin = "anonymous";
+      if (!imageSource.startsWith("data:") && !imageSource.startsWith("blob:")) {
+        el.crossOrigin = "anonymous";
+      }
       el.onload = () => resolve(el);
       el.onerror = (e) => reject(e);
       el.src = imageSource;
